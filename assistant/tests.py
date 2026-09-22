@@ -429,8 +429,12 @@ class AssistantServiceEngineIntegrationTests(TestCase):
         self.assertGreater(ai_msg.processing_time_ms, 0)
 
     @override_settings(AI_ENGINE="local")
-    def test_unavailable_engine_returns_error(self):
+    @patch("assistant.ai_engine.local.urllib.request.urlopen")
+    def test_unavailable_engine_returns_error(self, mock_urlopen):
         """When local engine is unavailable, service returns clean error."""
+        import urllib.error
+        mock_urlopen.side_effect = urllib.error.URLError("Connection refused")
+        
         from assistant.services import AssistantService
         conv, text, metadata, error = AssistantService.process_message("test")
         self.assertIsNotNone(error)
@@ -516,8 +520,12 @@ class APIResponseMetadataTests(TestCase):
         self.assertGreater(len(response.data['response']), 0)
 
     @override_settings(AI_ENGINE="local")
-    def test_unavailable_engine_returns_500(self):
+    @patch("assistant.ai_engine.local.urllib.request.urlopen")
+    def test_unavailable_engine_returns_500(self, mock_urlopen):
         """When local engine is not reachable, API returns 500 with error."""
+        import urllib.error
+        mock_urlopen.side_effect = urllib.error.URLError("Connection refused")
+        
         response = self.client.post(self.url, {'query': 'Hello'}, format='json')
         self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
         self.assertIn('error', response.data)
