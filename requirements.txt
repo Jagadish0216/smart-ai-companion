@@ -1,3 +1,4 @@
 Django==5.2.17
 djangorestframework==3.18.1
 python-dotenv>=1.0
+whitenoise==6.7.0

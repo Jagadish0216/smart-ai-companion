@@ -76,7 +76,17 @@ python manage.py runserver
 
 Navigate to `http://127.0.0.1:8000`. By default, `AI_ENGINE=mock` — no external services needed.
 
-### 2. Raspberry Pi + Ollama (For Real LLM)
+### 2. Production Deployment (Gunicorn & WhiteNoise)
+
+For deployment on the Raspberry Pi, use Gunicorn instead of the development server. WhiteNoise handles static files automatically.
+
+```bash
+pip install gunicorn
+python manage.py collectstatic
+gunicorn config.wsgi:application --bind 0.0.0.0:8000
+```
+
+### 3. Raspberry Pi + Ollama (For Real LLM)
 
 #### Install Ollama on the Pi
 
@@ -107,7 +117,7 @@ chmod +x scripts/pi_setup.sh
 
 This collects hardware info, installs Ollama, pulls the model, runs CLI tests, and benchmarks.
 
-### 3. Switch to Local LLM
+### 4. Switch to Local LLM
 
 Edit your `.env` file:
 
@@ -125,7 +135,7 @@ python manage.py runserver
 
 The Assistant will now use the real local LLM for inference.
 
-### 4. Switch Back to Mock
+### 5. Switch Back to Mock
 
 ```env
 AI_ENGINE=mock
