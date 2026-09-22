@@ -1,0 +1,77 @@
+{% extends 'base.html' %}
+{% block page_title %}Logs{% endblock %}
+{% block page_heading %}Logs{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-header-title">System Logs</div>
+    <div class="page-header-desc">Activity and diagnostic events from all system components.</div>
+</div>
+
+<div class="card">
+    <!-- Toolbar -->
+    <div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
+        <div class="flex gap-2">
+            <button class="mode-btn active" data-filter="ALL" onclick="filterLogs('ALL', this)">All</button>
+            <button class="mode-btn" data-filter="INFO" onclick="filterLogs('INFO', this)">
+                <span class="log-level info" style="padding:0 4px;">INFO</span>
+            </button>
+            <button class="mode-btn" data-filter="WARN" onclick="filterLogs('WARN', this)">
+                <span class="log-level warn" style="padding:0 4px;">WARN</span>
+            </button>
+            <button class="mode-btn" data-filter="ERROR" onclick="filterLogs('ERROR', this)">
+                <span class="log-level error" style="padding:0 4px;">ERROR</span>
+            </button>
+        </div>
+        <div style="max-width:280px;width:100%;">
+            <input type="text" class="input" placeholder="Search logs..." id="log-search" oninput="searchLogs(this.value)">
+        </div>
+    </div>
+
+    <!-- Log Entries -->
+    <div style="max-height:600px;overflow-y:auto;" id="log-container">
+        {% for log in logs %}
+        <div class="log-entry" data-level="{{ log.level }}" data-text="{{ log.component|lower }} {{ log.message|lower }}">
+            <span class="log-timestamp">{{ log.timestamp|date:"Y-m-d H:i:s" }}</span>
+            <span class="log-level {% if log.level == 'ERROR' %}error{% elif log.level == 'WARN' %}warn{% else %}info{% endif %}">{{ log.level }}</span>
+            <span class="log-component">{{ log.component }}</span>
+            <span class="log-message">{{ log.message }}</span>
+        </div>
+        {% empty %}
+        <div class="empty-state">
+            <i data-lucide="scroll-text"></i>
+            <div class="empty-state-title">No logs recorded</div>
+            <div class="empty-state-desc">System events will appear here as the companion operates.</div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<script>
+    let currentFilter = 'ALL';
+    let currentSearch = '';
+
+    function applyFilters() {
+        const entries = document.querySelectorAll('#log-container .log-entry');
+        entries.forEach(entry => {
+            const level = entry.getAttribute('data-level');
+            const text = entry.getAttribute('data-text') || '';
+            const matchLevel = currentFilter === 'ALL' || level === currentFilter;
+            const matchSearch = !currentSearch || text.includes(currentSearch.toLowerCase());
+            entry.style.display = (matchLevel && matchSearch) ? 'flex' : 'none';
+        });
+    }
+
+    function filterLogs(level, btn) {
+        currentFilter = level;
+        document.querySelectorAll('[data-filter]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        applyFilters();
+    }
+
+    function searchLogs(query) {
+        currentSearch = query;
+        applyFilters();
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,108 @@
+{% extends 'base.html' %}
+{% block page_title %}Knowledge{% endblock %}
+{% block page_heading %}Knowledge{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-header-title">Knowledge Base</div>
+    <div class="page-header-desc">Manage documents for the local RAG pipeline. Documents are processed, chunked, and embedded for offline retrieval.</div>
+</div>
+
+<!-- Status Cards -->
+<div class="grid grid-3 mb-5">
+    <div class="card">
+        <div class="label mb-2">Total Documents</div>
+        <div class="metric-value">{{ documents|length }}</div>
+    </div>
+    <div class="card">
+        <div class="label mb-2">Indexed</div>
+        <div class="metric-value text-success">{{ indexed_count|default:"0" }}</div>
+    </div>
+    <div class="card">
+        <div class="label mb-2">Pending</div>
+        <div class="metric-value text-warning">{{ pending_count|default:"0" }}</div>
+    </div>
+</div>
+
+<!-- RAG Pipeline Concept -->
+<div class="card mb-5">
+    <div class="card-title mb-3">RAG Pipeline</div>
+    <div class="grid grid-3" style="gap:var(--sp-2);">
+        <div class="pipeline-step">
+            <div class="pipeline-step-icon implemented"><i data-lucide="file-text"></i></div>
+            <div>
+                <div style="font-weight:500;font-size:0.8125rem;">Document Upload</div>
+                <div class="text-xs text-muted">Implemented</div>
+            </div>
+        </div>
+        <div class="pipeline-step">
+            <div class="pipeline-step-icon coming"><i data-lucide="scissors"></i></div>
+            <div>
+                <div style="font-weight:500;font-size:0.8125rem;">Chunking & Extraction</div>
+                <div class="text-xs text-muted">Coming Soon</div>
+            </div>
+        </div>
+        <div class="pipeline-step">
+            <div class="pipeline-step-icon coming"><i data-lucide="search"></i></div>
+            <div>
+                <div style="font-weight:500;font-size:0.8125rem;">Vector Retrieval</div>
+                <div class="text-xs text-muted">Coming Soon</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Document Table -->
+<div class="card">
+    <div class="card-header">
+        <span class="card-title">Documents</span>
+        <button class="btn btn-primary btn-sm" id="btn-upload-doc">
+            <i data-lucide="upload" style="width:14px;height:14px;"></i> Upload Document
+        </button>
+    </div>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Filename</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Uploaded</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for doc in documents %}
+            <tr>
+                <td>
+                    <div class="flex items-center gap-2">
+                        <i data-lucide="file-text" style="width:14px;height:14px;color:var(--text-muted);"></i>
+                        {{ doc.filename }}
+                    </div>
+                </td>
+                <td class="text-secondary text-sm">{{ doc.file_type|upper|default:"—" }}</td>
+                <td>
+                    <span class="badge {% if doc.status == 'INDEXED' %}badge-success{% elif doc.status == 'ERROR' %}badge-error{% else %}badge-warning{% endif %}">
+                        {{ doc.status }}
+                    </span>
+                </td>
+                <td class="text-secondary text-sm">{{ doc.uploaded_at|date:"M d, Y" }}</td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="4">
+                    <div class="empty-state">
+                        <i data-lucide="database"></i>
+                        <div class="empty-state-title">No documents yet</div>
+                        <div class="empty-state-desc">Upload documents to build the knowledge base for your companion.</div>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+<script>
+    document.getElementById('btn-upload-doc').addEventListener('click', () => {
+        showToast('Document upload pipeline is currently simulated.', 'info');
+    });
+</script>
+{% endblock %}

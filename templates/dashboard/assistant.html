@@ -1,0 +1,175 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block page_title %}Assistant{% endblock %}
+{% block page_heading %}Assistant{% endblock %}
+
+{% block content %}
+<div class="grid grid-12" style="height: calc(100vh - var(--topbar-h) - var(--sp-6)*2);">
+    <!-- Companion sidebar -->
+    <div class="col-span-3" style="display:flex;flex-direction:column;gap:var(--sp-4);">
+        <div class="card" style="display:flex;flex-direction:column;align-items:center;text-align:center;">
+            <div class="companion-compact">
+                <div class="companion-viewport" id="companion-container">
+                    <div class="companion-face-chassis" id="companion-chassis">
+                        <svg class="companion-svg" viewBox="0 0 400 200" preserveAspectRatio="xMidYMid meet">
+                            <g style="transition: transform 0.1s ease-out;">
+                                <path id="eye-left" class="companion-eye" d="M120 80 Q 140 80 160 80 L 160 120 Q 140 120 120 120 Z" />
+                                <path id="eye-right" class="companion-eye" d="M240 80 Q 260 80 280 80 L 280 120 Q 260 120 240 120 Z" />
+                            </g>
+                        </svg>
+                    </div>
+                    <div class="oled-display hidden" id="companion-oled">READY</div>
+                </div>
+            </div>
+            <div class="companion-state-label mt-2" id="companion-state-label">IDLE</div>
+        </div>
+        <div class="card">
+            <div class="card-title mb-3">Session</div>
+            <div class="info-row">
+                <span class="info-row-label">AI Model</span>
+                <span class="badge badge-info">Simulated</span>
+            </div>
+            <div class="info-row">
+                <span class="info-row-label">Mode</span>
+                <span class="info-row-value">Offline</span>
+            </div>
+            <button class="btn btn-sm w-full mt-3" id="btn-new-conversation">
+                <i data-lucide="plus" style="width:14px;height:14px;"></i> New Conversation
+            </button>
+        </div>
+    </div>
+
+    <!-- Chat area -->
+    <div class="col-span-9">
+        <div class="card" style="padding:0; display:flex; flex-direction:column; height:100%;">
+            <div class="chat-header">
+                <div class="flex items-center gap-3">
+                    <i data-lucide="message-square" style="width:18px;height:18px;color:var(--text-secondary);"></i>
+                    <span style="font-weight:600; font-size:0.875rem;">Conversation</span>
+                </div>
+                <span class="badge badge-success"><span class="status-dot"></span> Connected</span>
+            </div>
+
+            <div class="chat-messages" id="chat-history">
+                <div class="chat-msg ai">
+                    <div class="msg-bubble">Hello. I am your Smart AI Companion. How can I assist you today?</div>
+                    <div class="msg-meta"><span>Simulated AI</span><span>System</span></div>
+                </div>
+            </div>
+
+            <div class="chat-input-area">
+                <input type="text" id="chat-input" class="input" placeholder="Type a message or ask a question..." autocomplete="off">
+                <button class="btn btn-primary" id="btn-submit">
+                    <i data-lucide="send" style="width:15px;height:15px;"></i> Send
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="{% static 'js/companion.js' %}"></script>
+<script>
+    const chatInput = document.getElementById('chat-input');
+    const btnSubmit = document.getElementById('btn-submit');
+    const chatHistory = document.getElementById('chat-history');
+    const btnNewConv = document.getElementById('btn-new-conversation');
+
+    function appendMessage(text, sender) {
+        const msgDiv = document.createElement('div');
+        msgDiv.className = `chat-msg ${sender}`;
+        const meta = sender === 'user' ? '<span>You</span>' : '<span>Simulated AI</span>';
+        msgDiv.innerHTML = `
+            <div class="msg-bubble">${text}</div>
+            <div class="msg-meta">${meta}</div>
+        `;
+        chatHistory.appendChild(msgDiv);
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+    }
+
+    async function loadConversation() {
+        const convId = localStorage.getItem('companion_conversation_id');
+        if (!convId) return;
+        try {
+            const response = await fetch(`/api/assistant/chat/?conversation_id=${convId}`);
+            if (response.status === 404) {
+                localStorage.removeItem('companion_conversation_id');
+                return;
+            }
+            if (!response.ok) throw new Error('Failed to load');
+            const data = await response.json();
+            chatHistory.innerHTML = '';
+            data.messages.forEach(msg => {
+                appendMessage(msg.content, msg.role === 'USER' ? 'user' : 'ai');
+            });
+        } catch (e) {
+            console.error('Error loading conversation:', e);
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', loadConversation);
+
+    async function sendMessage() {
+        const text = chatInput.value.trim();
+        if (!text) return;
+
+        chatInput.value = '';
+        chatInput.disabled = true;
+        btnSubmit.disabled = true;
+
+        appendMessage(text, 'user');
+
+        // Companion state transitions
+        if (window.CompanionController) {
+            window.CompanionController.setState('LISTENING');
+            setTimeout(() => window.CompanionController.setState('THINKING'), 500);
+        }
+
+        let payload = { query: text };
+        const convId = localStorage.getItem('companion_conversation_id');
+        if (convId) payload.conversation_id = parseInt(convId, 10);
+
+        try {
+            const response = await fetch('/api/assistant/chat/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
+                body: JSON.stringify(payload)
+            });
+            if (!response.ok) throw new Error('API Error');
+            const data = await response.json();
+
+            if (window.CompanionController) {
+                window.CompanionController.setState('SPEAKING');
+                setTimeout(() => window.CompanionController.setState('IDLE'), 3000);
+            }
+
+            if (data.conversation_id) {
+                localStorage.setItem('companion_conversation_id', data.conversation_id);
+            }
+            appendMessage(data.response || 'No response received.', 'ai');
+        } catch (e) {
+            console.error('Chat error:', e);
+            showToast('Failed to connect to AI Service.', 'error');
+            if (window.CompanionController) {
+                window.CompanionController.setState('ALERT');
+                setTimeout(() => window.CompanionController.setState('IDLE'), 3000);
+            }
+            appendMessage('Error processing request. Check connection.', 'ai');
+        } finally {
+            chatInput.disabled = false;
+            btnSubmit.disabled = false;
+            chatInput.focus();
+        }
+    }
+
+    btnSubmit.addEventListener('click', sendMessage);
+    chatInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(); });
+
+    btnNewConv.addEventListener('click', () => {
+        localStorage.removeItem('companion_conversation_id');
+        chatHistory.innerHTML = '';
+        appendMessage('Hello. I am your Smart AI Companion. How can I assist you today?', 'ai');
+        showToast('New conversation started.', 'success');
+    });
+</script>
+{% endblock %}

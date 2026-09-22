@@ -1,0 +1,48 @@
+{% extends 'base.html' %}
+{% block page_title %}Conversations{% endblock %}
+{% block page_heading %}Conversations{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-header-title">Conversation History</div>
+    <div class="page-header-desc">Browse past interactions with your AI companion.</div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <span class="card-title">All Conversations</span>
+        <a href="{% url 'assistant' %}" class="btn btn-primary btn-sm">
+            <i data-lucide="plus" style="width:14px;height:14px;"></i> New
+        </a>
+    </div>
+
+    <div class="flex flex-col gap-2">
+        {% for conv in conversations %}
+        <div class="conv-card" onclick="openConversation({{ conv.id }})">
+            <div class="conv-icon"><i data-lucide="message-circle"></i></div>
+            <div class="conv-info">
+                <div class="conv-title">{{ conv.title|default:"Unnamed Session" }}</div>
+                <div class="conv-meta">
+                    <span>{{ conv.created_at|date:"M d, Y · H:i" }}</span>
+                    {% if conv.message_count %}<span>{{ conv.message_count }} message{{ conv.message_count|pluralize }}</span>{% endif %}
+                </div>
+            </div>
+            <i data-lucide="chevron-right" style="width:16px;height:16px;color:var(--text-muted);flex-shrink:0;"></i>
+        </div>
+        {% empty %}
+        <div class="empty-state">
+            <i data-lucide="message-circle"></i>
+            <div class="empty-state-title">No conversations yet</div>
+            <div class="empty-state-desc">Start chatting with your companion to see conversation history here.</div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<script>
+    function openConversation(convId) {
+        localStorage.setItem('companion_conversation_id', convId);
+        window.location.href = '{% url "assistant" %}';
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,164 @@
+{% extends 'base.html' %}
+{% block page_title %}Settings{% endblock %}
+{% block page_heading %}Settings{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-header-title">Settings</div>
+    <div class="page-header-desc">Configure the Smart AI Companion control center.</div>
+</div>
+
+<div class="grid grid-12">
+    <div class="col-span-8">
+        <!-- Appearance -->
+        <div class="settings-section">
+            <div class="settings-section-title">Appearance</div>
+            <div class="card">
+                <div class="setting-row">
+                    <div>
+                        <div class="setting-label">Dark Mode</div>
+                        <div class="setting-desc">Switch between dark and light interface themes.</div>
+                    </div>
+                    <button class="theme-switch" id="settings-theme-toggle" onclick="toggleThemeSwitch()">
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- AI Engine -->
+        <div class="settings-section">
+            <div class="settings-section-title">AI Engine</div>
+            <div class="card">
+                <div class="info-row">
+                    <span class="info-row-label">Current Provider</span>
+                    <span class="badge badge-info">Simulated (Mock Pipeline)</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-row-label">Inference Mode</span>
+                    <span class="info-row-value">Local Offline</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-row-label">RAG Status</span>
+                    <span class="badge badge-warning">Coming Soon</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-row-label">STT / TTS</span>
+                    <span class="badge badge-warning">Coming Soon</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Configuration -->
+        <div class="settings-section">
+            <div class="settings-section-title">Configuration</div>
+            <div class="card">
+                {% if settings %}
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Key</th>
+                            <th>Value</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for setting in settings %}
+                        <tr>
+                            <td><code style="font-family:var(--font-mono);color:var(--accent);font-size:0.8125rem;">{{ setting.key }}</code></td>
+                            <td>
+                                <input type="text" class="input" value="{{ setting.value }}" style="max-width:240px;">
+                            </td>
+                            <td class="text-secondary text-sm">{{ setting.description }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                <div class="mt-4">
+                    <button class="btn btn-primary btn-sm" id="btn-save-settings">
+                        <i data-lucide="save" style="width:14px;height:14px;"></i> Save Changes
+                    </button>
+                </div>
+                {% else %}
+                <div class="empty-state">
+                    <i data-lucide="settings"></i>
+                    <div class="empty-state-title">No configuration entries</div>
+                    <div class="empty-state-desc">System configuration will appear here when defined.</div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Sidebar info -->
+    <div class="col-span-4">
+        <div class="card mb-4">
+            <div class="card-title mb-3">System Info</div>
+            <div class="info-row">
+                <span class="info-row-label">Application</span>
+                <span class="info-row-value">Smart AI Companion</span>
+            </div>
+            <div class="info-row">
+                <span class="info-row-label">Version</span>
+                <span class="info-row-value">3.1.0</span>
+            </div>
+            <div class="info-row">
+                <span class="info-row-label">Framework</span>
+                <span class="info-row-value">Django 5.2</span>
+            </div>
+            <div class="info-row">
+                <span class="info-row-label">Environment</span>
+                <span class="badge badge-warning">Development</span>
+            </div>
+            <div class="info-row">
+                <span class="info-row-label">Database</span>
+                <span class="info-row-value">SQLite</span>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title mb-3">Hardware Target</div>
+            <div class="info-row">
+                <span class="info-row-label">Compute</span>
+                <span class="info-row-value">Raspberry Pi 5</span>
+            </div>
+            <div class="info-row">
+                <span class="info-row-label">Co-processor</span>
+                <span class="info-row-value">ESP32</span>
+            </div>
+            <div class="info-row">
+                <span class="info-row-label">Display</span>
+                <span class="info-row-value">OLED / LED</span>
+            </div>
+            <div class="info-row">
+                <span class="info-row-label">Audio</span>
+                <span class="info-row-value">USB / BT</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Sync theme switch state on load
+    document.addEventListener('DOMContentLoaded', () => {
+        syncThemeSwitch();
+    });
+
+    function syncThemeSwitch() {
+        const toggle = document.getElementById('settings-theme-toggle');
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+        toggle.classList.toggle('active', isDark);
+    }
+
+    function toggleThemeSwitch() {
+        toggleTheme();
+        syncThemeSwitch();
+    }
+    
+    const btnSaveSettings = document.getElementById('btn-save-settings');
+    if (btnSaveSettings) {
+        btnSaveSettings.addEventListener('click', () => {
+            showToast('Settings saved successfully (simulated).', 'success');
+        });
+    }
+</script>
+{% endblock %}

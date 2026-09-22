@@ -1,0 +1,176 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block page_title %}Overview{% endblock %}
+{% block page_heading %}Overview{% endblock %}
+
+{% block content %}
+<!-- Companion Status — Focal Area -->
+<div class="grid grid-12 mb-5">
+    <div class="col-span-8">
+        <div class="card">
+            <div class="flex items-center gap-5">
+                <div class="companion-compact">
+                    <div class="companion-viewport" id="companion-container">
+                        <div class="companion-face-chassis" id="companion-chassis">
+                            <svg class="companion-svg" viewBox="0 0 400 200" preserveAspectRatio="xMidYMid meet">
+                                <g style="transition: transform 0.1s ease-out;">
+                                    <path id="eye-left" class="companion-eye" d="M120 80 Q 140 80 160 80 L 160 120 Q 140 120 120 120 Z" />
+                                    <path id="eye-right" class="companion-eye" d="M240 80 Q 260 80 280 80 L 280 120 Q 260 120 240 120 Z" />
+                                </g>
+                            </svg>
+                        </div>
+                        <div class="oled-display hidden" id="companion-oled">READY</div>
+                    </div>
+                </div>
+                <div style="flex:1;">
+                    <div class="label mb-2">Companion Status</div>
+                    <div style="font-family:var(--font-display); font-size:1.125rem; font-weight:600; margin-bottom:var(--sp-2);">
+                        Smart AI Companion
+                    </div>
+                    <div class="flex gap-2 flex-wrap mb-3">
+                        <span class="badge badge-success"><span class="status-dot"></span> Online</span>
+                        <span class="badge badge-info" id="companion-mode-badge">Idle</span>
+                        <span class="badge badge-neutral">Simulated</span>
+                    </div>
+                    <div class="flex gap-4">
+                        <button class="btn btn-sm" onclick="window.CompanionController && window.CompanionController.setState('LISTENING')">
+                            <i data-lucide="ear" style="width:14px;height:14px;"></i> Listen
+                        </button>
+                        <button class="btn btn-sm" onclick="window.CompanionController && window.CompanionController.setState('THINKING')">
+                            <i data-lucide="brain" style="width:14px;height:14px;"></i> Think
+                        </button>
+                        <button class="btn btn-sm" onclick="window.CompanionController && window.CompanionController.setState('SPEAKING')">
+                            <i data-lucide="volume-2" style="width:14px;height:14px;"></i> Speak
+                        </button>
+                        <button class="btn btn-sm" onclick="window.CompanionController && window.CompanionController.setState('IDLE')">
+                            <i data-lucide="circle" style="width:14px;height:14px;"></i> Idle
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-span-4">
+        <div class="card" style="height:100%;">
+            <div class="card-title mb-3">AI Engine</div>
+            <div class="info-row">
+                <span class="info-row-label">Model</span>
+                <span class="badge badge-info">Simulated</span>
+            </div>
+            <div class="info-row">
+                <span class="info-row-label">Pipeline</span>
+                <span class="info-row-value">Local Mock</span>
+            </div>
+            <div class="info-row">
+                <span class="info-row-label">Knowledge Base</span>
+                <span class="info-row-value">{{ doc_count }} document{{ doc_count|pluralize }}</span>
+            </div>
+            <div class="info-row">
+                <span class="info-row-label">Mode</span>
+                <span class="info-row-value">Offline Edge</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Device Metrics -->
+<div class="card-title mb-3">Device Telemetry <span class="badge badge-neutral" style="margin-left:var(--sp-2);">Simulated</span></div>
+<div class="grid grid-4 mb-5">
+    <div class="card">
+        <div class="label mb-2">CPU Usage</div>
+        <div class="metric-value" id="ov-cpu">—</div>
+        <div class="metric-bar"><div class="metric-bar-fill" id="ov-cpu-bar" style="width:0%"></div></div>
+    </div>
+    <div class="card">
+        <div class="label mb-2">Memory</div>
+        <div class="metric-value" id="ov-ram">—</div>
+        <div class="metric-bar"><div class="metric-bar-fill" id="ov-ram-bar" style="width:0%"></div></div>
+    </div>
+    <div class="card">
+        <div class="label mb-2">Temperature</div>
+        <div class="metric-value" id="ov-temp">—</div>
+        <div class="metric-bar"><div class="metric-bar-fill" id="ov-temp-bar" style="width:0%"></div></div>
+    </div>
+    <div class="card">
+        <div class="label mb-2">Storage</div>
+        <div class="metric-value" id="ov-storage">—</div>
+        <div class="metric-bar"><div class="metric-bar-fill" id="ov-storage-bar" style="width:0%"></div></div>
+    </div>
+</div>
+
+<!-- Recent Activity -->
+<div class="grid grid-2">
+    <div class="card">
+        <div class="card-header">
+            <span class="card-title">Recent Conversations</span>
+            <a href="{% url 'conversations' %}" class="btn btn-ghost btn-sm">View all</a>
+        </div>
+        {% for conv in recent_conversations %}
+        <div class="conv-card mb-2" onclick="window.location.href='{% url 'assistant' %}'">
+            <div class="conv-icon"><i data-lucide="message-circle"></i></div>
+            <div class="conv-info">
+                <div class="conv-title">{{ conv.title|default:"Unnamed Session" }}</div>
+                <div class="conv-meta">{{ conv.created_at|date:"M d, H:i" }}</div>
+            </div>
+        </div>
+        {% empty %}
+        <div class="empty-state">
+            <i data-lucide="message-circle"></i>
+            <div class="empty-state-title">No conversations yet</div>
+            <div class="empty-state-desc">Start chatting with your companion</div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <span class="card-title">Recent System Events</span>
+            <a href="{% url 'logs' %}" class="btn btn-ghost btn-sm">View all</a>
+        </div>
+        {% for log in recent_logs %}
+        <div class="log-entry">
+            <span class="log-timestamp">{{ log.timestamp|date:"H:i:s" }}</span>
+            <span class="log-level {% if log.level == 'ERROR' %}error{% elif log.level == 'WARN' %}warn{% else %}info{% endif %}">{{ log.level }}</span>
+            <span class="log-message">{{ log.message|truncatewords:12 }}</span>
+        </div>
+        {% empty %}
+        <div class="empty-state">
+            <i data-lucide="scroll-text"></i>
+            <div class="empty-state-title">No events recorded</div>
+            <div class="empty-state-desc">System events will appear here</div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<script src="{% static 'js/companion.js' %}"></script>
+<script>
+    // Fetch device metrics for overview
+    function fetchOverviewMetrics() {
+        fetch('/api/system/metrics/')
+            .then(r => r.json())
+            .then(d => {
+                document.getElementById('ov-cpu').textContent = d.cpu_percent + '%';
+                document.getElementById('ov-cpu-bar').style.width = d.cpu_percent + '%';
+                document.getElementById('ov-cpu-bar').className = 'metric-bar-fill' + (d.cpu_percent > 80 ? ' danger' : d.cpu_percent > 60 ? ' warn' : '');
+
+                document.getElementById('ov-ram').textContent = d.ram_used_gb + ' / ' + d.ram_total_gb + ' GB';
+                document.getElementById('ov-ram-bar').style.width = d.ram_percent + '%';
+                document.getElementById('ov-ram-bar').className = 'metric-bar-fill' + (d.ram_percent > 80 ? ' danger' : d.ram_percent > 60 ? ' warn' : '');
+
+                document.getElementById('ov-temp').textContent = d.temperature_c + '°C';
+                const tempPct = Math.min(100, (d.temperature_c / 85) * 100);
+                document.getElementById('ov-temp-bar').style.width = tempPct + '%';
+                document.getElementById('ov-temp-bar').className = 'metric-bar-fill' + (d.temperature_c > 70 ? ' danger' : d.temperature_c > 55 ? ' warn' : '');
+
+                document.getElementById('ov-storage').textContent = d.storage_percent + '%';
+                document.getElementById('ov-storage-bar').style.width = d.storage_percent + '%';
+            })
+            .catch(() => {});
+    }
+    fetchOverviewMetrics();
+    setInterval(fetchOverviewMetrics, 5000);
+</script>
+{% endblock %}
