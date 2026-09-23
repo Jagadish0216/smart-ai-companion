@@ -60,6 +60,9 @@
 
             <div class="chat-input-area">
                 <input type="text" id="chat-input" class="input" placeholder="Type a message or ask a question..." autocomplete="off">
+                <button class="btn btn-secondary" id="btn-ptt" title="Push to Talk" style="padding: 0 10px;">
+                    <i data-lucide="mic" style="width:15px;height:15px;"></i>
+                </button>
                 <button class="btn btn-primary" id="btn-submit">
                     <i data-lucide="send" style="width:15px;height:15px;"></i> Send
                 </button>
@@ -171,5 +174,122 @@
         appendMessage('Hello. I am your Smart AI Companion. How can I assist you today?', 'ai');
         showToast('New conversation started.', 'success');
     });
+
+    // --- Voice Recording (Push-to-Talk) ---
+    const btnPtt = document.getElementById('btn-ptt');
+    let mediaRecorder;
+    let audioChunks = [];
+    let isRecording = false;
+
+    async function startRecording() {
+        if (isRecording) return;
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream);
+            audioChunks = [];
+
+            mediaRecorder.addEventListener('dataavailable', event => {
+                if (event.data.size > 0) audioChunks.push(event.data);
+            });
+
+            mediaRecorder.addEventListener('stop', sendAudio);
+
+            mediaRecorder.start();
+            isRecording = true;
+            btnPtt.classList.add('btn-danger'); // Highlight button while recording
+            if (window.CompanionController) window.CompanionController.setState('LISTENING');
+        } catch (e) {
+            console.error('Microphone access denied or error:', e);
+            showToast('Microphone access denied.', 'error');
+        }
+    }
+
+    function stopRecording() {
+        if (!isRecording || !mediaRecorder) return;
+        mediaRecorder.stop();
+        mediaRecorder.stream.getTracks().forEach(track => track.stop());
+        isRecording = false;
+        btnPtt.classList.remove('btn-danger');
+    }
+
+    async function sendAudio() {
+        const audioBlob = new Blob(audioChunks);
+        if (audioBlob.size === 0) return;
+
+        chatInput.disabled = true;
+        btnSubmit.disabled = true;
+        btnPtt.disabled = true;
+
+        if (window.CompanionController) window.CompanionController.setState('THINKING');
+
+        const formData = new FormData();
+        formData.append('audio', audioBlob, 'recording.webm');
+        const convId = localStorage.getItem('companion_conversation_id');
+        if (convId) formData.append('conversation_id', convId);
+
+        try {
+            const response = await fetch('/api/assistant/voice/transcribe/', {
+                method: 'POST',
+                headers: { 'X-CSRFToken': csrftoken },
+                body: formData
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || 'Voice API Error');
+            }
+
+            const data = await response.json();
+
+            // Append transcribed text and response
+            appendMessage(data.transcription, 'user');
+            appendMessage(data.response || 'No response received.', 'ai');
+
+            if (data.conversation_id) {
+                localStorage.setItem('companion_conversation_id', data.conversation_id);
+            }
+
+            // Play audio response if available
+            if (data.audio_base64) {
+                if (window.CompanionController) window.CompanionController.setState('SPEAKING');
+                const audio = new Audio('data:audio/wav;base64,' + data.audio_base64);
+                audio.onended = () => {
+                    if (window.CompanionController) window.CompanionController.setState('IDLE');
+                };
+                await audio.play().catch(e => {
+                    console.error('Audio playback failed:', e);
+                    if (window.CompanionController) window.CompanionController.setState('IDLE');
+                });
+            } else {
+                if (window.CompanionController) {
+                    window.CompanionController.setState('SPEAKING');
+                    setTimeout(() => window.CompanionController.setState('IDLE'), 3000);
+                }
+            }
+
+        } catch (e) {
+            console.error('Voice chat error:', e);
+            showToast('Voice processing failed: ' + e.message, 'error');
+            if (window.CompanionController) {
+                window.CompanionController.setState('ALERT');
+                setTimeout(() => window.CompanionController.setState('IDLE'), 3000);
+            }
+        } finally {
+            chatInput.disabled = false;
+            btnSubmit.disabled = false;
+            btnPtt.disabled = false;
+            chatInput.focus();
+        }
+    }
+
+    // Bind PTT events
+    btnPtt.addEventListener('mousedown', startRecording);
+    btnPtt.addEventListener('mouseup', stopRecording);
+    btnPtt.addEventListener('mouseleave', stopRecording);
+
+    // Touch support for mobile/tablets
+    btnPtt.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); });
+    btnPtt.addEventListener('touchend', (e) => { e.preventDefault(); stopRecording(); });
+    btnPtt.addEventListener('touchcancel', (e) => { e.preventDefault(); stopRecording(); });
 </script>
 {% endblock %}

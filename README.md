@@ -17,7 +17,7 @@ A Raspberry Pi 5-based offline-first AI companion. The Django web application se
 | App | Purpose |
 |---|---|
 | `dashboard` | Control center UI templates and views |
-| `assistant` | Chat API, AI engine abstraction, inference orchestration |
+| `assistant` | Chat API, Voice API, AI engine abstraction, STT/TTS providers |
 | `conversations` | Chat history persistence (Conversation + Message models) |
 | `knowledge_base` | Document upload and RAG metadata (foundation only) |
 | `system` | Device metrics, companion state, settings, logging |
@@ -151,6 +151,12 @@ Mock mode requires no external services and is useful for frontend development.
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
 | `OLLAMA_MODEL` | `llama3.2:1b` | Model identifier |
 | `OLLAMA_TIMEOUT` | `120` | Request timeout (seconds) |
+| `STT_ENGINE` | `mock` | Speech-to-Text: `mock` or `whisper_cpp` |
+| `STT_WHISPER_BIN` | `/opt/whisper.cpp/main` | Path to whisper.cpp binary |
+| `STT_WHISPER_MODEL` | `/opt/whisper.cpp/models/ggml-base.en.bin` | Path to whisper.cpp model |
+| `TTS_ENGINE` | `mock` | Text-to-Speech: `mock` or `piper` |
+| `TTS_PIPER_BIN` | `/opt/piper/piper` | Path to Piper binary |
+| `TTS_PIPER_VOICE` | `/opt/piper/en_US-lessac-medium.onnx` | Path to Piper ONNX model |
 
 ## Error Handling
 
@@ -205,24 +211,24 @@ All tests run without a real Ollama server (HTTP calls are mocked).
 | Device Metrics (simulated) | ✅ Implemented |
 | Companion State Control | ✅ Implemented |
 | RAG Pipeline | ⬜ Not implemented |
-| Voice Input (STT) | ⬜ Not implemented |
-| Voice Output (TTS) | ⬜ Not implemented |
+| Voice Input (STT - whisper.cpp) | ✅ Implemented (API & Browser Mic) |
+| Voice Output (TTS - Piper) | ✅ Implemented (API & Browser Playback) |
 | Online Retrieval | ⬜ Not implemented |
-| Real Hardware Sensors | ⬜ Not implemented |
-| Raspberry Pi Deployment | ⬜ Not deployed yet |
+| Real Hardware Sensors/Mics | ⬜ Not implemented |
+| Raspberry Pi Deployment | ✅ Deployed (Django + local LLM) |
 
 ### Important Notes
 
 - The local LLM runs on **CPU only** (Raspberry Pi 5 has no GPU). Inference speed is limited by ARM CPU performance.
 - RAG (Retrieval-Augmented Generation) is **not implemented**. The LLM answers from its training data only.
-- STT (Speech-to-Text) and TTS (Text-to-Speech) are **not implemented**.
 - Online/web retrieval is **not implemented**. All inference is offline.
 - The system prompt establishes the companion persona but the model's behavior depends on its training.
 
 ## Future Integration Plan
 
 1. **Mock AI** ✅
-2. **Local LLM** ← current (Ollama + Llama 3.2 1B)
-3. **Local LLM + RAG** ← add vector store + document processing
-4. **Local LLM + RAG + Online Retrieval** ← add query router
-5. **Voice Pipeline** ← add STT/TTS engines
+2. **Local LLM** ✅
+3. **Voice Pipeline** ✅ (Browser UI -> STT -> LLM -> TTS -> Browser Audio)
+4. **Physical Hardware I/O** ← add Pi-connected microphone and speaker
+5. **Local LLM + RAG** ← add vector store + document processing
+6. **Local LLM + RAG + Online Retrieval** ← add query router

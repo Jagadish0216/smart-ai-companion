@@ -149,3 +149,14 @@ AI_ENGINE = os.environ.get('AI_ENGINE', 'mock')
 OLLAMA_HOST = os.environ.get('OLLAMA_HOST', 'http://localhost:11434')
 OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', 'llama3.2:1b')
 OLLAMA_TIMEOUT = int(os.environ.get('OLLAMA_TIMEOUT', '120'))
+
+# Voice Engine Configuration
+STT_ENGINE = os.environ.get('STT_ENGINE', 'mock')
+STT_WHISPER_BIN = os.environ.get('STT_WHISPER_BIN', '/opt/whisper.cpp/main')
+STT_WHISPER_MODEL = os.environ.get('STT_WHISPER_MODEL', '/opt/whisper.cpp/models/ggml-base.en.bin')
+STT_TIMEOUT = int(os.environ.get('STT_TIMEOUT', '30'))
+
+TTS_ENGINE = os.environ.get('TTS_ENGINE', 'mock')
+TTS_PIPER_BIN = os.environ.get('TTS_PIPER_BIN', '/opt/piper/piper')
+TTS_PIPER_VOICE = os.environ.get('TTS_PIPER_VOICE', '/opt/piper/en_US-lessac-medium.onnx')
+TTS_TIMEOUT = int(os.environ.get('TTS_TIMEOUT', '30'))
