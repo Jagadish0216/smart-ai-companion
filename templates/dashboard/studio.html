@@ -1,229 +1,459 @@
 {% extends 'base.html' %}
+
 {% load static %}
 
+
+
 {% block page_title %}Companion{% endblock %}
+
 {% block page_heading %}Companion{% endblock %}
 
+
+
 {% block content %}
+
 <div class="page-header">
+
     <div class="page-header-title">Companion Control</div>
+
     <div class="page-header-desc">Configure the physical companion's behavior, display, and appearance. All commands are currently simulated.</div>
+
 </div>
+
+
 
 <div class="grid grid-12">
+
     <!-- Live Preview -->
+
     <div class="col-span-5">
+
         <div class="card" style="display:flex;flex-direction:column;align-items:center;text-align:center;">
+
             <div class="card-title mb-4">Live Preview</div>
-            <div class="companion-viewport" id="companion-container" style="margin-bottom:var(--sp-4);">
-                <div class="companion-face-chassis" id="companion-chassis">
-                    <svg class="companion-svg" viewBox="0 0 400 200" preserveAspectRatio="xMidYMid meet">
-                        <g style="transition: transform 0.1s ease-out;">
-                            <path id="eye-left" class="companion-eye" d="M120 80 Q 140 80 160 80 L 160 120 Q 140 120 120 120 Z" />
-                            <path id="eye-right" class="companion-eye" d="M240 80 Q 260 80 280 80 L 280 120 Q 260 120 240 120 Z" />
-                        </g>
-                    </svg>
-                </div>
-                <div class="oled-display" id="companion-oled">READY</div>
-                <div class="companion-state-label" id="companion-state-label">IDLE</div>
-            </div>
+
+            {% include 'components/companion.html' with extra_style="margin-bottom:var(--sp-4);" %}
+
+
 
             <!-- Device Connection Status -->
+
             <div class="w-full" style="text-align:left;">
+
                 <div class="card-title mb-3">Device Connection</div>
+
                 <div class="info-row">
+
                     <span class="info-row-label">Raspberry Pi 5</span>
-                    <span class="badge badge-info">Simulated</span>
+
+                    {% if global_ai_engine|upper != 'LOCAL' %}
+
+                    <span class="badge badge-neutral">Simulated</span>
+
+                    {% else %}
+
+                    <span class="badge badge-success">Live</span>
+
+                    {% endif %}
+
                 </div>
+
                 <div class="info-row">
+
                     <span class="info-row-label">OLED Display</span>
+
+                    {% if global_ai_engine|upper != 'LOCAL' %}
+
                     <span class="badge badge-warning">Demo</span>
+
+                    {% else %}
+
+                    <span class="badge badge-success">Connected</span>
+
+                    {% endif %}
+
                 </div>
+
                 <div class="info-row">
+
                     <span class="info-row-label">Audio System</span>
-                    <span class="badge badge-info">Simulated</span>
+
+                    {% if global_ai_engine|upper != 'LOCAL' %}
+
+                    <span class="badge badge-neutral">Simulated</span>
+
+                    {% else %}
+
+                    <span class="badge badge-success">Online</span>
+
+                    {% endif %}
+
                 </div>
+
                 <div class="info-row">
+
                     <span class="info-row-label">ESP32</span>
+
                     <span class="badge badge-neutral">Not Connected</span>
+
                 </div>
+
             </div>
+
         </div>
+
     </div>
+
+
 
     <!-- Controls -->
+
     <div class="col-span-7" style="display:flex;flex-direction:column;gap:var(--sp-4);max-height:calc(100vh - 160px);overflow-y:auto;">
 
+
+
         <!-- Behavior Mode -->
+
         <div class="card">
+
             <div class="card-title mb-3">Behavior Mode</div>
+
             <div class="mode-group" id="behavior-modes">
+
                 <button class="mode-btn active" data-state="IDLE">
+
                     <i data-lucide="circle" style="width:14px;height:14px;"></i> Idle
+
                 </button>
+
                 <button class="mode-btn" data-state="LISTENING">
+
                     <i data-lucide="ear" style="width:14px;height:14px;"></i> Listening
+
                 </button>
+
                 <button class="mode-btn" data-state="THINKING">
+
                     <i data-lucide="brain" style="width:14px;height:14px;"></i> Thinking
+
                 </button>
+
                 <button class="mode-btn" data-state="SPEAKING">
+
                     <i data-lucide="volume-2" style="width:14px;height:14px;"></i> Speaking
+
                 </button>
+
                 <button class="mode-btn" data-state="ALERT">
+
                     <i data-lucide="alert-triangle" style="width:14px;height:14px;"></i> Alert
+
                 </button>
+
             </div>
+
         </div>
+
+
 
         <!-- Display Controls -->
+
         <div class="card">
+
             <div class="card-title mb-3">Display</div>
+
             <div class="mb-4">
+
                 <div class="label mb-2">OLED Message</div>
+
                 <div class="flex gap-3">
+
                     <input type="text" id="display-text" class="input" placeholder="Text for physical OLED display...">
+
                     <button class="btn btn-primary" id="btn-update-text">
+
                         <i data-lucide="monitor" style="width:14px;height:14px;"></i> Set
+
                     </button>
+
                 </div>
+
             </div>
+
             <div>
+
                 <div class="label mb-2">Brightness</div>
+
                 <div class="flex gap-3 items-center">
+
                     <input type="range" id="brightness-slider" min="0" max="100" value="80" style="flex:1;">
+
                     <span id="brightness-val" class="text-sm text-secondary" style="min-width:36px; text-align:right;">80%</span>
+
                 </div>
+
             </div>
+
         </div>
+
+
 
         <!-- Advanced Controls (collapsible) -->
+
         <div class="card" style="border-style:dashed;">
+
             <button class="collapsible-trigger card-title" id="dev-trigger" onclick="toggleDevControls()">
+
                 <span>Advanced / Developer Controls</span>
+
                 <i data-lucide="chevron-down"></i>
+
             </button>
+
             <div class="collapsible-content" id="dev-controls">
+
                 <div class="mt-4 mb-4">
+
                     <div class="label mb-2">Expression</div>
+
                     <div class="mode-group" id="expression-btns">
+
                         <button class="mode-btn active" data-expr="NEUTRAL">Neutral</button>
+
                         <button class="mode-btn" data-expr="HAPPY">Happy</button>
+
                         <button class="mode-btn" data-expr="THINKING">Pondering</button>
+
                         <button class="mode-btn" data-expr="LISTENING">Attentive</button>
+
                         <button class="mode-btn" data-expr="SLEEP">Sleep</button>
+
                     </div>
+
                 </div>
+
                 <div class="mb-4">
+
                     <div class="label mb-2">Eye Style</div>
+
                     <div class="mode-group" id="eye-style-btns">
+
                         <button class="mode-btn active" data-eye="ROUND">Round</button>
+
                         <button class="mode-btn" data-eye="SQUARE">Square</button>
+
                         <button class="mode-btn" data-eye="SLIT">Slit</button>
+
                         <button class="mode-btn" data-eye="WIDE">Wide</button>
+
                     </div>
+
                 </div>
+
                 <div>
+
                     <div class="label mb-2">Animation</div>
+
                     <div class="mode-group" id="animation-btns">
+
                         <button class="mode-btn active" data-anim="IDLE">Idle Blink</button>
+
                         <button class="mode-btn" data-anim="SCAN">Scan</button>
+
                         <button class="mode-btn" data-anim="BOOT">Boot Seq</button>
+
                         <button class="mode-btn" data-anim="NONE">Static</button>
+
                     </div>
+
                 </div>
+
             </div>
+
         </div>
+
     </div>
+
 </div>
 
+
+
 <script src="{% static 'js/companion.js' %}"></script>
+
 <script>
+
     // ── API Command Helper ──
+
     async function sendCommand(commandData) {
+
         try {
+
             const response = await fetch('/api/system/companion/control/', {
+
                 method: 'POST',
+
                 headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
+
                 body: JSON.stringify(commandData)
+
             });
+
             if (response.ok) {
+
                 const data = await response.json();
+
                 if (window.CompanionController && window.CompanionController.syncVisuals) {
+
                     window.CompanionController.syncVisuals(data);
+
                 }
+
                 return true;
+
             } else {
+
                 showToast('Failed to sync with hardware controller.', 'error');
+
                 return false;
+
             }
+
         } catch (e) {
+
             console.error(e);
+
             showToast('Network error syncing with device.', 'error');
+
             return false;
+
         }
+
     }
+
+
 
     // ── Behavior Mode Buttons ──
+
     document.querySelectorAll('#behavior-modes .mode-btn').forEach(btn => {
+
         btn.addEventListener('click', async (e) => {
+
             document.querySelectorAll('#behavior-modes .mode-btn').forEach(b => b.classList.remove('active'));
+
             btn.classList.add('active');
+
             const state = btn.getAttribute('data-state');
+
             const stateValue = state === 'SPEAKING' ? 'RESPONDING' : (state === 'IDLE' ? 'READY' : state);
+
             await sendCommand({ action: 'set_state', value: stateValue });
+
         });
+
     });
+
+
 
     // ── Expression Buttons ──
+
     document.querySelectorAll('#expression-btns .mode-btn').forEach(btn => {
+
         btn.addEventListener('click', async () => {
+
             document.querySelectorAll('#expression-btns .mode-btn').forEach(b => b.classList.remove('active'));
+
             btn.classList.add('active');
+
             await sendCommand({ action: 'set_expression', value: btn.getAttribute('data-expr') });
+
         });
+
     });
+
+
 
     // ── Eye Style Buttons ──
+
     document.querySelectorAll('#eye-style-btns .mode-btn').forEach(btn => {
+
         btn.addEventListener('click', async () => {
+
             document.querySelectorAll('#eye-style-btns .mode-btn').forEach(b => b.classList.remove('active'));
+
             btn.classList.add('active');
+
             await sendCommand({ action: 'set_eye_style', value: btn.getAttribute('data-eye') });
+
         });
+
     });
+
+
 
     // ── Animation Buttons ──
+
     document.querySelectorAll('#animation-btns .mode-btn').forEach(btn => {
+
         btn.addEventListener('click', async () => {
+
             document.querySelectorAll('#animation-btns .mode-btn').forEach(b => b.classList.remove('active'));
+
             btn.classList.add('active');
+
             await sendCommand({ action: 'set_animation', value: btn.getAttribute('data-anim') });
+
         });
+
     });
+
+
 
     // ── Brightness ──
+
     const brightnessSlider = document.getElementById('brightness-slider');
+
     const brightnessVal = document.getElementById('brightness-val');
+
     brightnessSlider.addEventListener('change', (e) => {
+
         sendCommand({ action: 'set_brightness', value: parseInt(e.target.value, 10) });
+
     });
+
     brightnessSlider.addEventListener('input', (e) => {
+
         brightnessVal.textContent = e.target.value + '%';
+
     });
+
+
 
     // ── Display Text ──
+
     document.getElementById('btn-update-text').addEventListener('click', () => {
+
         const text = document.getElementById('display-text').value;
+
         sendCommand({ action: 'set_display_text', value: text });
+
     });
 
+
+
     // ── Collapsible ──
+
     function toggleDevControls() {
+
         const trigger = document.getElementById('dev-trigger');
+
         const content = document.getElementById('dev-controls');
+
         trigger.classList.toggle('open');
+
         content.classList.toggle('open');
+
     }
+
 </script>
+
 {% endblock %}

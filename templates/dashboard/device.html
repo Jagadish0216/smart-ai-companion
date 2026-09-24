@@ -1,142 +1,291 @@
 {% extends 'base.html' %}
+
 {% block page_title %}Device{% endblock %}
+
 {% block page_heading %}Device{% endblock %}
 
+
+
 {% block content %}
+
 <div class="page-header">
+
     <div class="page-header-title">Edge Device Monitor</div>
-    <div class="page-header-desc">Hardware telemetry from the Raspberry Pi 5 companion unit. All data is currently simulated.</div>
+
+    <div class="page-header-desc">Hardware telemetry from the Raspberry Pi 5 companion unit. {% if global_ai_engine|upper != 'LOCAL' %}All data is currently simulated.{% endif %}</div>
+
 </div>
+
+
 
 <!-- Device Identity -->
+
 <div class="card mb-5">
+
     <div class="flex items-center gap-4">
+
         <div style="width:40px;height:40px;border-radius:var(--radius-md);background:var(--accent-subtle);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+
             <i data-lucide="cpu" style="width:20px;height:20px;color:var(--accent);"></i>
+
         </div>
+
         <div style="flex:1;">
+
             <div style="font-weight:600;font-size:0.9375rem;" id="dev-device-name">Raspberry Pi 5</div>
+
             <div class="text-sm text-secondary">Edge AI Compute Unit</div>
+
         </div>
+
         <span class="badge badge-success" id="dev-status-badge"><span class="status-dot"></span> Online</span>
+
+        {% if global_ai_engine|upper != 'LOCAL' %}
+
         <span class="badge badge-neutral">Simulated</span>
+
+        {% else %}
+
+        <span class="badge badge-success">Live</span>
+
+        {% endif %}
+
     </div>
+
 </div>
+
+
 
 <!-- Primary Metrics -->
+
 <div class="grid grid-4 mb-5">
+
     <div class="card">
+
         <div class="label mb-2">CPU Usage</div>
+
         <div class="metric-value" id="dev-cpu">—</div>
+
         <div class="metric-bar"><div class="metric-bar-fill" id="dev-cpu-bar" style="width:0%"></div></div>
+
     </div>
+
     <div class="card">
+
         <div class="label mb-2">Memory</div>
+
         <div class="metric-value" id="dev-ram">—</div>
+
         <div class="metric-bar"><div class="metric-bar-fill" id="dev-ram-bar" style="width:0%"></div></div>
+
     </div>
+
     <div class="card">
+
         <div class="label mb-2">Storage</div>
+
         <div class="metric-value" id="dev-storage">—</div>
+
         <div class="metric-bar"><div class="metric-bar-fill" id="dev-storage-bar" style="width:0%"></div></div>
+
     </div>
+
     <div class="card">
+
         <div class="label mb-2">Temperature</div>
+
         <div class="metric-value" id="dev-temp">—</div>
+
         <div class="metric-bar"><div class="metric-bar-fill" id="dev-temp-bar" style="width:0%"></div></div>
+
     </div>
+
 </div>
+
+
 
 <!-- Subsystem Status -->
+
 <div class="grid grid-2">
-    <div class="card">
-        <div class="card-title mb-3">Subsystem Status</div>
-        <div class="info-row">
-            <span class="info-row-label">
-                <span class="flex items-center gap-2"><i data-lucide="wifi" style="width:14px;height:14px;"></i> Network</span>
-            </span>
-            <span class="badge badge-success" id="dev-network">—</span>
-        </div>
-        <div class="info-row">
-            <span class="info-row-label">
-                <span class="flex items-center gap-2"><i data-lucide="volume-2" style="width:14px;height:14px;"></i> Audio</span>
-            </span>
-            <span class="badge badge-success" id="dev-audio">—</span>
-        </div>
-        <div class="info-row">
-            <span class="info-row-label">
-                <span class="flex items-center gap-2"><i data-lucide="monitor" style="width:14px;height:14px;"></i> Display</span>
-            </span>
-            <span class="badge badge-success" id="dev-display">—</span>
-        </div>
-    </div>
 
     <div class="card">
-        <div class="card-title mb-3">Hardware Info</div>
+
+        <div class="card-title mb-3">Subsystem Status</div>
+
         <div class="info-row">
-            <span class="info-row-label">Device</span>
-            <span class="info-row-value">Raspberry Pi 5</span>
+
+            <span class="info-row-label">
+
+                <span class="flex items-center gap-2"><i data-lucide="wifi" style="width:14px;height:14px;"></i> Network</span>
+
+            </span>
+
+            <span class="badge badge-success" id="dev-network">—</span>
+
         </div>
+
         <div class="info-row">
-            <span class="info-row-label">Total RAM</span>
-            <span class="info-row-value" id="dev-total-ram">—</span>
+
+            <span class="info-row-label">
+
+                <span class="flex items-center gap-2"><i data-lucide="volume-2" style="width:14px;height:14px;"></i> Audio</span>
+
+            </span>
+
+            <span class="badge badge-success" id="dev-audio">—</span>
+
         </div>
+
         <div class="info-row">
-            <span class="info-row-label">Co-processor</span>
-            <span class="info-row-value text-muted">ESP32 (not connected)</span>
+
+            <span class="info-row-label">
+
+                <span class="flex items-center gap-2"><i data-lucide="monitor" style="width:14px;height:14px;"></i> Display</span>
+
+            </span>
+
+            <span class="badge badge-success" id="dev-display">—</span>
+
         </div>
-        <div class="info-row">
-            <span class="info-row-label">Refresh</span>
-            <span class="info-row-value text-muted">Every 5s</span>
-        </div>
+
     </div>
+
+
+
+    <div class="card">
+
+        <div class="card-title mb-3">Hardware Info</div>
+
+        <div class="info-row">
+
+            <span class="info-row-label">Device</span>
+
+            <span class="info-row-value">Raspberry Pi 5</span>
+
+        </div>
+
+        <div class="info-row">
+
+            <span class="info-row-label">Total RAM</span>
+
+            <span class="info-row-value" id="dev-total-ram">—</span>
+
+        </div>
+
+        <div class="info-row">
+
+            <span class="info-row-label">Co-processor</span>
+
+            <span class="info-row-value text-muted">ESP32 (not connected)</span>
+
+        </div>
+
+        <div class="info-row">
+
+            <span class="info-row-label">Refresh</span>
+
+            <span class="info-row-value text-muted">Every 5s</span>
+
+        </div>
+
+    </div>
+
 </div>
 
+
+
 <script>
+
     function fetchDeviceMetrics() {
+
         fetch('/api/system/metrics/')
+
             .then(r => r.json())
+
             .then(d => {
+
                 // CPU
+
                 document.getElementById('dev-cpu').textContent = d.cpu_percent + '%';
+
                 document.getElementById('dev-cpu-bar').style.width = d.cpu_percent + '%';
+
                 document.getElementById('dev-cpu-bar').className = 'metric-bar-fill' + (d.cpu_percent > 80 ? ' danger' : d.cpu_percent > 60 ? ' warn' : '');
 
+
+
                 // RAM
+
                 document.getElementById('dev-ram').textContent = d.ram_used_gb + ' / ' + d.ram_total_gb + ' GB';
+
                 document.getElementById('dev-ram-bar').style.width = d.ram_percent + '%';
+
                 document.getElementById('dev-ram-bar').className = 'metric-bar-fill' + (d.ram_percent > 80 ? ' danger' : d.ram_percent > 60 ? ' warn' : '');
 
+
+
                 // Storage
+
                 document.getElementById('dev-storage').textContent = d.storage_percent + '%';
+
                 document.getElementById('dev-storage-bar').style.width = d.storage_percent + '%';
 
+
+
                 // Temperature
+
                 document.getElementById('dev-temp').textContent = d.temperature_c + '°C';
+
                 const tempPct = Math.min(100, (d.temperature_c / 85) * 100);
+
                 document.getElementById('dev-temp-bar').style.width = tempPct + '%';
+
                 document.getElementById('dev-temp-bar').className = 'metric-bar-fill' + (d.temperature_c > 70 ? ' danger' : d.temperature_c > 55 ? ' warn' : '');
 
+
+
                 // Subsystems
+
                 document.getElementById('dev-network').textContent = d.network;
+
                 document.getElementById('dev-audio').textContent = d.audio_status;
+
                 document.getElementById('dev-display').textContent = d.display_status;
+
                 document.getElementById('dev-total-ram').textContent = d.ram_total_gb + ' GB';
+
                 document.getElementById('dev-device-name').textContent = d.device_name;
 
+
+
                 // Status badge
+
                 const statusBadge = document.getElementById('dev-status-badge');
+
                 if (d.status === 'ONLINE') {
+
                     statusBadge.className = 'badge badge-success';
+
                     statusBadge.innerHTML = '<span class="status-dot"></span> Online';
+
                 } else {
+
                     statusBadge.className = 'badge badge-error';
+
                     statusBadge.innerHTML = '<span class="status-dot"></span> Offline';
+
                 }
+
             })
+
             .catch(() => {});
+
     }
+
     fetchDeviceMetrics();
+
     setInterval(fetchDeviceMetrics, 5000);
+
 </script>
+
 {% endblock %}

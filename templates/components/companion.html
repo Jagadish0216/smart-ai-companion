@@ -1,0 +1,16 @@
+<div class="companion-viewport {{ size_class|default:'' }}" id="companion-container" {% if extra_style %}style="{{ extra_style }}"{% endif %}>
+    <div class="companion-face-chassis" id="companion-chassis">
+        <svg class="companion-svg" viewBox="0 0 400 200" preserveAspectRatio="xMidYMid meet">
+            <g style="transition: transform 0.1s ease-out;">
+                <path id="eye-left" class="companion-eye" d="M120 80 Q 140 80 160 80 L 160 120 Q 140 120 120 120 Z" />
+                <path id="eye-right" class="companion-eye" d="M240 80 Q 260 80 280 80 L 280 120 Q 260 120 240 120 Z" />
+            </g>
+        </svg>
+    </div>
+    {% if not hide_oled %}
+    <div class="oled-display" id="companion-oled">READY</div>
+    {% endif %}
+    {% if not hide_label %}
+    <div class="companion-state-label" id="companion-state-label">IDLE</div>
+    {% endif %}
+</div>

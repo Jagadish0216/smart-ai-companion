@@ -1,176 +1,335 @@
 {% extends 'base.html' %}
+
 {% load static %}
 
+
+
 {% block page_title %}Overview{% endblock %}
+
 {% block page_heading %}Overview{% endblock %}
 
+
+
 {% block content %}
-<!-- Companion Status — Focal Area -->
-<div class="grid grid-12 mb-5">
-    <div class="col-span-8">
-        <div class="card">
-            <div class="flex items-center gap-5">
-                <div class="companion-compact">
-                    <div class="companion-viewport" id="companion-container">
-                        <div class="companion-face-chassis" id="companion-chassis">
-                            <svg class="companion-svg" viewBox="0 0 400 200" preserveAspectRatio="xMidYMid meet">
-                                <g style="transition: transform 0.1s ease-out;">
-                                    <path id="eye-left" class="companion-eye" d="M120 80 Q 140 80 160 80 L 160 120 Q 140 120 120 120 Z" />
-                                    <path id="eye-right" class="companion-eye" d="M240 80 Q 260 80 280 80 L 280 120 Q 260 120 240 120 Z" />
-                                </g>
-                            </svg>
-                        </div>
-                        <div class="oled-display hidden" id="companion-oled">READY</div>
-                    </div>
-                </div>
-                <div style="flex:1;">
-                    <div class="label mb-2">Companion Status</div>
-                    <div style="font-family:var(--font-display); font-size:1.125rem; font-weight:600; margin-bottom:var(--sp-2);">
-                        Smart AI Companion
-                    </div>
-                    <div class="flex gap-2 flex-wrap mb-3">
-                        <span class="badge badge-success"><span class="status-dot"></span> Online</span>
-                        <span class="badge badge-info" id="companion-mode-badge">Idle</span>
-                        <span class="badge badge-neutral">Simulated</span>
-                    </div>
-                    <div class="flex gap-4">
-                        <button class="btn btn-sm" onclick="window.CompanionController && window.CompanionController.setState('LISTENING')">
-                            <i data-lucide="ear" style="width:14px;height:14px;"></i> Listen
-                        </button>
-                        <button class="btn btn-sm" onclick="window.CompanionController && window.CompanionController.setState('THINKING')">
-                            <i data-lucide="brain" style="width:14px;height:14px;"></i> Think
-                        </button>
-                        <button class="btn btn-sm" onclick="window.CompanionController && window.CompanionController.setState('SPEAKING')">
-                            <i data-lucide="volume-2" style="width:14px;height:14px;"></i> Speak
-                        </button>
-                        <button class="btn btn-sm" onclick="window.CompanionController && window.CompanionController.setState('IDLE')">
-                            <i data-lucide="circle" style="width:14px;height:14px;"></i> Idle
-                        </button>
-                    </div>
-                </div>
-            </div>
+
+<!-- System Health Banner -->
+
+<div class="card mb-5" style="display:flex; align-items:center; justify-content:space-between; border-color:var(--accent-border); background: linear-gradient(135deg, var(--bg-surface), var(--bg-surface-elevated));">
+
+    <div style="display:flex; align-items:center; gap:var(--sp-5);">
+
+        <div style="display:flex; flex-direction:column; align-items:center;">
+
+            {% include 'components/companion.html' with size_class='companion-compact' hide_oled=True %}
+
         </div>
+
+        <div>
+
+            <div style="font-family:var(--font-display); font-size:1.1rem; font-weight:600;">Smart AI Companion</div>
+
+            <div style="font-size:0.8125rem; color:var(--text-muted); margin-top:2px;">All systems operational. Listening for wake word or API events.</div>
+
+        </div>
+
     </div>
+
+    <div style="display:flex; gap:var(--sp-3);">
+
+        <a href="{% url 'assistant' %}" class="btn btn-primary">
+
+            <i data-lucide="message-square"></i> Open Assistant
+
+        </a>
+
+    </div>
+
+</div>
+
+
+
+<div class="grid grid-12 mb-5">
+
+    <div class="col-span-8">
+
+        <div class="card-title mb-3">Device Telemetry
+
+            {% if global_ai_engine|upper != 'LOCAL' %}
+
+            <span class="badge badge-neutral" style="margin-left:var(--sp-2);">Simulated</span>
+
+            {% else %}
+
+            <span class="badge badge-success" style="margin-left:var(--sp-2);">Live</span>
+
+            {% endif %}
+
+        </div>
+
+        <div class="grid grid-2 mb-5">
+
+            <div class="card" style="padding:var(--sp-5);">
+
+                <div class="label mb-2">CPU Usage</div>
+
+                <div class="metric-value" id="ov-cpu">—</div>
+
+                <div class="metric-bar"><div class="metric-bar-fill" id="ov-cpu-bar" style="width:0%"></div></div>
+
+            </div>
+
+            <div class="card" style="padding:var(--sp-5);">
+
+                <div class="label mb-2">Memory</div>
+
+                <div class="metric-value" id="ov-ram">—</div>
+
+                <div class="metric-bar"><div class="metric-bar-fill" id="ov-ram-bar" style="width:0%"></div></div>
+
+            </div>
+
+            <div class="card" style="padding:var(--sp-5);">
+
+                <div class="label mb-2">Temperature</div>
+
+                <div class="metric-value" id="ov-temp">—</div>
+
+                <div class="metric-bar"><div class="metric-bar-fill" id="ov-temp-bar" style="width:0%"></div></div>
+
+            </div>
+
+            <div class="card" style="padding:var(--sp-5);">
+
+                <div class="label mb-2">Storage</div>
+
+                <div class="metric-value" id="ov-storage">—</div>
+
+                <div class="metric-bar"><div class="metric-bar-fill" id="ov-storage-bar" style="width:0%"></div></div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+
 
     <div class="col-span-4">
-        <div class="card" style="height:100%;">
-            <div class="card-title mb-3">AI Engine</div>
-            <div class="info-row">
-                <span class="info-row-label">Model</span>
-                <span class="badge badge-info">Simulated</span>
+
+        <!-- Engine Details -->
+
+        <div class="card-title mb-3">System Configuration</div>
+
+        <div class="card" style="height:calc(100% - 30px);">
+
+            <div class="info-row" style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid var(--border);">
+
+                <span style="font-size:0.875rem; color:var(--text-secondary);">Model</span>
+
+                {% if global_ai_engine|upper != 'LOCAL' %}
+
+                <span class="badge badge-neutral">MOCK AI</span>
+
+                {% else %}
+
+                <span class="badge badge-success">llama3.2:1b</span>
+
+                {% endif %}
+
             </div>
-            <div class="info-row">
-                <span class="info-row-label">Pipeline</span>
-                <span class="info-row-value">Local Mock</span>
+
+            <div class="info-row" style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid var(--border);">
+
+                <span style="font-size:0.875rem; color:var(--text-secondary);">Pipeline</span>
+
+                {% if global_ai_engine|upper != 'LOCAL' %}
+
+                <span style="font-size:0.875rem; font-weight:500;">Local Mock</span>
+
+                {% else %}
+
+                <span style="font-size:0.875rem; font-weight:500;">Whisper + Ollama + Piper</span>
+
+                {% endif %}
+
             </div>
-            <div class="info-row">
-                <span class="info-row-label">Knowledge Base</span>
-                <span class="info-row-value">{{ doc_count }} document{{ doc_count|pluralize }}</span>
+
+            <div class="info-row" style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid var(--border);">
+
+                <span style="font-size:0.875rem; color:var(--text-secondary);">Knowledge Base</span>
+
+                <span style="font-size:0.875rem; font-weight:500;">{{ doc_count }} document{{ doc_count|pluralize }}</span>
+
             </div>
-            <div class="info-row">
-                <span class="info-row-label">Mode</span>
-                <span class="info-row-value">Offline Edge</span>
+
+            <div class="info-row" style="display:flex; justify-content:space-between; align-items:center; padding:12px 0;">
+
+                <span style="font-size:0.875rem; color:var(--text-secondary);">Mode</span>
+
+                <span style="font-size:0.875rem; font-weight:500;">Offline Edge</span>
+
             </div>
+
         </div>
+
     </div>
+
 </div>
 
-<!-- Device Metrics -->
-<div class="card-title mb-3">Device Telemetry <span class="badge badge-neutral" style="margin-left:var(--sp-2);">Simulated</span></div>
-<div class="grid grid-4 mb-5">
-    <div class="card">
-        <div class="label mb-2">CPU Usage</div>
-        <div class="metric-value" id="ov-cpu">—</div>
-        <div class="metric-bar"><div class="metric-bar-fill" id="ov-cpu-bar" style="width:0%"></div></div>
-    </div>
-    <div class="card">
-        <div class="label mb-2">Memory</div>
-        <div class="metric-value" id="ov-ram">—</div>
-        <div class="metric-bar"><div class="metric-bar-fill" id="ov-ram-bar" style="width:0%"></div></div>
-    </div>
-    <div class="card">
-        <div class="label mb-2">Temperature</div>
-        <div class="metric-value" id="ov-temp">—</div>
-        <div class="metric-bar"><div class="metric-bar-fill" id="ov-temp-bar" style="width:0%"></div></div>
-    </div>
-    <div class="card">
-        <div class="label mb-2">Storage</div>
-        <div class="metric-value" id="ov-storage">—</div>
-        <div class="metric-bar"><div class="metric-bar-fill" id="ov-storage-bar" style="width:0%"></div></div>
-    </div>
-</div>
+
 
 <!-- Recent Activity -->
+
 <div class="grid grid-2">
-    <div class="card">
-        <div class="card-header">
-            <span class="card-title">Recent Conversations</span>
-            <a href="{% url 'conversations' %}" class="btn btn-ghost btn-sm">View all</a>
-        </div>
-        {% for conv in recent_conversations %}
-        <div class="conv-card mb-2" onclick="window.location.href='{% url 'assistant' %}'">
-            <div class="conv-icon"><i data-lucide="message-circle"></i></div>
-            <div class="conv-info">
-                <div class="conv-title">{{ conv.title|default:"Unnamed Session" }}</div>
-                <div class="conv-meta">{{ conv.created_at|date:"M d, H:i" }}</div>
-            </div>
-        </div>
-        {% empty %}
-        <div class="empty-state">
-            <i data-lucide="message-circle"></i>
-            <div class="empty-state-title">No conversations yet</div>
-            <div class="empty-state-desc">Start chatting with your companion</div>
-        </div>
-        {% endfor %}
-    </div>
 
     <div class="card">
-        <div class="card-header">
-            <span class="card-title">Recent System Events</span>
-            <a href="{% url 'logs' %}" class="btn btn-ghost btn-sm">View all</a>
+
+        <div class="card-header" style="margin-bottom:var(--sp-4);">
+
+            <span class="card-title" style="margin:0;">Recent Conversations</span>
+
+            <a href="{% url 'conversations' %}" class="btn btn-ghost btn-sm">View all</a>
+
         </div>
-        {% for log in recent_logs %}
-        <div class="log-entry">
-            <span class="log-timestamp">{{ log.timestamp|date:"H:i:s" }}</span>
-            <span class="log-level {% if log.level == 'ERROR' %}error{% elif log.level == 'WARN' %}warn{% else %}info{% endif %}">{{ log.level }}</span>
-            <span class="log-message">{{ log.message|truncatewords:12 }}</span>
+
+        <div style="display:flex; flex-direction:column; gap:var(--sp-3);">
+
+            {% for conv in recent_conversations %}
+
+            <div style="display:flex; align-items:center; gap:var(--sp-4); padding:var(--sp-3); border-radius:var(--radius-lg); background:var(--bg-surface-elevated); cursor:pointer; transition:background 0.2s;" onclick="window.location.href='{% url 'assistant' %}'" onmouseover="this.style.background='var(--bg-inset)'" onmouseout="this.style.background='var(--bg-surface-elevated)'">
+
+                <div style="width:36px; height:36px; border-radius:50%; background:var(--bg-base); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; color:var(--text-secondary);">
+
+                    <i data-lucide="message-square" style="width:16px; height:16px;"></i>
+
+                </div>
+
+                <div>
+
+                    <div style="font-size:0.875rem; font-weight:500; color:var(--text-primary);">{{ conv.title|default:"Unnamed Session" }}</div>
+
+                    <div style="font-size:0.75rem; color:var(--text-muted);">{{ conv.created_at|date:"M d, H:i A" }}</div>
+
+                </div>
+
+            </div>
+
+            {% empty %}
+
+            <div style="text-align:center; padding:var(--sp-6) 0; color:var(--text-muted);">
+
+                <i data-lucide="message-square" style="width:32px; height:32px; opacity:0.5; margin-bottom:var(--sp-2);"></i>
+
+                <div style="font-size:0.875rem;">No conversations yet</div>
+
+            </div>
+
+            {% endfor %}
+
         </div>
-        {% empty %}
-        <div class="empty-state">
-            <i data-lucide="scroll-text"></i>
-            <div class="empty-state-title">No events recorded</div>
-            <div class="empty-state-desc">System events will appear here</div>
-        </div>
-        {% endfor %}
+
     </div>
+
+
+
+    <div class="card">
+
+        <div class="card-header" style="margin-bottom:var(--sp-4);">
+
+            <span class="card-title" style="margin:0;">Recent System Events</span>
+
+            <a href="{% url 'logs' %}" class="btn btn-ghost btn-sm">View all</a>
+
+        </div>
+
+        <div style="display:flex; flex-direction:column;">
+
+            {% for log in recent_logs %}
+
+            <div style="display:flex; align-items:baseline; gap:var(--sp-3); padding:var(--sp-3) 0; border-bottom:1px solid var(--border);">
+
+                <span style="font-family:var(--font-mono); font-size:0.75rem; color:var(--text-muted); flex-shrink:0;">{{ log.timestamp|date:"H:i:s" }}</span>
+
+                <span class="log-level {% if log.level == 'ERROR' %}error{% elif log.level == 'WARN' %}warn{% else %}info{% endif %}" style="font-size:0.65rem; padding:2px 6px; border-radius:4px; font-weight:700;">{{ log.level }}</span>
+
+                <span style="font-size:0.875rem; color:var(--text-primary); flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ log.message }}</span>
+
+            </div>
+
+            {% empty %}
+
+            <div style="text-align:center; padding:var(--sp-6) 0; color:var(--text-muted);">
+
+                <i data-lucide="scroll-text" style="width:32px; height:32px; opacity:0.5; margin-bottom:var(--sp-2);"></i>
+
+                <div style="font-size:0.875rem;">No events recorded</div>
+
+            </div>
+
+            {% endfor %}
+
+        </div>
+
+    </div>
+
 </div>
 
-<script src="{% static 'js/companion.js' %}"></script>
+
+
 <script>
+
     // Fetch device metrics for overview
+
     function fetchOverviewMetrics() {
+
         fetch('/api/system/metrics/')
+
             .then(r => r.json())
+
             .then(d => {
+
                 document.getElementById('ov-cpu').textContent = d.cpu_percent + '%';
+
                 document.getElementById('ov-cpu-bar').style.width = d.cpu_percent + '%';
-                document.getElementById('ov-cpu-bar').className = 'metric-bar-fill' + (d.cpu_percent > 80 ? ' danger' : d.cpu_percent > 60 ? ' warn' : '');
+
+                document.getElementById('ov-cpu-bar').style.background = d.cpu_percent > 80 ? 'var(--error)' : d.cpu_percent > 60 ? 'var(--warning)' : 'var(--accent)';
+
+
 
                 document.getElementById('ov-ram').textContent = d.ram_used_gb + ' / ' + d.ram_total_gb + ' GB';
+
                 document.getElementById('ov-ram-bar').style.width = d.ram_percent + '%';
-                document.getElementById('ov-ram-bar').className = 'metric-bar-fill' + (d.ram_percent > 80 ? ' danger' : d.ram_percent > 60 ? ' warn' : '');
+
+                document.getElementById('ov-ram-bar').style.background = d.ram_percent > 80 ? 'var(--error)' : d.ram_percent > 60 ? 'var(--warning)' : 'var(--accent)';
+
+
 
                 document.getElementById('ov-temp').textContent = d.temperature_c + '°C';
+
                 const tempPct = Math.min(100, (d.temperature_c / 85) * 100);
+
                 document.getElementById('ov-temp-bar').style.width = tempPct + '%';
-                document.getElementById('ov-temp-bar').className = 'metric-bar-fill' + (d.temperature_c > 70 ? ' danger' : d.temperature_c > 55 ? ' warn' : '');
+
+                document.getElementById('ov-temp-bar').style.background = d.temperature_c > 70 ? 'var(--error)' : d.temperature_c > 55 ? 'var(--warning)' : 'var(--accent)';
+
+
 
                 document.getElementById('ov-storage').textContent = d.storage_percent + '%';
+
                 document.getElementById('ov-storage-bar').style.width = d.storage_percent + '%';
+
             })
+
             .catch(() => {});
+
     }
+
     fetchOverviewMetrics();
+
     setInterval(fetchOverviewMetrics, 5000);
+
 </script>
+
+<script src="{% static 'js/companion.js' %}"></script>
+
 {% endblock %}
