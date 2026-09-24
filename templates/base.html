@@ -145,6 +145,7 @@
 
 <!-- Main Content -->
 <div class="main-wrapper">
+    {% block topbar %}
     <header class="topbar">
         <div class="topbar-left">
             <button class="hamburger" id="hamburger-btn" onclick="openSidebar()" aria-label="Open navigation">
@@ -153,7 +154,7 @@
             <h1 class="page-title">{% block page_heading %}Overview{% endblock %}</h1>
         </div>
         <div class="topbar-right">
-            {% if global_ai_engine != 'LOCAL' %}
+            {% if global_ai_engine|upper != 'LOCAL' %}
             <div class="status-pill simulated">
                 <span class="status-dot"></span>
                 <span>Simulated</span>
@@ -170,6 +171,7 @@
             </div>
         </div>
     </header>
+    {% endblock %}
 
     <main class="content-area">
         {% block content %}{% endblock %}

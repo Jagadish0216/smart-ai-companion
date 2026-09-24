@@ -2,306 +2,339 @@
 {% load static %}
 
 {% block page_title %}Assistant{% endblock %}
-{% block page_heading %}Assistant{% endblock %}
+
+{% block topbar %}
+<header class="topbar workspace-header">
+    <div class="topbar-left" style="display:flex; flex-direction:column; align-items:flex-start; justify-content:center; gap:2px;">
+        <div style="display:flex; align-items:center; gap:12px;">
+            <button class="hamburger" id="hamburger-btn" onclick="openSidebar()" aria-label="Open navigation">
+                <i data-lucide="menu"></i>
+            </button>
+            <h1 class="page-title" style="margin:0; font-size:1.125rem;">Smart AI Companion</h1>
+        </div>
+        <div class="subtitle" style="margin:0 0 0 44px; font-size:0.75rem; color:var(--text-muted);">Offline-first edge AI assistant</div>
+    </div>
+    <div class="topbar-right">
+        {% if global_ai_engine|upper != 'LOCAL' %}
+        <div class="status-pill simulated">
+            <span class="status-dot"></span>
+            <span>Simulated AI</span>
+        </div>
+        {% else %}
+        <div class="status-pill local-ai">
+            <span class="status-dot"></span>
+            <span>Local AI</span>
+        </div>
+        {% endif %}
+        <div class="status-pill neutral">
+            <span>{{ global_ai_model|default:'llama3.2:1b' }}</span>
+        </div>
+        <div class="status-pill offline">
+            <span class="status-dot"></span>
+            <span>Offline</span>
+        </div>
+    </div>
+</header>
+{% endblock %}
 
 {% block content %}
-<div class="assistant-layout">
-    
-    <!-- Top Area: Chat History -->
-    <div class="assistant-chat-container">
-        <div class="chat-fade-top"></div>
-        <div class="chat-messages" id="chat-history">
-            <div class="chat-msg ai">
-                <div class="msg-bubble">Hello! I am your Smart AI Companion. How can I assist you with your edge automation tasks today?</div>
-                <div class="msg-meta"><span>{{ global_ai_engine|title }} AI</span><span>System</span></div>
-            </div>
-        </div>
-        <button class="btn btn-ghost btn-sm btn-icon" id="btn-new-conversation" title="New Conversation" style="position:absolute; top: var(--sp-3); right: var(--sp-4); z-index: 10;">
-            <i data-lucide="trash-2"></i>
-        </button>
+<div class="assistant-workspace">
+    <!-- Conversation area -->
+    <div class="chat-viewport" id="chat-history">
+        <!-- Messages will be injected here -->
     </div>
 
-    <!-- Bottom Area: The Companion & Voice Control -->
-    <div class="assistant-control-center">
-        <!-- Digital Twin / Companion Face -->
-        <div class="companion-wrapper">
-            <div class="companion-face-chassis" id="companion-chassis">
-                <svg class="companion-svg" viewBox="0 0 400 200" preserveAspectRatio="xMidYMid meet">
-                    <g style="transition: transform 0.1s ease-out;">
-                        <path id="eye-left" class="companion-eye" d="M120 80 Q 140 80 160 80 L 160 120 Q 140 120 120 120 Z" />
-                        <path id="eye-right" class="companion-eye" d="M240 80 Q 260 80 280 80 L 280 120 Q 260 120 240 120 Z" />
-                    </g>
-                </svg>
-            </div>
-            <div class="companion-state-label mt-3" id="companion-state-label">IDLE</div>
+    <!-- Bottom Interaction Area -->
+    <div class="interaction-island">
+        <div class="companion-status-indicator" id="companion-visual">
+            <svg viewBox="0 0 100 50" class="subtle-face">
+                <g id="companion-eyes" style="transition: transform 0.2s ease;">
+                    <path class="eye" d="M30 20 Q35 20 40 20 L40 30 Q35 30 30 30 Z" />
+                    <path class="eye" d="M60 20 Q65 20 70 20 L70 30 Q65 30 60 30 Z" />
+                </g>
+            </svg>
+            <span id="voice-status">Ready</span>
         </div>
 
-        <!-- Voice Primary Control -->
-        <div id="voice-interaction-area" class="voice-area">
-            <button class="voice-orb" id="btn-voice" title="Tap to speak">
-                <div class="voice-orb-ring" id="voice-orb-ring"></div>
-                <i id="voice-icon-mic" data-lucide="mic" class="voice-orb-icon"></i>
-                <i id="voice-icon-square" data-lucide="square" class="voice-orb-icon" style="display:none;"></i>
-                <svg id="voice-spinner" class="voice-orb-spinner" viewBox="0 0 50 50" style="display:none;">
-                    <circle cx="25" cy="25" r="20" fill="none" stroke="currentColor" stroke-width="3" stroke-dasharray="80 45" stroke-linecap="round">
-                        <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="0.8s" repeatCount="indefinite"/>
-                    </circle>
-                </svg>
-            </button>
-            <div class="voice-status" id="voice-status">Tap to speak</div>
-            <div class="voice-transcript" id="voice-transcript"></div>
-        </div>
+        <button class="primary-mic-button" id="btn-voice" title="Tap to speak">
+            <div class="mic-ring" id="voice-orb-ring"></div>
+            <i id="voice-icon-mic" data-lucide="mic"></i>
+            <i id="voice-icon-square" data-lucide="square" style="display:none;"></i>
+            <svg id="voice-spinner" class="voice-spinner" viewBox="0 0 50 50" style="display:none;">
+                <circle cx="25" cy="25" r="20" fill="none" stroke="currentColor" stroke-width="3" stroke-dasharray="80 45" stroke-linecap="round">
+                    <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="0.8s" repeatCount="indefinite"/>
+                </circle>
+            </svg>
+        </button>
 
-        <!-- Text Fallback / Composer -->
-        <div class="chat-input-wrapper">
-            <div class="chat-input-box">
-                <input type="text" id="chat-input" class="input unstyled-input" placeholder="Type a message to your companion..." autocomplete="off">
-                <button class="btn btn-primary btn-icon btn-sm" id="btn-submit" title="Send message">
-                    <i data-lucide="send"></i>
-                </button>
-            </div>
+        <div class="text-composer">
+            <input type="text" id="chat-input" placeholder="Type a message..." autocomplete="off">
+            <button id="btn-submit" class="composer-submit" title="Send message"><i data-lucide="send"></i></button>
         </div>
     </div>
 </div>
 
 <style>
-/* ── Assistant Layout ──────────────────────────────────────── */
-.assistant-layout {
+/* ── Workspace Layout ── */
+.workspace-header {
+    border-bottom: 1px solid var(--border);
+    padding: var(--sp-3) var(--sp-6);
+}
+.status-pill.neutral {
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+}
+.status-pill.offline {
+    background: rgba(100, 116, 139, 0.1);
+    color: var(--text-secondary);
+    border: 1px solid rgba(100, 116, 139, 0.2);
+}
+.status-pill.offline .status-dot {
+    background: #64748b;
+}
+
+.assistant-workspace {
     display: flex;
     flex-direction: column;
     flex: 1;
-    min-height: 500px;
-    gap: var(--sp-6);
-}
-
-/* ── Chat Container (Top half) ─────────────────────────────── */
-.assistant-chat-container {
-    flex: 1 1 0;
-    min-height: 200px;
+    max-width: 800px;
+    margin: 0 auto;
+    width: 100%;
+    height: calc(100vh - var(--topbar-h) - var(--sp-6)*2);
     position: relative;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    display: flex;
-    flex-direction: column;
     overflow: hidden;
-    box-shadow: var(--shadow-sm);
 }
 
-.chat-header-status {
-    position: absolute;
-    top: var(--sp-3);
-    right: var(--sp-4);
-    z-index: 10;
-}
-
-.chat-fade-top {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 60px;
-    background: linear-gradient(to bottom, var(--bg-surface), transparent);
-    pointer-events: none;
-    z-index: 5;
-}
-
-.chat-messages {
+/* ── Chat Viewport ── */
+.chat-viewport {
     flex: 1;
     overflow-y: auto;
-    padding: var(--sp-6) var(--sp-5) var(--sp-5) var(--sp-5);
+    padding: var(--sp-6) 0;
     display: flex;
     flex-direction: column;
-    gap: var(--sp-4);
+    gap: var(--sp-6);
+    scroll-behavior: smooth;
+    /* Hide scrollbar for a cleaner look */
+    scrollbar-width: none; 
+}
+.chat-viewport::-webkit-scrollbar {
+    display: none;
+}
+.chat-msg {
+    display: flex;
+    flex-direction: column;
+    max-width: 85%;
+    animation: fadeIn 0.3s ease;
+}
+.chat-msg.user {
+    align-self: flex-end;
+    align-items: flex-end;
+}
+.chat-msg.ai {
+    align-self: flex-start;
+    align-items: flex-start;
+}
+.msg-bubble {
+    padding: 12px 16px;
+    border-radius: var(--radius-lg);
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    box-shadow: var(--shadow-sm);
+}
+.chat-msg.user .msg-bubble {
+    background: var(--accent);
+    color: #fff;
+    border-bottom-right-radius: 4px;
+}
+.chat-msg.ai .msg-bubble {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 4px;
+}
+.msg-meta {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 500;
+}
+.msg-meta .mic-indicator {
+    width: 12px;
+    height: 12px;
+    opacity: 0.6;
+}
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
-/* ── Control Center (Bottom half) ──────────────────────────── */
-.assistant-control-center {
+/* ── Interaction Island ── */
+.interaction-island {
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: var(--sp-6);
+    gap: var(--sp-5);
+    padding: var(--sp-4) 0 var(--sp-6) 0;
+    background: var(--bg-base); /* mask scrolling text behind it */
+    position: sticky;
+    bottom: 0;
+    /* subtle fade to blend with chat */
+    box-shadow: 0 -24px 24px -24px var(--bg-base);
 }
 
-/* ── Companion Wrapper ─────────────────────────────────────── */
-.companion-wrapper {
+/* ── Companion Subtle Status ── */
+.companion-status-indicator {
     display: flex;
-    flex-direction: column;
-    align-items: center;
-}
-
-/* ── Voice Area ────────────────────────────────────────────── */
-.voice-area {
-    display: flex;
-    flex-direction: column;
     align-items: center;
     gap: var(--sp-3);
+    color: var(--text-secondary);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    transition: color 0.3s var(--ease);
+}
+.subtle-face {
+    width: 44px;
+    height: 22px;
+    fill: currentColor;
+    opacity: 0.9;
+}
+.subtle-face .eye {
+    transition: transform 0.2s var(--ease);
+    transform-origin: center;
 }
 
-.voice-orb {
-    width: 80px;
-    height: 80px;
+/* ── Primary Mic Button ── */
+.primary-mic-button {
+    width: 72px;
+    height: 72px;
     border-radius: 50%;
     border: none;
     background: var(--bg-surface-elevated);
-    color: var(--text-secondary);
-    cursor: pointer;
+    color: var(--text-primary);
     display: flex;
     align-items: center;
     justify-content: center;
+    cursor: pointer;
     position: relative;
-    transition: background 0.25s var(--ease), color 0.25s var(--ease), box-shadow 0.25s var(--ease), transform 0.1s var(--ease);
-    box-shadow: var(--shadow-md), 0 0 0 2px var(--border);
+    box-shadow: var(--shadow-md), 0 0 0 1px var(--border);
+    transition: all 0.25s var(--ease);
 }
-.voice-orb:hover {
-    background: var(--accent-subtle);
-    color: var(--accent);
-    box-shadow: var(--shadow-md), 0 0 0 2px var(--accent-border);
+.primary-mic-button:hover {
+    background: var(--bg-surface-hover);
+    box-shadow: var(--shadow-md), 0 0 0 1px var(--border-hover);
 }
-.voice-orb:active {
+.primary-mic-button:active {
     transform: scale(0.95);
 }
-.voice-orb:disabled {
-    cursor: not-allowed;
-    opacity: 0.5;
-    transform: none;
-}
-
-.voice-orb-icon {
-    width: 32px;
-    height: 32px;
-    position: relative;
+.primary-mic-button svg:not(.voice-spinner) {
+    width: 28px;
+    height: 28px;
     z-index: 2;
 }
-.voice-orb-spinner {
-    width: 68px;
-    height: 68px;
-    position: absolute;
-    z-index: 1;
-    color: var(--accent);
-}
 
-.voice-orb-ring {
+.mic-ring {
     position: absolute;
     inset: -6px;
     border-radius: 50%;
     border: 2px solid transparent;
-    transition: border-color 0.25s var(--ease), transform 0.3s var(--ease);
+    transition: border-color 0.25s var(--ease);
+    z-index: 0;
 }
 
-/* Recording state */
-.voice-orb.recording {
+/* Mic States */
+.primary-mic-button.recording {
     background: var(--error);
     color: #fff;
-    box-shadow: var(--shadow-md), 0 0 0 3px var(--error-border), 0 0 24px rgba(239, 68, 68, 0.4);
+    box-shadow: var(--shadow-lg), 0 0 20px rgba(239,68,68,0.3);
 }
-.voice-orb.recording .voice-orb-ring {
+.primary-mic-button.recording .mic-ring {
     border-color: var(--error);
-    animation: voice-pulse 1.5s ease-in-out infinite;
+    animation: voice-pulse 1.5s infinite ease-in-out;
+}
+.primary-mic-button.processing {
+    background: var(--accent-subtle);
+    color: var(--accent);
+    box-shadow: var(--shadow-md), 0 0 0 1px var(--accent-border);
+}
+.voice-spinner {
+    width: 60px;
+    height: 60px;
+    position: absolute;
+    z-index: 1;
+}
+.primary-mic-button.speaking {
+    background: var(--accent);
+    color: #fff;
+    box-shadow: var(--shadow-lg), 0 0 20px rgba(59,130,246,0.3);
+}
+.primary-mic-button.speaking .mic-ring {
+    border-color: var(--accent);
+    animation: voice-pulse 1.5s infinite ease-in-out;
 }
 @keyframes voice-pulse {
     0%, 100% { transform: scale(1); opacity: 1; }
-    50% { transform: scale(1.2); opacity: 0; }
+    50% { transform: scale(1.15); opacity: 0; }
 }
 
-/* Processing state */
-.voice-orb.processing {
-    background: var(--accent-subtle);
-    color: var(--accent);
-    box-shadow: var(--shadow-md), 0 0 0 2px var(--accent-border);
-}
-
-/* Speaking state */
-.voice-orb.speaking {
-    background: var(--accent);
-    color: #fff;
-    box-shadow: var(--shadow-md), 0 0 0 3px var(--accent-border), 0 0 24px rgba(59, 130, 246, 0.4);
-}
-.voice-orb.speaking .voice-orb-ring {
-    border-color: var(--accent);
-    animation: voice-pulse 1.5s ease-in-out infinite;
-}
-
-.voice-status {
-    font-family: var(--font-display);
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: var(--text-secondary);
-    letter-spacing: 0.03em;
-    text-align: center;
-    min-height: 1.3em;
-    transition: color 0.25s var(--ease);
-}
-.voice-status.active {
-    color: var(--text-primary);
-}
-
-.voice-transcript {
-    font-size: 0.8125rem;
-    color: var(--text-muted);
-    text-align: center;
-    max-width: 480px;
-    min-height: 0;
-    overflow: hidden;
-    transition: opacity 0.3s var(--ease);
-}
-.voice-transcript:empty { display: none; }
-.voice-transcript .vt-label {
-    font-weight: 600;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    font-size: 0.6875rem;
-    letter-spacing: 0.06em;
-}
-
-/* ── Chat Input ────────────────────────────────────────────── */
-.chat-input-wrapper {
+/* ── Secondary Text Composer ── */
+.text-composer {
     width: 100%;
-    display: flex;
-    justify-content: center;
-}
-.chat-input-box {
-    width: 100%;
-    max-width: 600px;
+    max-width: 500px;
     display: flex;
     align-items: center;
     gap: var(--sp-2);
-    padding: 6px 6px 6px 16px;
     background: var(--bg-surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-full);
+    padding: 6px 6px 6px 20px;
+    box-shadow: var(--shadow-sm);
     transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
-.chat-input-box:focus-within {
-    border-color: var(--accent);
+.text-composer:focus-within {
+    border-color: var(--accent-border);
     box-shadow: 0 0 0 2px var(--accent-subtle);
 }
-.unstyled-input {
+.text-composer input {
     flex: 1;
     background: transparent;
     border: none;
+    outline: none;
     color: var(--text-primary);
     font-size: 0.9375rem;
-    outline: none;
-    box-shadow: none;
-    padding: 0;
 }
-.unstyled-input:focus {
-    box-shadow: none;
-}
-.unstyled-input::placeholder {
+.text-composer input::placeholder {
     color: var(--text-muted);
 }
-
-/* Utility classes for layout */
-.flex { display: flex; }
-.items-center { align-items: center; }
-.gap-2 { gap: var(--sp-2); }
-.mt-3 { margin-top: var(--sp-3); }
+.composer-submit {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: none;
+    background: var(--bg-surface-elevated);
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s var(--ease);
+}
+.text-composer input:not(:placeholder-shown) + .composer-submit {
+    background: var(--accent);
+    color: #fff;
+}
+.composer-submit svg {
+    width: 18px;
+    height: 18px;
+}
 </style>
 
-<script src="{% static 'js/companion.js' %}"></script>
 <script>
 (function() {
     'use strict';
@@ -310,14 +343,13 @@
     const chatInput = document.getElementById('chat-input');
     const btnSubmit = document.getElementById('btn-submit');
     const chatHistory = document.getElementById('chat-history');
-    const btnNewConv = document.getElementById('btn-new-conversation');
     const btnVoice = document.getElementById('btn-voice');
     const voiceIconMic = document.getElementById('voice-icon-mic');
     const voiceIconSquare = document.getElementById('voice-icon-square');
     const voiceSpinner = document.getElementById('voice-spinner');
     const voiceStatus = document.getElementById('voice-status');
-    const voiceTranscript = document.getElementById('voice-transcript');
-    const voiceOrbRing = document.getElementById('voice-orb-ring');
+    const companionEyes = document.getElementById('companion-eyes');
+    const companionStatusIndicator = document.getElementById('companion-visual');
 
     // ── State ──────────────────────────────────────────────
     // IDLE | LISTENING | PROCESSING | SPEAKING | ALERT
@@ -327,52 +359,59 @@
     let recordedMimeType = '';
 
     // ── Helpers ────────────────────────────────────────────
-    const engineLabel = '{{ global_ai_engine|title }} AI';
+    const engineLabel = 'Smart AI Companion';
 
     function appendMessage(text, sender, isVoice) {
         const msgDiv = document.createElement('div');
         msgDiv.className = 'chat-msg ' + sender;
-        if (isVoice) msgDiv.classList.add('voice-origin');
-        const meta = sender === 'user' ? '<span>You</span>' : '<span>' + engineLabel + '</span>';
+        
+        let metaHtml = '';
+        if (sender === 'user') {
+            metaHtml = isVoice ? '<i data-lucide="mic" class="mic-indicator"></i> You said' : 'You';
+        } else {
+            metaHtml = engineLabel;
+        }
+
         msgDiv.innerHTML =
             '<div class="msg-bubble">' + text + '</div>' +
-            '<div class="msg-meta">' + meta + '</div>';
+            '<div class="msg-meta">' + metaHtml + '</div>';
+        
         chatHistory.appendChild(msgDiv);
         chatHistory.scrollTop = chatHistory.scrollHeight;
+
+        if (window.lucide) {
+            lucide.createIcons({nodes: [msgDiv]});
+        }
     }
 
     function setVoiceState(state) {
         voiceState = state;
 
-        // Reset all orb classes
+        // Reset visual classes
         btnVoice.classList.remove('recording', 'processing', 'speaking');
         btnVoice.disabled = false;
+        companionStatusIndicator.style.color = 'var(--text-secondary)';
+        companionEyes.style.transform = 'none';
 
         // Icon visibility
         voiceIconMic.style.display = 'none';
         voiceIconSquare.style.display = 'none';
         voiceSpinner.style.display = 'none';
-        voiceStatus.classList.remove('active');
 
         switch (state) {
             case 'IDLE':
                 voiceIconMic.style.display = 'block';
-                voiceStatus.textContent = 'Tap to speak';
-                voiceTranscript.innerHTML = '';
+                voiceStatus.textContent = 'Ready';
                 chatInput.disabled = false;
-                btnSubmit.disabled = false;
-                if (window.CompanionController) window.CompanionController.setState('IDLE');
                 break;
 
             case 'LISTENING':
                 btnVoice.classList.add('recording');
                 voiceIconSquare.style.display = 'block';
                 voiceStatus.textContent = 'Listening...';
-                voiceStatus.classList.add('active');
-                voiceTranscript.innerHTML = '';
+                companionStatusIndicator.style.color = 'var(--error)';
+                companionEyes.style.transform = 'scaleY(1.2)';
                 chatInput.disabled = true;
-                btnSubmit.disabled = true;
-                if (window.CompanionController) window.CompanionController.setState('LISTENING');
                 break;
 
             case 'PROCESSING':
@@ -380,10 +419,9 @@
                 btnVoice.disabled = true;
                 voiceSpinner.style.display = 'block';
                 voiceStatus.textContent = 'Processing...';
-                voiceStatus.classList.add('active');
+                companionStatusIndicator.style.color = 'var(--accent)';
+                companionEyes.style.transform = 'scaleY(0.4)'; // "thinking" squint
                 chatInput.disabled = true;
-                btnSubmit.disabled = true;
-                if (window.CompanionController) window.CompanionController.setState('THINKING');
                 break;
 
             case 'SPEAKING':
@@ -391,49 +429,66 @@
                 btnVoice.disabled = true;
                 voiceIconMic.style.display = 'block';
                 voiceStatus.textContent = 'Speaking...';
-                voiceStatus.classList.add('active');
+                companionStatusIndicator.style.color = 'var(--accent)';
+                // Simple speaking animation on eyes (bounce)
+                companionEyes.style.transform = 'translateY(-2px)';
                 chatInput.disabled = true;
-                btnSubmit.disabled = true;
-                if (window.CompanionController) window.CompanionController.setState('SPEAKING');
                 break;
 
             case 'ALERT':
                 voiceIconMic.style.display = 'block';
-                voiceStatus.textContent = 'Error — tap to try again';
+                voiceStatus.textContent = 'Error';
+                companionStatusIndicator.style.color = 'var(--error)';
                 chatInput.disabled = false;
-                btnSubmit.disabled = false;
-                if (window.CompanionController) {
-                    window.CompanionController.setState('ALERT');
-                    setTimeout(function() {
-                        if (voiceState === 'ALERT') setVoiceState('IDLE');
-                    }, 4000);
-                }
+                setTimeout(function() {
+                    if (voiceState === 'ALERT') setVoiceState('IDLE');
+                }, 4000);
                 break;
         }
 
-        // Re-render lucide icons for any newly visible SVG placeholders
         if (window.lucide) lucide.createIcons();
     }
+
+    // ── Input interaction handler ──
+    chatInput.addEventListener('input', function() {
+        if (chatInput.value.trim() !== '') {
+            chatInput.classList.add('has-text'); // forces CSS + selector match
+        } else {
+            chatInput.classList.remove('has-text');
+        }
+    });
 
     // ── Conversation loading ───────────────────────────────
     async function loadConversation() {
         const convId = localStorage.getItem('companion_conversation_id');
-        if (!convId) return;
+        if (!convId) {
+            // Default message
+            chatHistory.innerHTML = '';
+            appendMessage('Hello! I am your Smart AI Companion. How can I assist you today?', 'ai', false);
+            return;
+        }
         try {
             const response = await fetch('/api/assistant/chat/?conversation_id=' + convId);
             if (response.status === 404) {
                 localStorage.removeItem('companion_conversation_id');
-                return;
+                return loadConversation();
             }
             if (!response.ok) throw new Error('Failed to load');
             const data = await response.json();
             chatHistory.innerHTML = '';
-            data.messages.forEach(function(msg) {
-                appendMessage(msg.content, msg.role === 'USER' ? 'user' : 'ai', false);
-            });
+            if (data.messages.length === 0) {
+                appendMessage('Hello! I am your Smart AI Companion. How can I assist you today?', 'ai', false);
+            } else {
+                data.messages.forEach(function(msg) {
+                    // Assuming API returns an indicator if message was transcribed from voice (it currently doesn't, so false)
+                    appendMessage(msg.content, msg.role === 'USER' ? 'user' : 'ai', false);
+                });
+            }
             chatHistory.scrollTop = chatHistory.scrollHeight;
         } catch (e) {
             console.error('Error loading conversation:', e);
+            chatHistory.innerHTML = '';
+            appendMessage('Hello! I am your Smart AI Companion. How can I assist you today?', 'ai', false);
         }
     }
 
@@ -445,11 +500,13 @@
         if (!text) return;
 
         chatInput.value = '';
+        // trigger input event to reset button style
+        chatInput.dispatchEvent(new Event('input'));
+        
         chatInput.disabled = true;
-        btnSubmit.disabled = true;
         appendMessage(text, 'user', false);
 
-        if (window.CompanionController) window.CompanionController.setState('THINKING');
+        setVoiceState('PROCESSING');
 
         var payload = { query: text };
         var convId = localStorage.getItem('companion_conversation_id');
@@ -464,39 +521,32 @@
             if (!response.ok) throw new Error('API Error');
             const data = await response.json();
 
-            if (window.CompanionController) {
-                window.CompanionController.setState('SPEAKING');
-                setTimeout(function() { window.CompanionController.setState('IDLE'); }, 3000);
-            }
-
             if (data.conversation_id) {
                 localStorage.setItem('companion_conversation_id', data.conversation_id);
             }
+            
+            // Revert state before appending, so if audio plays it overrides
+            setVoiceState('IDLE');
             appendMessage(data.response || 'No response received.', 'ai', false);
+            
+            // Text responses don't play audio in this simplified flow unless backend sent TTS
+            // (The text endpoint currently does not return TTS audio, only voice endpoint does)
         } catch (e) {
             console.error('Chat error:', e);
             showToast('Failed to connect to AI Service.', 'error');
-            if (window.CompanionController) {
-                window.CompanionController.setState('ALERT');
-                setTimeout(function() { window.CompanionController.setState('IDLE'); }, 3000);
-            }
+            setVoiceState('ALERT');
             appendMessage('Error processing request. Check connection.', 'ai', false);
         } finally {
+            if (voiceState === 'PROCESSING' || voiceState === 'ALERT') {
+                setVoiceState('IDLE');
+            }
             chatInput.disabled = false;
-            btnSubmit.disabled = false;
             chatInput.focus();
         }
     }
 
     btnSubmit.addEventListener('click', sendMessage);
     chatInput.addEventListener('keypress', function(e) { if (e.key === 'Enter') sendMessage(); });
-
-    btnNewConv.addEventListener('click', function() {
-        localStorage.removeItem('companion_conversation_id');
-        chatHistory.innerHTML = '';
-        appendMessage('Hello. I am your Smart AI Companion. How can I assist you today?', 'ai', false);
-        showToast('New conversation started.', 'success');
-    });
 
     // ── Voice interaction ──────────────────────────────────
     function selectMimeType() {
@@ -594,14 +644,9 @@
 
             var data = await response.json();
 
-            // Show transcript preview
-            voiceTranscript.innerHTML =
-                '<span class="vt-label">You said</span><br>' +
-                '"' + data.transcription + '"';
-
-            // Append messages to chat
+            // Append transcribed message to chat
             appendMessage(data.transcription, 'user', true);
-            appendMessage(data.response || 'No response received.', 'ai', true);
+            appendMessage(data.response || 'No response received.', 'ai', false);
 
             if (data.conversation_id) {
                 localStorage.setItem('companion_conversation_id', data.conversation_id);
@@ -651,7 +696,7 @@
         }
     });
 
-    // Initialize voice state
+    // Initialize
     setVoiceState('IDLE');
 })();
 </script>
