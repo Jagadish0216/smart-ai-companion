@@ -27,12 +27,16 @@
         <div class="card">
             <div class="card-title mb-3">Session</div>
             <div class="info-row">
-                <span class="info-row-label">AI Model</span>
-                <span class="badge badge-info">Simulated</span>
+                <span class="info-row-label">AI Engine</span>
+                <span class="badge badge-info">{{ ai_engine }} AI</span>
+            </div>
+            <div class="info-row">
+                <span class="info-row-label">Model</span>
+                <span class="info-row-value">{{ ai_model }}</span>
             </div>
             <div class="info-row">
                 <span class="info-row-label">Mode</span>
-                <span class="info-row-value">Offline</span>
+                <span class="info-row-value">{{ ai_mode }}</span>
             </div>
             <button class="btn btn-sm w-full mt-3" id="btn-new-conversation">
                 <i data-lucide="plus" style="width:14px;height:14px;"></i> New Conversation
@@ -54,14 +58,19 @@
             <div class="chat-messages" id="chat-history">
                 <div class="chat-msg ai">
                     <div class="msg-bubble">Hello. I am your Smart AI Companion. How can I assist you today?</div>
-                    <div class="msg-meta"><span>Simulated AI</span><span>System</span></div>
+                    <div class="msg-meta"><span>{{ ai_engine|title }} AI</span><span>System</span></div>
                 </div>
+            </div>
+
+            <div id="voice-status-area" style="display: none; padding: 8px 15px; font-size: 0.85rem; color: var(--text-secondary); background: var(--bg-secondary); border-top: 1px solid var(--border-color); font-style: italic;">
+                Listening...
             </div>
 
             <div class="chat-input-area">
                 <input type="text" id="chat-input" class="input" placeholder="Type a message or ask a question..." autocomplete="off">
-                <button class="btn btn-secondary" id="btn-ptt" title="Push to Talk" style="padding: 0 10px;">
-                    <i data-lucide="mic" style="width:15px;height:15px;"></i>
+                <button class="btn btn-secondary" id="btn-ptt" title="Push to Talk" style="padding: 0 10px; min-width: 37px;">
+                    <i id="ptt-icon-mic" data-lucide="mic" style="width:15px;height:15px;"></i>
+                    <i id="ptt-icon-spinner" data-lucide="loader" class="lucide-spin" style="width:15px;height:15px;display:none;"></i>
                 </button>
                 <button class="btn btn-primary" id="btn-submit">
                     <i data-lucide="send" style="width:15px;height:15px;"></i> Send
@@ -81,7 +90,7 @@
     function appendMessage(text, sender) {
         const msgDiv = document.createElement('div');
         msgDiv.className = `chat-msg ${sender}`;
-        const meta = sender === 'user' ? '<span>You</span>' : '<span>Simulated AI</span>';
+        const meta = sender === 'user' ? '<span>You</span>' : '<span>{{ ai_engine|title }} AI</span>';
         msgDiv.innerHTML = `
             <div class="msg-bubble">${text}</div>
             <div class="msg-meta">${meta}</div>
@@ -177,9 +186,32 @@
 
     // --- Voice Recording (Push-to-Talk) ---
     const btnPtt = document.getElementById('btn-ptt');
+    const pttIconMic = document.getElementById('ptt-icon-mic');
+    const pttIconSpinner = document.getElementById('ptt-icon-spinner');
+    const voiceStatusArea = document.getElementById('voice-status-area');
+
     let mediaRecorder;
     let audioChunks = [];
     let isRecording = false;
+
+    function setVoiceStatus(text) {
+        if (text) {
+            voiceStatusArea.textContent = text;
+            voiceStatusArea.style.display = 'block';
+        } else {
+            voiceStatusArea.style.display = 'none';
+        }
+    }
+
+    function resetComposer() {
+        chatInput.disabled = false;
+        btnSubmit.disabled = false;
+        btnPtt.disabled = false;
+        pttIconMic.style.display = 'inline-block';
+        pttIconSpinner.style.display = 'none';
+        btnPtt.classList.remove('btn-danger');
+        setVoiceStatus('');
+    }
 
     async function startRecording() {
         if (isRecording) return;
@@ -196,11 +228,16 @@
 
             mediaRecorder.start();
             isRecording = true;
-            btnPtt.classList.add('btn-danger'); // Highlight button while recording
+
+            btnPtt.classList.add('btn-danger');
+            setVoiceStatus("Listening...");
+
             if (window.CompanionController) window.CompanionController.setState('LISTENING');
         } catch (e) {
             console.error('Microphone access denied or error:', e);
             showToast('Microphone access denied.', 'error');
+            resetComposer();
+            if (window.CompanionController) window.CompanionController.setState('IDLE');
         }
     }
 
@@ -214,12 +251,22 @@
 
     async function sendAudio() {
         const audioBlob = new Blob(audioChunks);
-        if (audioBlob.size === 0) return;
+        if (audioBlob.size === 0) {
+            resetComposer();
+            if (window.CompanionController) window.CompanionController.setState('IDLE');
+            return;
+        }
 
+        // Disable input during processing
         chatInput.disabled = true;
         btnSubmit.disabled = true;
         btnPtt.disabled = true;
 
+        // Show spinner
+        pttIconMic.style.display = 'none';
+        pttIconSpinner.style.display = 'inline-block';
+
+        setVoiceStatus("Processing voice...");
         if (window.CompanionController) window.CompanionController.setState('THINKING');
 
         const formData = new FormData();
@@ -241,30 +288,41 @@
 
             const data = await response.json();
 
-            // Append transcribed text and response
-            appendMessage(data.transcription, 'user');
+            // Briefly show what was heard before appending (optional step from constraints)
+            setVoiceStatus('Heard: ' + data.transcription);
+
+            appendMessage(data.transcription + ' 🎙️', 'user');
             appendMessage(data.response || 'No response received.', 'ai');
 
             if (data.conversation_id) {
                 localStorage.setItem('companion_conversation_id', data.conversation_id);
             }
 
-            // Play audio response if available
             if (data.audio_base64) {
+                setVoiceStatus("Speaking...");
                 if (window.CompanionController) window.CompanionController.setState('SPEAKING');
                 const audio = new Audio('data:audio/wav;base64,' + data.audio_base64);
+
                 audio.onended = () => {
                     if (window.CompanionController) window.CompanionController.setState('IDLE');
+                    resetComposer();
                 };
+
                 await audio.play().catch(e => {
                     console.error('Audio playback failed:', e);
-                    if (window.CompanionController) window.CompanionController.setState('IDLE');
+                    showToast('Audio playback failed.', 'error');
+                    if (window.CompanionController) {
+                        window.CompanionController.setState('ALERT');
+                        setTimeout(() => window.CompanionController.setState('IDLE'), 3000);
+                    }
+                    resetComposer();
                 });
             } else {
                 if (window.CompanionController) {
                     window.CompanionController.setState('SPEAKING');
                     setTimeout(() => window.CompanionController.setState('IDLE'), 3000);
                 }
+                resetComposer();
             }
 
         } catch (e) {
@@ -274,11 +332,10 @@
                 window.CompanionController.setState('ALERT');
                 setTimeout(() => window.CompanionController.setState('IDLE'), 3000);
             }
+            resetComposer();
         } finally {
-            chatInput.disabled = false;
-            btnSubmit.disabled = false;
-            btnPtt.disabled = false;
-            chatInput.focus();
+            // Do not call resetComposer here.
+            // It will be called by audio.onended or by the error blocks.
         }
     }
 

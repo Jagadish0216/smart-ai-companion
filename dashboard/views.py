@@ -14,12 +14,27 @@ class DashboardView(TemplateView):
         context['recent_logs'] = SystemLog.objects.order_by('-timestamp')[:5]
         return context
 
+from assistant.ai_engine import get_engine
+from django.conf import settings
+
 class AssistantView(TemplateView):
     template_name = 'dashboard/assistant.html'
 
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        try:
+            engine = get_engine()
+            context['ai_engine'] = engine.engine_name.upper()
+        except Exception:
+            context['ai_engine'] = settings.AI_ENGINE.upper()
+
+        context['ai_model'] = getattr(settings, 'OLLAMA_MODEL', 'Unknown') if context['ai_engine'] == 'LOCAL' else 'Mocked'
+        context['ai_mode'] = 'Offline'
+        return context
+
 class ConversationsView(TemplateView):
     template_name = 'dashboard/conversations.html'
-    
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['conversations'] = (
@@ -31,7 +46,7 @@ class ConversationsView(TemplateView):
 
 class KnowledgeBaseView(TemplateView):
     template_name = 'dashboard/knowledge.html'
-    
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         documents = Document.objects.all().order_by('-uploaded_at')
@@ -45,7 +60,7 @@ class DeviceStatusView(TemplateView):
 
 class LogsView(TemplateView):
     template_name = 'dashboard/logs.html'
-    
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['logs'] = SystemLog.objects.all().order_by('-timestamp')[:100]
@@ -53,7 +68,7 @@ class LogsView(TemplateView):
 
 class SettingsView(TemplateView):
     template_name = 'dashboard/settings.html'
-    
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['settings'] = SystemSetting.objects.all()
