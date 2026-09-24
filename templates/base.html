@@ -153,10 +153,17 @@
             <h1 class="page-title">{% block page_heading %}Overview{% endblock %}</h1>
         </div>
         <div class="topbar-right">
+            {% if global_ai_engine != 'LOCAL' %}
             <div class="status-pill simulated">
                 <span class="status-dot"></span>
                 <span>Simulated</span>
             </div>
+            {% else %}
+            <div class="status-pill local-ai">
+                <span class="status-dot"></span>
+                <span>Local AI</span>
+            </div>
+            {% endif %}
             <div class="status-pill online">
                 <span class="status-dot"></span>
                 <span>System Online</span>

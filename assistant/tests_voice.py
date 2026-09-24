@@ -68,7 +68,13 @@ class VoiceAPITests(TestCase):
         return SimpleUploadedFile("test.webm", b"file_content", content_type="audio/webm")
 
     @override_settings(STT_ENGINE='mock', TTS_ENGINE='mock', AI_ENGINE='mock')
-    def test_voice_transcribe_success(self):
+    @patch('assistant.views.subprocess.run')
+    def test_voice_transcribe_success(self, mock_ffmpeg):
+        """FFmpeg succeeds, mock STT/TTS/AI — full pipeline works."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_ffmpeg.return_value = mock_result
+
         response = self.client.post(self.url, {'audio': self._get_audio_file()}, format='multipart')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -93,35 +99,75 @@ class VoiceAPITests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     @override_settings(STT_ENGINE='mock', TTS_ENGINE='mock', AI_ENGINE='mock')
+    @patch('assistant.views.subprocess.run')
     @patch('assistant.views.get_stt_provider')
-    def test_stt_failure(self, mock_get_stt):
+    def test_stt_failure(self, mock_get_stt, mock_ffmpeg):
+        mock_ff_result = MagicMock()
+        mock_ff_result.returncode = 0
+        mock_ffmpeg.return_value = mock_ff_result
+
         mock_stt = MagicMock()
         mock_stt.transcribe.side_effect = Exception("Mock STT Error")
         mock_get_stt.return_value = mock_stt
 
         response = self.client.post(self.url, {'audio': self._get_audio_file()}, format='multipart')
         self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
-        self.assertIn("Mock STT Error", response.data['detail'])
+        self.assertIn("couldn't understand", response.data['error'])
 
     @override_settings(STT_ENGINE='mock', TTS_ENGINE='mock', AI_ENGINE='local')
+    @patch('assistant.views.subprocess.run')
     @patch('assistant.ai_engine.local.urllib.request.urlopen')
-    def test_ai_engine_failure(self, mock_urlopen):
+    def test_ai_engine_failure(self, mock_urlopen, mock_ffmpeg):
+        mock_ff_result = MagicMock()
+        mock_ff_result.returncode = 0
+        mock_ffmpeg.return_value = mock_ff_result
+
         import urllib.error
         mock_urlopen.side_effect = urllib.error.URLError("Connection refused")
 
         response = self.client.post(self.url, {'audio': self._get_audio_file()}, format='multipart')
         self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
-        self.assertIn("unavailable", response.data['detail'].lower())
+        self.assertIn("could not generate", response.data['error'].lower())
 
     @override_settings(STT_ENGINE='mock', TTS_ENGINE='mock', AI_ENGINE='mock')
+    @patch('assistant.views.subprocess.run')
     @patch('assistant.views.get_tts_provider')
-    def test_tts_failure(self, mock_get_tts):
+    def test_tts_failure(self, mock_get_tts, mock_ffmpeg):
+        mock_ff_result = MagicMock()
+        mock_ff_result.returncode = 0
+        mock_ffmpeg.return_value = mock_ff_result
+
         mock_tts = MagicMock()
         mock_tts.synthesize.side_effect = Exception("Mock TTS Error")
         mock_get_tts.return_value = mock_tts
 
         response = self.client.post(self.url, {'audio': self._get_audio_file()}, format='multipart')
-        self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        # TTS failure now returns 200 with tts_error field + text response
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('tts_error', response.data)
+        self.assertIn('transcription', response.data)
+        self.assertIn('response', response.data)
 
-        # User message and AI message should still be saved even if TTS fails
+        # User message and AI message should still be saved
         self.assertEqual(Message.objects.count(), 2)
+
+    @override_settings(STT_ENGINE='mock', TTS_ENGINE='mock', AI_ENGINE='mock')
+    @patch('assistant.views.subprocess.run')
+    def test_ffmpeg_failure_returns_error(self, mock_ffmpeg):
+        """When FFmpeg fails, the API returns a clear error instead of silently continuing."""
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stderr = b"Unknown format"
+        mock_ffmpeg.return_value = mock_result
+
+        response = self.client.post(self.url, {'audio': self._get_audio_file()}, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        self.assertIn("could not be processed", response.data['error'])
+
+    @override_settings(STT_ENGINE='mock', TTS_ENGINE='mock', AI_ENGINE='mock')
+    @patch('assistant.views.subprocess.run', side_effect=FileNotFoundError)
+    def test_ffmpeg_not_found_returns_error(self, mock_ffmpeg):
+        """When FFmpeg binary is missing, the API returns a clear error."""
+        response = self.client.post(self.url, {'audio': self._get_audio_file()}, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        self.assertIn("ffmpeg", response.data['error'].lower())

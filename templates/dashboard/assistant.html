@@ -5,105 +5,422 @@
 {% block page_heading %}Assistant{% endblock %}
 
 {% block content %}
-<div class="grid grid-12" style="height: calc(100vh - var(--topbar-h) - var(--sp-6)*2);">
-    <!-- Companion sidebar -->
-    <div class="col-span-3" style="display:flex;flex-direction:column;gap:var(--sp-4);">
-        <div class="card" style="display:flex;flex-direction:column;align-items:center;text-align:center;">
-            <div class="companion-compact">
-                <div class="companion-viewport" id="companion-container">
-                    <div class="companion-face-chassis" id="companion-chassis">
-                        <svg class="companion-svg" viewBox="0 0 400 200" preserveAspectRatio="xMidYMid meet">
-                            <g style="transition: transform 0.1s ease-out;">
-                                <path id="eye-left" class="companion-eye" d="M120 80 Q 140 80 160 80 L 160 120 Q 140 120 120 120 Z" />
-                                <path id="eye-right" class="companion-eye" d="M240 80 Q 260 80 280 80 L 280 120 Q 260 120 240 120 Z" />
-                            </g>
-                        </svg>
-                    </div>
-                    <div class="oled-display hidden" id="companion-oled">READY</div>
-                </div>
+<div class="assistant-layout">
+    
+    <!-- Top Area: Chat History -->
+    <div class="assistant-chat-container">
+        <div class="chat-fade-top"></div>
+        <div class="chat-messages" id="chat-history">
+            <div class="chat-msg ai">
+                <div class="msg-bubble">Hello! I am your Smart AI Companion. How can I assist you with your edge automation tasks today?</div>
+                <div class="msg-meta"><span>{{ global_ai_engine|title }} AI</span><span>System</span></div>
             </div>
-            <div class="companion-state-label mt-2" id="companion-state-label">IDLE</div>
         </div>
-        <div class="card">
-            <div class="card-title mb-3">Session</div>
-            <div class="info-row">
-                <span class="info-row-label">AI Engine</span>
-                <span class="badge badge-info">{{ ai_engine }} AI</span>
-            </div>
-            <div class="info-row">
-                <span class="info-row-label">Model</span>
-                <span class="info-row-value">{{ ai_model }}</span>
-            </div>
-            <div class="info-row">
-                <span class="info-row-label">Mode</span>
-                <span class="info-row-value">{{ ai_mode }}</span>
-            </div>
-            <button class="btn btn-sm w-full mt-3" id="btn-new-conversation">
-                <i data-lucide="plus" style="width:14px;height:14px;"></i> New Conversation
-            </button>
-        </div>
+        <button class="btn btn-ghost btn-sm btn-icon" id="btn-new-conversation" title="New Conversation" style="position:absolute; top: var(--sp-3); right: var(--sp-4); z-index: 10;">
+            <i data-lucide="trash-2"></i>
+        </button>
     </div>
 
-    <!-- Chat area -->
-    <div class="col-span-9">
-        <div class="card" style="padding:0; display:flex; flex-direction:column; height:100%;">
-            <div class="chat-header">
-                <div class="flex items-center gap-3">
-                    <i data-lucide="message-square" style="width:18px;height:18px;color:var(--text-secondary);"></i>
-                    <span style="font-weight:600; font-size:0.875rem;">Conversation</span>
-                </div>
-                <span class="badge badge-success"><span class="status-dot"></span> Connected</span>
+    <!-- Bottom Area: The Companion & Voice Control -->
+    <div class="assistant-control-center">
+        <!-- Digital Twin / Companion Face -->
+        <div class="companion-wrapper">
+            <div class="companion-face-chassis" id="companion-chassis">
+                <svg class="companion-svg" viewBox="0 0 400 200" preserveAspectRatio="xMidYMid meet">
+                    <g style="transition: transform 0.1s ease-out;">
+                        <path id="eye-left" class="companion-eye" d="M120 80 Q 140 80 160 80 L 160 120 Q 140 120 120 120 Z" />
+                        <path id="eye-right" class="companion-eye" d="M240 80 Q 260 80 280 80 L 280 120 Q 260 120 240 120 Z" />
+                    </g>
+                </svg>
             </div>
+            <div class="companion-state-label mt-3" id="companion-state-label">IDLE</div>
+        </div>
 
-            <div class="chat-messages" id="chat-history">
-                <div class="chat-msg ai">
-                    <div class="msg-bubble">Hello. I am your Smart AI Companion. How can I assist you today?</div>
-                    <div class="msg-meta"><span>{{ ai_engine|title }} AI</span><span>System</span></div>
-                </div>
-            </div>
+        <!-- Voice Primary Control -->
+        <div id="voice-interaction-area" class="voice-area">
+            <button class="voice-orb" id="btn-voice" title="Tap to speak">
+                <div class="voice-orb-ring" id="voice-orb-ring"></div>
+                <i id="voice-icon-mic" data-lucide="mic" class="voice-orb-icon"></i>
+                <i id="voice-icon-square" data-lucide="square" class="voice-orb-icon" style="display:none;"></i>
+                <svg id="voice-spinner" class="voice-orb-spinner" viewBox="0 0 50 50" style="display:none;">
+                    <circle cx="25" cy="25" r="20" fill="none" stroke="currentColor" stroke-width="3" stroke-dasharray="80 45" stroke-linecap="round">
+                        <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="0.8s" repeatCount="indefinite"/>
+                    </circle>
+                </svg>
+            </button>
+            <div class="voice-status" id="voice-status">Tap to speak</div>
+            <div class="voice-transcript" id="voice-transcript"></div>
+        </div>
 
-            <div id="voice-status-area" style="display: none; padding: 8px 15px; font-size: 0.85rem; color: var(--text-secondary); background: var(--bg-secondary); border-top: 1px solid var(--border-color); font-style: italic;">
-                Listening...
-            </div>
-
-            <div class="chat-input-area">
-                <input type="text" id="chat-input" class="input" placeholder="Type a message or ask a question..." autocomplete="off">
-                <button class="btn btn-secondary" id="btn-ptt" title="Push to Talk" style="padding: 0 10px; min-width: 37px;">
-                    <i id="ptt-icon-mic" data-lucide="mic" style="width:15px;height:15px;"></i>
-                    <i id="ptt-icon-spinner" data-lucide="loader" class="lucide-spin" style="width:15px;height:15px;display:none;"></i>
-                </button>
-                <button class="btn btn-primary" id="btn-submit">
-                    <i data-lucide="send" style="width:15px;height:15px;"></i> Send
+        <!-- Text Fallback / Composer -->
+        <div class="chat-input-wrapper">
+            <div class="chat-input-box">
+                <input type="text" id="chat-input" class="input unstyled-input" placeholder="Type a message to your companion..." autocomplete="off">
+                <button class="btn btn-primary btn-icon btn-sm" id="btn-submit" title="Send message">
+                    <i data-lucide="send"></i>
                 </button>
             </div>
         </div>
     </div>
 </div>
 
+<style>
+/* ── Assistant Layout ──────────────────────────────────────── */
+.assistant-layout {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 500px;
+    gap: var(--sp-6);
+}
+
+/* ── Chat Container (Top half) ─────────────────────────────── */
+.assistant-chat-container {
+    flex: 1 1 0;
+    min-height: 200px;
+    position: relative;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+}
+
+.chat-header-status {
+    position: absolute;
+    top: var(--sp-3);
+    right: var(--sp-4);
+    z-index: 10;
+}
+
+.chat-fade-top {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 60px;
+    background: linear-gradient(to bottom, var(--bg-surface), transparent);
+    pointer-events: none;
+    z-index: 5;
+}
+
+.chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--sp-6) var(--sp-5) var(--sp-5) var(--sp-5);
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-4);
+}
+
+/* ── Control Center (Bottom half) ──────────────────────────── */
+.assistant-control-center {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--sp-6);
+}
+
+/* ── Companion Wrapper ─────────────────────────────────────── */
+.companion-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+/* ── Voice Area ────────────────────────────────────────────── */
+.voice-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--sp-3);
+}
+
+.voice-orb {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    border: none;
+    background: var(--bg-surface-elevated);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    transition: background 0.25s var(--ease), color 0.25s var(--ease), box-shadow 0.25s var(--ease), transform 0.1s var(--ease);
+    box-shadow: var(--shadow-md), 0 0 0 2px var(--border);
+}
+.voice-orb:hover {
+    background: var(--accent-subtle);
+    color: var(--accent);
+    box-shadow: var(--shadow-md), 0 0 0 2px var(--accent-border);
+}
+.voice-orb:active {
+    transform: scale(0.95);
+}
+.voice-orb:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+    transform: none;
+}
+
+.voice-orb-icon {
+    width: 32px;
+    height: 32px;
+    position: relative;
+    z-index: 2;
+}
+.voice-orb-spinner {
+    width: 68px;
+    height: 68px;
+    position: absolute;
+    z-index: 1;
+    color: var(--accent);
+}
+
+.voice-orb-ring {
+    position: absolute;
+    inset: -6px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    transition: border-color 0.25s var(--ease), transform 0.3s var(--ease);
+}
+
+/* Recording state */
+.voice-orb.recording {
+    background: var(--error);
+    color: #fff;
+    box-shadow: var(--shadow-md), 0 0 0 3px var(--error-border), 0 0 24px rgba(239, 68, 68, 0.4);
+}
+.voice-orb.recording .voice-orb-ring {
+    border-color: var(--error);
+    animation: voice-pulse 1.5s ease-in-out infinite;
+}
+@keyframes voice-pulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.2); opacity: 0; }
+}
+
+/* Processing state */
+.voice-orb.processing {
+    background: var(--accent-subtle);
+    color: var(--accent);
+    box-shadow: var(--shadow-md), 0 0 0 2px var(--accent-border);
+}
+
+/* Speaking state */
+.voice-orb.speaking {
+    background: var(--accent);
+    color: #fff;
+    box-shadow: var(--shadow-md), 0 0 0 3px var(--accent-border), 0 0 24px rgba(59, 130, 246, 0.4);
+}
+.voice-orb.speaking .voice-orb-ring {
+    border-color: var(--accent);
+    animation: voice-pulse 1.5s ease-in-out infinite;
+}
+
+.voice-status {
+    font-family: var(--font-display);
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    letter-spacing: 0.03em;
+    text-align: center;
+    min-height: 1.3em;
+    transition: color 0.25s var(--ease);
+}
+.voice-status.active {
+    color: var(--text-primary);
+}
+
+.voice-transcript {
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    text-align: center;
+    max-width: 480px;
+    min-height: 0;
+    overflow: hidden;
+    transition: opacity 0.3s var(--ease);
+}
+.voice-transcript:empty { display: none; }
+.voice-transcript .vt-label {
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    font-size: 0.6875rem;
+    letter-spacing: 0.06em;
+}
+
+/* ── Chat Input ────────────────────────────────────────────── */
+.chat-input-wrapper {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+}
+.chat-input-box {
+    width: 100%;
+    max-width: 600px;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: 6px 6px 6px 16px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full);
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.chat-input-box:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-subtle);
+}
+.unstyled-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    font-size: 0.9375rem;
+    outline: none;
+    box-shadow: none;
+    padding: 0;
+}
+.unstyled-input:focus {
+    box-shadow: none;
+}
+.unstyled-input::placeholder {
+    color: var(--text-muted);
+}
+
+/* Utility classes for layout */
+.flex { display: flex; }
+.items-center { align-items: center; }
+.gap-2 { gap: var(--sp-2); }
+.mt-3 { margin-top: var(--sp-3); }
+</style>
+
 <script src="{% static 'js/companion.js' %}"></script>
 <script>
+(function() {
+    'use strict';
+
+    // ── DOM references ─────────────────────────────────────
     const chatInput = document.getElementById('chat-input');
     const btnSubmit = document.getElementById('btn-submit');
     const chatHistory = document.getElementById('chat-history');
     const btnNewConv = document.getElementById('btn-new-conversation');
+    const btnVoice = document.getElementById('btn-voice');
+    const voiceIconMic = document.getElementById('voice-icon-mic');
+    const voiceIconSquare = document.getElementById('voice-icon-square');
+    const voiceSpinner = document.getElementById('voice-spinner');
+    const voiceStatus = document.getElementById('voice-status');
+    const voiceTranscript = document.getElementById('voice-transcript');
+    const voiceOrbRing = document.getElementById('voice-orb-ring');
 
-    function appendMessage(text, sender) {
+    // ── State ──────────────────────────────────────────────
+    // IDLE | LISTENING | PROCESSING | SPEAKING | ALERT
+    let voiceState = 'IDLE';
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let recordedMimeType = '';
+
+    // ── Helpers ────────────────────────────────────────────
+    const engineLabel = '{{ global_ai_engine|title }} AI';
+
+    function appendMessage(text, sender, isVoice) {
         const msgDiv = document.createElement('div');
-        msgDiv.className = `chat-msg ${sender}`;
-        const meta = sender === 'user' ? '<span>You</span>' : '<span>{{ ai_engine|title }} AI</span>';
-        msgDiv.innerHTML = `
-            <div class="msg-bubble">${text}</div>
-            <div class="msg-meta">${meta}</div>
-        `;
+        msgDiv.className = 'chat-msg ' + sender;
+        if (isVoice) msgDiv.classList.add('voice-origin');
+        const meta = sender === 'user' ? '<span>You</span>' : '<span>' + engineLabel + '</span>';
+        msgDiv.innerHTML =
+            '<div class="msg-bubble">' + text + '</div>' +
+            '<div class="msg-meta">' + meta + '</div>';
         chatHistory.appendChild(msgDiv);
         chatHistory.scrollTop = chatHistory.scrollHeight;
     }
 
+    function setVoiceState(state) {
+        voiceState = state;
+
+        // Reset all orb classes
+        btnVoice.classList.remove('recording', 'processing', 'speaking');
+        btnVoice.disabled = false;
+
+        // Icon visibility
+        voiceIconMic.style.display = 'none';
+        voiceIconSquare.style.display = 'none';
+        voiceSpinner.style.display = 'none';
+        voiceStatus.classList.remove('active');
+
+        switch (state) {
+            case 'IDLE':
+                voiceIconMic.style.display = 'block';
+                voiceStatus.textContent = 'Tap to speak';
+                voiceTranscript.innerHTML = '';
+                chatInput.disabled = false;
+                btnSubmit.disabled = false;
+                if (window.CompanionController) window.CompanionController.setState('IDLE');
+                break;
+
+            case 'LISTENING':
+                btnVoice.classList.add('recording');
+                voiceIconSquare.style.display = 'block';
+                voiceStatus.textContent = 'Listening...';
+                voiceStatus.classList.add('active');
+                voiceTranscript.innerHTML = '';
+                chatInput.disabled = true;
+                btnSubmit.disabled = true;
+                if (window.CompanionController) window.CompanionController.setState('LISTENING');
+                break;
+
+            case 'PROCESSING':
+                btnVoice.classList.add('processing');
+                btnVoice.disabled = true;
+                voiceSpinner.style.display = 'block';
+                voiceStatus.textContent = 'Processing...';
+                voiceStatus.classList.add('active');
+                chatInput.disabled = true;
+                btnSubmit.disabled = true;
+                if (window.CompanionController) window.CompanionController.setState('THINKING');
+                break;
+
+            case 'SPEAKING':
+                btnVoice.classList.add('speaking');
+                btnVoice.disabled = true;
+                voiceIconMic.style.display = 'block';
+                voiceStatus.textContent = 'Speaking...';
+                voiceStatus.classList.add('active');
+                chatInput.disabled = true;
+                btnSubmit.disabled = true;
+                if (window.CompanionController) window.CompanionController.setState('SPEAKING');
+                break;
+
+            case 'ALERT':
+                voiceIconMic.style.display = 'block';
+                voiceStatus.textContent = 'Error — tap to try again';
+                chatInput.disabled = false;
+                btnSubmit.disabled = false;
+                if (window.CompanionController) {
+                    window.CompanionController.setState('ALERT');
+                    setTimeout(function() {
+                        if (voiceState === 'ALERT') setVoiceState('IDLE');
+                    }, 4000);
+                }
+                break;
+        }
+
+        // Re-render lucide icons for any newly visible SVG placeholders
+        if (window.lucide) lucide.createIcons();
+    }
+
+    // ── Conversation loading ───────────────────────────────
     async function loadConversation() {
         const convId = localStorage.getItem('companion_conversation_id');
         if (!convId) return;
         try {
-            const response = await fetch(`/api/assistant/chat/?conversation_id=${convId}`);
+            const response = await fetch('/api/assistant/chat/?conversation_id=' + convId);
             if (response.status === 404) {
                 localStorage.removeItem('companion_conversation_id');
                 return;
@@ -111,9 +428,10 @@
             if (!response.ok) throw new Error('Failed to load');
             const data = await response.json();
             chatHistory.innerHTML = '';
-            data.messages.forEach(msg => {
-                appendMessage(msg.content, msg.role === 'USER' ? 'user' : 'ai');
+            data.messages.forEach(function(msg) {
+                appendMessage(msg.content, msg.role === 'USER' ? 'user' : 'ai', false);
             });
+            chatHistory.scrollTop = chatHistory.scrollHeight;
         } catch (e) {
             console.error('Error loading conversation:', e);
         }
@@ -121,6 +439,7 @@
 
     document.addEventListener('DOMContentLoaded', loadConversation);
 
+    // ── Text chat ──────────────────────────────────────────
     async function sendMessage() {
         const text = chatInput.value.trim();
         if (!text) return;
@@ -128,17 +447,12 @@
         chatInput.value = '';
         chatInput.disabled = true;
         btnSubmit.disabled = true;
+        appendMessage(text, 'user', false);
 
-        appendMessage(text, 'user');
+        if (window.CompanionController) window.CompanionController.setState('THINKING');
 
-        // Companion state transitions
-        if (window.CompanionController) {
-            window.CompanionController.setState('LISTENING');
-            setTimeout(() => window.CompanionController.setState('THINKING'), 500);
-        }
-
-        let payload = { query: text };
-        const convId = localStorage.getItem('companion_conversation_id');
+        var payload = { query: text };
+        var convId = localStorage.getItem('companion_conversation_id');
         if (convId) payload.conversation_id = parseInt(convId, 10);
 
         try {
@@ -152,21 +466,21 @@
 
             if (window.CompanionController) {
                 window.CompanionController.setState('SPEAKING');
-                setTimeout(() => window.CompanionController.setState('IDLE'), 3000);
+                setTimeout(function() { window.CompanionController.setState('IDLE'); }, 3000);
             }
 
             if (data.conversation_id) {
                 localStorage.setItem('companion_conversation_id', data.conversation_id);
             }
-            appendMessage(data.response || 'No response received.', 'ai');
+            appendMessage(data.response || 'No response received.', 'ai', false);
         } catch (e) {
             console.error('Chat error:', e);
             showToast('Failed to connect to AI Service.', 'error');
             if (window.CompanionController) {
                 window.CompanionController.setState('ALERT');
-                setTimeout(() => window.CompanionController.setState('IDLE'), 3000);
+                setTimeout(function() { window.CompanionController.setState('IDLE'); }, 3000);
             }
-            appendMessage('Error processing request. Check connection.', 'ai');
+            appendMessage('Error processing request. Check connection.', 'ai', false);
         } finally {
             chatInput.disabled = false;
             btnSubmit.disabled = false;
@@ -175,178 +489,170 @@
     }
 
     btnSubmit.addEventListener('click', sendMessage);
-    chatInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(); });
+    chatInput.addEventListener('keypress', function(e) { if (e.key === 'Enter') sendMessage(); });
 
-    btnNewConv.addEventListener('click', () => {
+    btnNewConv.addEventListener('click', function() {
         localStorage.removeItem('companion_conversation_id');
         chatHistory.innerHTML = '';
-        appendMessage('Hello. I am your Smart AI Companion. How can I assist you today?', 'ai');
+        appendMessage('Hello. I am your Smart AI Companion. How can I assist you today?', 'ai', false);
         showToast('New conversation started.', 'success');
     });
 
-    // --- Voice Recording (Push-to-Talk) ---
-    const btnPtt = document.getElementById('btn-ptt');
-    const pttIconMic = document.getElementById('ptt-icon-mic');
-    const pttIconSpinner = document.getElementById('ptt-icon-spinner');
-    const voiceStatusArea = document.getElementById('voice-status-area');
-
-    let mediaRecorder;
-    let audioChunks = [];
-    let isRecording = false;
-
-    function setVoiceStatus(text) {
-        if (text) {
-            voiceStatusArea.textContent = text;
-            voiceStatusArea.style.display = 'block';
-        } else {
-            voiceStatusArea.style.display = 'none';
+    // ── Voice interaction ──────────────────────────────────
+    function selectMimeType() {
+        var candidates = [
+            'audio/webm;codecs=opus',
+            'audio/webm',
+            'audio/ogg;codecs=opus',
+            'audio/ogg',
+            'audio/mp4',
+        ];
+        for (var i = 0; i < candidates.length; i++) {
+            if (MediaRecorder.isTypeSupported(candidates[i])) {
+                return candidates[i];
+            }
         }
+        return '';
     }
 
-    function resetComposer() {
-        chatInput.disabled = false;
-        btnSubmit.disabled = false;
-        btnPtt.disabled = false;
-        pttIconMic.style.display = 'inline-block';
-        pttIconSpinner.style.display = 'none';
-        btnPtt.classList.remove('btn-danger');
-        setVoiceStatus('');
+    function fileExtForMime(mime) {
+        if (!mime) return 'audio';
+        var base = mime.split(';')[0].trim();
+        if (base === 'audio/webm') return 'recording.webm';
+        if (base === 'audio/ogg') return 'recording.ogg';
+        if (base === 'audio/mp4') return 'recording.mp4';
+        return 'recording.audio';
     }
 
     async function startRecording() {
-        if (isRecording) return;
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            mediaRecorder = new MediaRecorder(stream);
+            var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            var mimeType = selectMimeType();
+            var options = mimeType ? { mimeType: mimeType } : {};
+
+            mediaRecorder = new MediaRecorder(stream, options);
+            recordedMimeType = mediaRecorder.mimeType;
             audioChunks = [];
 
-            mediaRecorder.addEventListener('dataavailable', event => {
+            mediaRecorder.addEventListener('dataavailable', function(event) {
                 if (event.data.size > 0) audioChunks.push(event.data);
             });
 
-            mediaRecorder.addEventListener('stop', sendAudio);
+            mediaRecorder.addEventListener('stop', function() {
+                stream.getTracks().forEach(function(t) { t.stop(); });
+                sendAudio();
+            });
 
             mediaRecorder.start();
-            isRecording = true;
+            setVoiceState('LISTENING');
 
-            btnPtt.classList.add('btn-danger');
-            setVoiceStatus("Listening...");
-
-            if (window.CompanionController) window.CompanionController.setState('LISTENING');
         } catch (e) {
-            console.error('Microphone access denied or error:', e);
-            showToast('Microphone access denied.', 'error');
-            resetComposer();
-            if (window.CompanionController) window.CompanionController.setState('IDLE');
+            console.error('Microphone error:', e);
+            if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
+                showToast('Microphone access is blocked. Allow microphone access and try again.', 'error');
+            } else {
+                showToast('Unable to start microphone recording.', 'error');
+            }
+            setVoiceState('ALERT');
         }
     }
 
     function stopRecording() {
-        if (!isRecording || !mediaRecorder) return;
-        mediaRecorder.stop();
-        mediaRecorder.stream.getTracks().forEach(track => track.stop());
-        isRecording = false;
-        btnPtt.classList.remove('btn-danger');
+        if (mediaRecorder && mediaRecorder.state === 'recording') {
+            mediaRecorder.stop();
+        }
     }
 
     async function sendAudio() {
-        const audioBlob = new Blob(audioChunks);
+        var audioBlob = new Blob(audioChunks, recordedMimeType ? { type: recordedMimeType } : undefined);
+
         if (audioBlob.size === 0) {
-            resetComposer();
-            if (window.CompanionController) window.CompanionController.setState('IDLE');
+            setVoiceState('IDLE');
             return;
         }
 
-        // Disable input during processing
-        chatInput.disabled = true;
-        btnSubmit.disabled = true;
-        btnPtt.disabled = true;
+        setVoiceState('PROCESSING');
 
-        // Show spinner
-        pttIconMic.style.display = 'none';
-        pttIconSpinner.style.display = 'inline-block';
-
-        setVoiceStatus("Processing voice...");
-        if (window.CompanionController) window.CompanionController.setState('THINKING');
-
-        const formData = new FormData();
-        formData.append('audio', audioBlob, 'recording.webm');
-        const convId = localStorage.getItem('companion_conversation_id');
+        var fileName = fileExtForMime(recordedMimeType);
+        var formData = new FormData();
+        formData.append('audio', audioBlob, fileName);
+        var convId = localStorage.getItem('companion_conversation_id');
         if (convId) formData.append('conversation_id', convId);
 
         try {
-            const response = await fetch('/api/assistant/voice/transcribe/', {
+            var response = await fetch('/api/assistant/voice/transcribe/', {
                 method: 'POST',
                 headers: { 'X-CSRFToken': csrftoken },
                 body: formData
             });
 
             if (!response.ok) {
-                const errorData = await response.json().catch(() => ({}));
-                throw new Error(errorData.error || 'Voice API Error');
+                var errorData = {};
+                try { errorData = await response.json(); } catch (_) {}
+                throw new Error(errorData.error || 'Voice processing failed.');
             }
 
-            const data = await response.json();
+            var data = await response.json();
 
-            // Briefly show what was heard before appending (optional step from constraints)
-            setVoiceStatus('Heard: ' + data.transcription);
+            // Show transcript preview
+            voiceTranscript.innerHTML =
+                '<span class="vt-label">You said</span><br>' +
+                '"' + data.transcription + '"';
 
-            appendMessage(data.transcription + ' 🎙️', 'user');
-            appendMessage(data.response || 'No response received.', 'ai');
+            // Append messages to chat
+            appendMessage(data.transcription, 'user', true);
+            appendMessage(data.response || 'No response received.', 'ai', true);
 
             if (data.conversation_id) {
                 localStorage.setItem('companion_conversation_id', data.conversation_id);
             }
 
+            // Handle TTS audio playback
             if (data.audio_base64) {
-                setVoiceStatus("Speaking...");
-                if (window.CompanionController) window.CompanionController.setState('SPEAKING');
-                const audio = new Audio('data:audio/wav;base64,' + data.audio_base64);
+                setVoiceState('SPEAKING');
+                var audio = new Audio('data:audio/wav;base64,' + data.audio_base64);
 
-                audio.onended = () => {
-                    if (window.CompanionController) window.CompanionController.setState('IDLE');
-                    resetComposer();
+                audio.onended = function() {
+                    setVoiceState('IDLE');
                 };
 
-                await audio.play().catch(e => {
-                    console.error('Audio playback failed:', e);
+                audio.onerror = function() {
                     showToast('Audio playback failed.', 'error');
-                    if (window.CompanionController) {
-                        window.CompanionController.setState('ALERT');
-                        setTimeout(() => window.CompanionController.setState('IDLE'), 3000);
-                    }
-                    resetComposer();
-                });
-            } else {
-                if (window.CompanionController) {
-                    window.CompanionController.setState('SPEAKING');
-                    setTimeout(() => window.CompanionController.setState('IDLE'), 3000);
+                    setVoiceState('ALERT');
+                };
+
+                try {
+                    await audio.play();
+                } catch (playErr) {
+                    console.error('Audio playback failed:', playErr);
+                    showToast('The response was generated, but speech playback failed.', 'error');
+                    setVoiceState('ALERT');
                 }
-                resetComposer();
+            } else if (data.tts_error) {
+                showToast(data.tts_error, 'error');
+                setVoiceState('IDLE');
+            } else {
+                setVoiceState('IDLE');
             }
 
         } catch (e) {
-            console.error('Voice chat error:', e);
-            showToast('Voice processing failed: ' + e.message, 'error');
-            if (window.CompanionController) {
-                window.CompanionController.setState('ALERT');
-                setTimeout(() => window.CompanionController.setState('IDLE'), 3000);
-            }
-            resetComposer();
-        } finally {
-            // Do not call resetComposer here.
-            // It will be called by audio.onended or by the error blocks.
+            console.error('Voice pipeline error:', e);
+            showToast(e.message, 'error');
+            setVoiceState('ALERT');
         }
     }
 
-    // Bind PTT events
-    btnPtt.addEventListener('mousedown', startRecording);
-    btnPtt.addEventListener('mouseup', stopRecording);
-    btnPtt.addEventListener('mouseleave', stopRecording);
+    // Voice button: click-to-toggle
+    btnVoice.addEventListener('click', function() {
+        if (voiceState === 'LISTENING') {
+            stopRecording();
+        } else if (voiceState === 'IDLE' || voiceState === 'ALERT') {
+            startRecording();
+        }
+    });
 
-    // Touch support for mobile/tablets
-    btnPtt.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); });
-    btnPtt.addEventListener('touchend', (e) => { e.preventDefault(); stopRecording(); });
-    btnPtt.addEventListener('touchcancel', (e) => { e.preventDefault(); stopRecording(); });
+    // Initialize voice state
+    setVoiceState('IDLE');
+})();
 </script>
 {% endblock %}
