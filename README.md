@@ -163,6 +163,33 @@ Mock mode requires no external services and is useful for frontend development.
 | `TTS_ENGINE` | `mock` | Text-to-Speech: `mock` or `piper` |
 | `TTS_PIPER_BIN` | `/opt/piper/piper` | Path to Piper binary |
 | `TTS_PIPER_VOICE` | `/opt/piper/en_US-lessac-medium.onnx` | Path to Piper ONNX model |
+| `VOICE_INPUT_SOURCE` | _(required)_ | PipeWire/PulseAudio microphone source used by the standalone voice loop |
+| `VOICE_RECORD_SECONDS` | `5` | Recording duration for each standalone voice cycle |
+| `VOICE_LEADING_SILENCE_SECONDS` | `0.7` | Silence prepended before Bluetooth playback |
+
+## Standalone Raspberry Pi Voice Loop
+
+The standalone loop reuses the configured Whisper, AI engine, and Piper providers. It records from a named PipeWire/PulseAudio source and plays through the current default sink; it does not change the browser voice API.
+
+Find the Realme Buds microphone source and add it to `.env`:
+
+```bash
+pactl list short sources
+```
+
+```env
+VOICE_INPUT_SOURCE=
+VOICE_RECORD_SECONDS=5
+VOICE_LEADING_SILENCE_SECONDS=0.7
+```
+
+Copy the exact source returned by `pactl list short sources` into `VOICE_INPUT_SOURCE`, then run:
+
+```bash
+python scripts/voice_loop.py
+```
+
+Press Enter to record one cycle, or type `q` and press Enter to exit. The loop uses `parecord`, `ffmpeg`, and `paplay`; wake-word detection and VAD are not implemented.
 
 ## Error Handling
 
@@ -181,9 +208,7 @@ python manage.py makemigrations --check
 python manage.py test
 ```
 
-Current test suite: **46 tests** including mocked Ollama integration tests.
-
-All tests run without a real Ollama server (HTTP calls are mocked).
+The suite includes mocked Ollama, voice-provider, and standalone voice-loop coverage. Tests run without real Ollama, Whisper, Piper, or PulseAudio services.
 
 ## Raspberry Pi Benchmark Results
 

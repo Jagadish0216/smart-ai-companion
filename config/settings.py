@@ -162,3 +162,8 @@ TTS_ENGINE = os.environ.get('TTS_ENGINE', 'mock')
 TTS_PIPER_BIN = os.environ.get('TTS_PIPER_BIN', '/opt/piper/piper')
 TTS_PIPER_VOICE = os.environ.get('TTS_PIPER_VOICE', '/opt/piper/en_US-lessac-medium.onnx')
 TTS_TIMEOUT = int(os.environ.get('TTS_TIMEOUT', '30'))
+
+# Standalone Raspberry Pi voice loop
+VOICE_INPUT_SOURCE = os.environ.get('VOICE_INPUT_SOURCE', '')
+VOICE_RECORD_SECONDS = os.environ.get('VOICE_RECORD_SECONDS', '5')
+VOICE_LEADING_SILENCE_SECONDS = os.environ.get('VOICE_LEADING_SILENCE_SECONDS', '0.7')
