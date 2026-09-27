@@ -31,6 +31,13 @@ from assistant.services import AssistantService  # noqa: E402
 from assistant.voice.factory import get_stt_provider, get_tts_provider  # noqa: E402
 
 
+VOICE_SYSTEM_INSTRUCTION = (
+    "This is a spoken voice interaction. Answer in 2–3 short sentences by default. "
+    "Use conversational spoken language. Do not use Markdown, bullet lists, or "
+    "headings. Avoid long explanations unless the user explicitly asks for detail."
+)
+
+
 class VoiceLoopError(Exception):
     """Raised when one stage of a voice cycle cannot complete."""
 
@@ -332,6 +339,7 @@ def run_voice_cycle(
                     AssistantService.process_message,
                     transcript,
                     conversation_id=conversation_id,
+                    system_instruction=VOICE_SYSTEM_INSTRUCTION,
                 )
             )
         except Exception as exc:

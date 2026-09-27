@@ -9,6 +9,7 @@ import wave
 from django.test import SimpleTestCase, override_settings
 
 from scripts.voice_loop import (
+    VOICE_SYSTEM_INSTRUCTION,
     VoiceLoopConfig,
     VoiceLoopError,
     normalize_audio,
@@ -245,7 +246,14 @@ class VoiceLoopTests(SimpleTestCase):
         mock_process_message.assert_called_once_with(
             "What time is it?",
             conversation_id=12,
+            system_instruction=VOICE_SYSTEM_INSTRUCTION,
         )
+        self.assertIn("2–3 short sentences", VOICE_SYSTEM_INSTRUCTION)
+        self.assertIn("Do not use Markdown", VOICE_SYSTEM_INSTRUCTION)
+        self.assertIn("bullet lists", VOICE_SYSTEM_INSTRUCTION)
+        self.assertIn("headings", VOICE_SYSTEM_INSTRUCTION)
+        self.assertIn("conversational spoken language", VOICE_SYSTEM_INSTRUCTION)
+        self.assertIn("explicitly asks for detail", VOICE_SYSTEM_INSTRUCTION)
         mock_get_tts.return_value.synthesize.assert_called_once_with(
             "It is test time. Details are ready."
         )

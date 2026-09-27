@@ -23,7 +23,7 @@ from conversations.models import Conversation, Message
 from assistant.ai_engine import get_engine, reset_engine, AIEngineResult, EngineUnavailableError
 from assistant.ai_engine.base import AIEngine
 from assistant.ai_engine.mock import MockAIEngine
-from assistant.ai_engine.local import LocalLLMEngine
+from assistant.ai_engine.local import LocalLLMEngine, SYSTEM_PROMPT
 
 
 # ─── Original API Tests (preserved from baseline) ──────────────────
@@ -208,6 +208,7 @@ class LocalLLMEngineTests(TestCase):
 
         # First message should be system prompt
         self.assertEqual(messages[0]["role"], "system")
+        self.assertEqual(messages[0]["content"], SYSTEM_PROMPT)
         self.assertIn("Smart AI Companion", messages[0]["content"])
 
         # History messages
@@ -227,6 +228,19 @@ class LocalLLMEngineTests(TestCase):
         self.assertEqual(messages[0]["role"], "system")
         self.assertEqual(messages[1]["role"], "user")
         self.assertEqual(messages[1]["content"], "Hello")
+
+    def test_message_building_with_request_instruction(self):
+        instruction = "Use short spoken sentences and no Markdown."
+
+        messages = self.engine._build_messages(
+            "Hello",
+            None,
+            system_instruction=instruction,
+        )
+
+        self.assertTrue(messages[0]["content"].startswith(SYSTEM_PROMPT))
+        self.assertIn(instruction, messages[0]["content"])
+        self.assertEqual(messages[1], {"role": "user", "content": "Hello"})
 
 
 class LocalLLMEngineMockedTests(TestCase):
@@ -581,6 +595,67 @@ class AssistantServiceEngineIntegrationTests(TestCase):
         self.assertEqual(conv.messages.filter(sender='AI').count(), 1)
         ai_msg = conv.messages.get(sender='AI')
         self.assertEqual(ai_msg.text, "The Raspberry Pi is a small computer.")
+
+
+class AssistantServiceRequestInstructionTests(TestCase):
+    @patch("assistant.services.get_engine")
+    def test_default_call_does_not_pass_request_instruction(self, mock_get_engine):
+        engine = MagicMock()
+        engine.generate.return_value = AIEngineResult(
+            text="Normal response",
+            engine="mock",
+            latency_ms=1,
+        )
+        mock_get_engine.return_value = engine
+
+        from assistant.services import AssistantService
+
+        conversation, text, _metadata, error = AssistantService.process_message(
+            "Normal browser question"
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(text, "Normal response")
+        call_kwargs = engine.generate.call_args.kwargs
+        self.assertNotIn("system_instruction", call_kwargs)
+        self.assertEqual(conversation.messages.count(), 2)
+
+    @patch("assistant.services.get_engine")
+    def test_request_instruction_is_forwarded_and_messages_persist(self, mock_get_engine):
+        engine = MagicMock()
+        engine.generate.return_value = AIEngineResult(
+            text="Concise spoken response.",
+            engine="local",
+            model="test-model",
+            latency_ms=2,
+        )
+        mock_get_engine.return_value = engine
+
+        from assistant.services import AssistantService
+
+        instruction = "Use concise spoken language."
+        conversation, text, _metadata, error = AssistantService.process_message(
+            "Voice question",
+            system_instruction=instruction,
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(text, "Concise spoken response.")
+        self.assertEqual(
+            engine.generate.call_args.kwargs["system_instruction"],
+            instruction,
+        )
+        self.assertEqual(
+            list(
+                conversation.messages
+                .order_by("id")
+                .values_list("sender", "text")
+            ),
+            [
+                ("USER", "Voice question"),
+                ("AI", "Concise spoken response."),
+            ],
+        )
 
 
 # ─── API Response Metadata Tests ────────────────────────────────

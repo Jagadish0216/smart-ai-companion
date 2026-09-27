@@ -89,7 +89,12 @@ class LocalLLMEngine(AIEngine):
         except Exception:
             return False
 
-    def generate(self, query: str, conversation_history: list | None = None) -> AIEngineResult:
+    def generate(
+        self,
+        query: str,
+        conversation_history: list | None = None,
+        system_instruction: str | None = None,
+    ) -> AIEngineResult:
         """
         Send a chat request to Ollama and return the structured result.
 
@@ -102,7 +107,11 @@ class LocalLLMEngine(AIEngine):
                 "Ensure Ollama is installed and running: https://ollama.com"
             )
 
-        messages = self._build_messages(query, conversation_history)
+        messages = self._build_messages(
+            query,
+            conversation_history,
+            system_instruction=system_instruction,
+        )
 
         start = time.perf_counter()
 
@@ -136,7 +145,12 @@ class LocalLLMEngine(AIEngine):
 
     # ── Internal helpers ───────────────────────────────────────
 
-    def _build_messages(self, query: str, history: list | None) -> list[dict]:
+    def _build_messages(
+        self,
+        query: str,
+        history: list | None,
+        system_instruction: str | None = None,
+    ) -> list[dict]:
         """
         Build the messages array for Ollama /api/chat.
 
@@ -151,9 +165,14 @@ class LocalLLMEngine(AIEngine):
 
         Ollama applies the correct chat template for the model automatically.
         """
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-        ]
+        system_content = SYSTEM_PROMPT
+        if system_instruction and system_instruction.strip():
+            system_content += (
+                "\n\nAdditional instruction for this request:\n"
+                + system_instruction.strip()
+            )
+
+        messages = [{"role": "system", "content": system_content}]
 
         if history:
             for msg in history[-10:]:  # Last 10 messages for context window

@@ -24,7 +24,12 @@ class MockAIEngine(AIEngine):
     def engine_name(self) -> str:
         return "mock"
 
-    def generate(self, query: str, conversation_history: list | None = None) -> AIEngineResult:
+    def generate(
+        self,
+        query: str,
+        conversation_history: list | None = None,
+        system_instruction: str | None = None,
+    ) -> AIEngineResult:
         start = time.perf_counter()
 
         # Simulate processing

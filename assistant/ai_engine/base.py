@@ -40,7 +40,12 @@ class AIEngine(ABC):
     """
 
     @abstractmethod
-    def generate(self, query: str, conversation_history: list | None = None) -> AIEngineResult:
+    def generate(
+        self,
+        query: str,
+        conversation_history: list | None = None,
+        system_instruction: str | None = None,
+    ) -> AIEngineResult:
         """
         Generate a response for the given query.
 
@@ -49,6 +54,7 @@ class AIEngine(ABC):
             conversation_history: Optional list of prior messages as dicts
                                   [{"role": "USER"|"AI", "content": "..."}]
                                   for context-aware responses.
+            system_instruction: Optional instruction scoped to this request.
 
         Returns:
             AIEngineResult with the response text and metadata.

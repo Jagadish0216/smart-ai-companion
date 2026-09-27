@@ -17,10 +17,17 @@ logger = logging.getLogger(__name__)
 class AssistantService:
 
     @staticmethod
-    def process_message(query: str, conversation_id: int = None) -> tuple:
+    def process_message(
+        query: str,
+        conversation_id: int = None,
+        system_instruction: str | None = None,
+    ) -> tuple:
         """
         Process a user message: persist it, run AI inference, persist the
         AI response.
+
+        ``system_instruction`` is optional and scoped to this inference call.
+        Omitting it preserves the normal text-chat engine call unchanged.
 
         Returns:
             (conversation, response_text, metadata_dict, error_string)
@@ -53,7 +60,14 @@ class AssistantService:
             # Build lightweight conversation history for context
             history = _get_conversation_history(conversation)
 
-            result = engine.generate(query, conversation_history=history)
+            if system_instruction:
+                result = engine.generate(
+                    query,
+                    conversation_history=history,
+                    system_instruction=system_instruction,
+                )
+            else:
+                result = engine.generate(query, conversation_history=history)
 
             # ── Persist AI response ──
             Message.objects.create(
