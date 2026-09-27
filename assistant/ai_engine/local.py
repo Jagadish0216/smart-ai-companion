@@ -53,6 +53,7 @@ class LocalLLMEngine(AIEngine):
         OLLAMA_MODEL   — Model to use (default: llama3.2:1b)
         OLLAMA_TIMEOUT — Request timeout in seconds (default: 120)
         OLLAMA_KEEP_ALIVE — How long Ollama keeps the model loaded (default: 30m)
+        OLLAMA_NUM_PREDICT — Maximum tokens to generate (default: 128)
     """
 
     def __init__(
@@ -61,6 +62,7 @@ class LocalLLMEngine(AIEngine):
         model: Optional[str] = None,
         timeout: Optional[int] = None,
         keep_alive: Optional[str] = None,
+        num_predict: Optional[int] = None,
     ):
         import os
 
@@ -68,6 +70,11 @@ class LocalLLMEngine(AIEngine):
         self._model = model or os.environ.get("OLLAMA_MODEL", "llama3.2:1b")
         self._timeout = timeout or int(os.environ.get("OLLAMA_TIMEOUT", "120"))
         self._keep_alive = keep_alive or os.environ.get("OLLAMA_KEEP_ALIVE", "30m")
+        self._num_predict = (
+            num_predict
+            if num_predict is not None
+            else int(os.environ.get("OLLAMA_NUM_PREDICT", "128"))
+        )
 
     @property
     def engine_name(self) -> str:
@@ -108,6 +115,7 @@ class LocalLLMEngine(AIEngine):
             raise EngineUnavailableError(f"Inference failed: {exc}") from exc
 
         elapsed_ms = int((time.perf_counter() - start) * 1000)
+        self._log_performance_metrics(response_data)
 
         # Extract response text
         message = response_data.get("message", {})
@@ -117,13 +125,6 @@ class LocalLLMEngine(AIEngine):
             raise EngineUnavailableError(
                 "Ollama returned an empty response. The model may not be loaded correctly."
             )
-
-        # Extract performance metadata from Ollama response
-        eval_count = response_data.get("eval_count", 0)
-        eval_duration_ns = response_data.get("eval_duration", 0)
-        tokens_per_sec = 0.0
-        if eval_duration_ns > 0 and eval_count > 0:
-            tokens_per_sec = round(eval_count / (eval_duration_ns / 1e9), 1)
 
         return AIEngineResult(
             text=text,
@@ -165,6 +166,50 @@ class LocalLLMEngine(AIEngine):
 
         return messages
 
+    def _log_performance_metrics(self, response_data: dict) -> None:
+        """Log Ollama token counts, timings, and throughput when available."""
+        metrics = {}
+
+        for count_field in ("prompt_eval_count", "eval_count"):
+            count = response_data.get(count_field)
+            if isinstance(count, (int, float)):
+                metrics[count_field] = count
+
+        duration_fields = (
+            "prompt_eval_duration",
+            "eval_duration",
+            "total_duration",
+            "load_duration",
+        )
+        for duration_field in duration_fields:
+            duration_ns = response_data.get(duration_field)
+            if isinstance(duration_ns, (int, float)):
+                metrics[f"{duration_field}_ms"] = round(
+                    duration_ns / 1_000_000,
+                    2,
+                )
+
+        throughput_fields = (
+            ("prompt_eval_count", "prompt_eval_duration", "prompt_tokens_per_sec"),
+            ("eval_count", "eval_duration", "tokens_per_sec"),
+        )
+        for count_field, duration_field, metric_name in throughput_fields:
+            count = response_data.get(count_field)
+            duration_ns = response_data.get(duration_field)
+            if (
+                isinstance(count, (int, float))
+                and isinstance(duration_ns, (int, float))
+                and duration_ns > 0
+            ):
+                metrics[metric_name] = round(count / (duration_ns / 1e9), 1)
+
+        if metrics:
+            logger.info(
+                "Ollama inference metrics: %s",
+                json.dumps(metrics, sort_keys=True),
+                extra={"ollama_metrics": metrics, **metrics},
+            )
+
     def _call_ollama_chat(self, messages: list[dict]) -> dict:
         """
         Make a synchronous HTTP request to Ollama's /api/chat endpoint.
@@ -183,6 +228,7 @@ class LocalLLMEngine(AIEngine):
             "messages": messages,
             "stream": False,
             "keep_alive": self._keep_alive,
+            "options": {"num_predict": self._num_predict},
         }).encode("utf-8")
 
         req = urllib.request.Request(

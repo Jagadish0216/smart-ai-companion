@@ -62,6 +62,8 @@ class AssistantView(TemplateView):
 
         context['ai_mode'] = 'Offline'
 
+        context['chat_request_timeout_ms'] = settings.CHAT_REQUEST_TIMEOUT_SECONDS * 1000
+
 
 
         # Pass conversation history to the template for the left sidebar

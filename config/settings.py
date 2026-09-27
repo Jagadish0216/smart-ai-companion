@@ -150,6 +150,7 @@ AI_ENGINE = os.environ.get('AI_ENGINE', 'mock')
 OLLAMA_HOST = os.environ.get('OLLAMA_HOST', 'http://localhost:11434')
 OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', 'llama3.2:1b')
 OLLAMA_TIMEOUT = int(os.environ.get('OLLAMA_TIMEOUT', '120'))
+CHAT_REQUEST_TIMEOUT_SECONDS = int(os.environ.get('CHAT_REQUEST_TIMEOUT_SECONDS', '30'))
 
 # Voice Engine Configuration
 STT_ENGINE = os.environ.get('STT_ENGINE', 'mock')

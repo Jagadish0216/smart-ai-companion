@@ -126,6 +126,8 @@ AI_ENGINE=local
 OLLAMA_HOST=http://localhost:11434
 OLLAMA_MODEL=llama3.2:1b
 OLLAMA_KEEP_ALIVE=30m
+OLLAMA_NUM_PREDICT=128
+CHAT_REQUEST_TIMEOUT_SECONDS=30
 ```
 
 Then restart Django:
@@ -153,6 +155,8 @@ Mock mode requires no external services and is useful for frontend development.
 | `OLLAMA_MODEL` | `llama3.2:1b` | Model identifier |
 | `OLLAMA_TIMEOUT` | `120` | Request timeout (seconds) |
 | `OLLAMA_KEEP_ALIVE` | `30m` | How long Ollama keeps the model loaded after a request |
+| `OLLAMA_NUM_PREDICT` | `128` | Maximum number of tokens Ollama generates per response |
+| `CHAT_REQUEST_TIMEOUT_SECONDS` | `30` | Browser timeout for chat POST requests |
 | `STT_ENGINE` | `mock` | Speech-to-Text: `mock` or `whisper_cpp` |
 | `STT_WHISPER_BIN` | `/opt/whisper.cpp/main` | Path to whisper.cpp binary |
 | `STT_WHISPER_MODEL` | `/opt/whisper.cpp/models/ggml-base.en.bin` | Path to whisper.cpp model |

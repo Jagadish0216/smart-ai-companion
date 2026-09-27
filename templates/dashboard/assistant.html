@@ -928,6 +928,8 @@
 
     'use strict';
 
+    const CHAT_REQUEST_TIMEOUT_MS = {{ chat_request_timeout_ms|default:30000 }};
+
 
 
     const chatInput = document.getElementById('chat-input');
@@ -1422,6 +1424,10 @@
 
 
 
+        const controller = new AbortController();
+
+        const requestTimeoutId = setTimeout(() => controller.abort(), CHAT_REQUEST_TIMEOUT_MS);
+
         try {
 
             const response = await fetch('/api/assistant/chat/', {
@@ -1430,7 +1436,9 @@
 
                 headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
 
-                body: JSON.stringify(payload)
+                body: JSON.stringify(payload),
+
+                signal: controller.signal
 
             });
 
@@ -1480,13 +1488,29 @@
 
             console.error('Chat error:', e);
 
-            showToast('Failed to connect to AI Service.', 'error');
+            const errorMessage = e.name === 'AbortError'
+
+                ? 'AI request timed out. Please try again.'
+
+                : 'Failed to connect to AI Service.';
+
+            showToast(errorMessage, 'error');
 
             setVoiceState('ALERT');
 
-            appendMessage('Error processing request. Check connection.', 'ai', false);
+            appendMessage(
+
+                e.name === 'AbortError' ? errorMessage : 'Error processing request. Check connection.',
+
+                'ai',
+
+                false
+
+            );
 
         } finally {
+
+            clearTimeout(requestTimeoutId);
 
             if (voiceState === 'PROCESSING' || voiceState === 'ALERT') {
 

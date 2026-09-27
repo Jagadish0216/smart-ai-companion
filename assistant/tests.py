@@ -238,6 +238,7 @@ class LocalLLMEngineMockedTests(TestCase):
             model="llama3.2:1b",
             timeout=30,
             keep_alive="30m",
+            num_predict=128,
         )
 
     def _make_mock_response(self, body_dict, status_code=200):
@@ -304,6 +305,7 @@ class LocalLLMEngineMockedTests(TestCase):
         # system + 2 history msgs + current query = 4 messages
         self.assertEqual(len(sent_payload["messages"]), 4)
         self.assertEqual(sent_payload["keep_alive"], "30m")
+        self.assertEqual(sent_payload["options"]["num_predict"], 128)
 
     @patch.dict("os.environ", {}, clear=True)
     @patch("assistant.ai_engine.local.urllib.request.urlopen")
@@ -336,6 +338,65 @@ class LocalLLMEngineMockedTests(TestCase):
         sent_payload = json.loads(request_obj.data.decode("utf-8"))
         self.assertEqual(sent_payload["keep_alive"], "10m")
         self.assertFalse(sent_payload["stream"])
+
+    @patch.dict("os.environ", {}, clear=True)
+    @patch("assistant.ai_engine.local.urllib.request.urlopen")
+    def test_num_predict_defaults_to_128(self, mock_urlopen):
+        """The /api/chat payload uses the documented token limit default."""
+        mock_urlopen.return_value = self._make_mock_response({
+            "message": {"role": "assistant", "content": "Hello"},
+        })
+        engine = LocalLLMEngine(host="http://localhost:11434")
+
+        engine._call_ollama_chat([{"role": "user", "content": "Hello"}])
+
+        request_obj = mock_urlopen.call_args[0][0]
+        sent_payload = json.loads(request_obj.data.decode("utf-8"))
+        self.assertEqual(sent_payload["options"], {"num_predict": 128})
+
+    @patch.dict("os.environ", {"OLLAMA_NUM_PREDICT": "256"})
+    @patch("assistant.ai_engine.local.urllib.request.urlopen")
+    def test_num_predict_can_be_configured_from_environment(self, mock_urlopen):
+        """OLLAMA_NUM_PREDICT is parsed and sent as an integer."""
+        mock_urlopen.return_value = self._make_mock_response({
+            "message": {"role": "assistant", "content": "Hello"},
+        })
+        engine = LocalLLMEngine(host="http://localhost:11434")
+
+        engine._call_ollama_chat([{"role": "user", "content": "Hello"}])
+
+        request_obj = mock_urlopen.call_args[0][0]
+        sent_payload = json.loads(request_obj.data.decode("utf-8"))
+        self.assertEqual(sent_payload["options"], {"num_predict": 256})
+
+    @patch("assistant.ai_engine.local.logger.info")
+    @patch("assistant.ai_engine.local.urllib.request.urlopen")
+    def test_logs_ollama_performance_metrics(self, mock_urlopen, mock_log_info):
+        """Ollama response metrics are logged with converted timings."""
+        health_resp = self._make_mock_response({"models": []})
+        chat_resp = self._make_mock_response({
+            "message": {"role": "assistant", "content": "Hello"},
+            "prompt_eval_count": 20,
+            "prompt_eval_duration": 500_000_000,
+            "eval_count": 10,
+            "eval_duration": 250_000_000,
+            "total_duration": 900_000_000,
+            "load_duration": 100_000_000,
+        })
+        mock_urlopen.side_effect = [health_resp, chat_resp]
+
+        self.engine.generate("Hello")
+
+        metrics = mock_log_info.call_args.kwargs["extra"]["ollama_metrics"]
+        self.assertEqual(mock_log_info.call_args.kwargs["extra"]["eval_duration_ms"], 250.0)
+        self.assertEqual(metrics["prompt_eval_count"], 20)
+        self.assertEqual(metrics["prompt_eval_duration_ms"], 500.0)
+        self.assertEqual(metrics["prompt_tokens_per_sec"], 40.0)
+        self.assertEqual(metrics["eval_count"], 10)
+        self.assertEqual(metrics["eval_duration_ms"], 250.0)
+        self.assertEqual(metrics["tokens_per_sec"], 40.0)
+        self.assertEqual(metrics["total_duration_ms"], 900.0)
+        self.assertEqual(metrics["load_duration_ms"], 100.0)
 
     @patch("assistant.ai_engine.local.urllib.request.urlopen")
     def test_model_not_found_error(self, mock_urlopen):
