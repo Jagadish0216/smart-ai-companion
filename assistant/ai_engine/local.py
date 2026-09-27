@@ -52,6 +52,7 @@ class LocalLLMEngine(AIEngine):
         OLLAMA_HOST    — Ollama server URL (default: http://localhost:11434)
         OLLAMA_MODEL   — Model to use (default: llama3.2:1b)
         OLLAMA_TIMEOUT — Request timeout in seconds (default: 120)
+        OLLAMA_KEEP_ALIVE — How long Ollama keeps the model loaded (default: 30m)
     """
 
     def __init__(
@@ -59,12 +60,14 @@ class LocalLLMEngine(AIEngine):
         host: Optional[str] = None,
         model: Optional[str] = None,
         timeout: Optional[int] = None,
+        keep_alive: Optional[str] = None,
     ):
         import os
 
         self._host = (host or os.environ.get("OLLAMA_HOST", "http://localhost:11434")).rstrip("/")
         self._model = model or os.environ.get("OLLAMA_MODEL", "llama3.2:1b")
         self._timeout = timeout or int(os.environ.get("OLLAMA_TIMEOUT", "120"))
+        self._keep_alive = keep_alive or os.environ.get("OLLAMA_KEEP_ALIVE", "30m")
 
     @property
     def engine_name(self) -> str:
@@ -179,6 +182,7 @@ class LocalLLMEngine(AIEngine):
             "model": self._model,
             "messages": messages,
             "stream": False,
+            "keep_alive": self._keep_alive,
         }).encode("utf-8")
 
         req = urllib.request.Request(

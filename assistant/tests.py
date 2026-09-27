@@ -237,6 +237,7 @@ class LocalLLMEngineMockedTests(TestCase):
             host="http://localhost:11434",
             model="llama3.2:1b",
             timeout=30,
+            keep_alive="30m",
         )
 
     def _make_mock_response(self, body_dict, status_code=200):
@@ -302,6 +303,39 @@ class LocalLLMEngineMockedTests(TestCase):
         sent_payload = json.loads(request_obj.data.decode("utf-8"))
         # system + 2 history msgs + current query = 4 messages
         self.assertEqual(len(sent_payload["messages"]), 4)
+        self.assertEqual(sent_payload["keep_alive"], "30m")
+
+    @patch.dict("os.environ", {}, clear=True)
+    @patch("assistant.ai_engine.local.urllib.request.urlopen")
+    def test_keep_alive_defaults_to_30_minutes(self, mock_urlopen):
+        """The /api/chat payload uses the documented keep-alive default."""
+        mock_urlopen.return_value = self._make_mock_response({
+            "message": {"role": "assistant", "content": "Hello"},
+        })
+        engine = LocalLLMEngine(host="http://localhost:11434")
+
+        engine._call_ollama_chat([{"role": "user", "content": "Hello"}])
+
+        request_obj = mock_urlopen.call_args[0][0]
+        sent_payload = json.loads(request_obj.data.decode("utf-8"))
+        self.assertEqual(sent_payload["keep_alive"], "30m")
+
+    @patch.dict("os.environ", {"OLLAMA_KEEP_ALIVE": "10m"})
+    @patch("assistant.ai_engine.local.urllib.request.urlopen")
+    def test_keep_alive_can_be_configured_from_environment(self, mock_urlopen):
+        """OLLAMA_KEEP_ALIVE is included in the /api/chat payload."""
+        chat_resp = self._make_mock_response({
+            "message": {"role": "assistant", "content": "Hello"},
+        })
+        mock_urlopen.return_value = chat_resp
+        engine = LocalLLMEngine(host="http://localhost:11434")
+
+        engine._call_ollama_chat([{"role": "user", "content": "Hello"}])
+
+        request_obj = mock_urlopen.call_args[0][0]
+        sent_payload = json.loads(request_obj.data.decode("utf-8"))
+        self.assertEqual(sent_payload["keep_alive"], "10m")
+        self.assertFalse(sent_payload["stream"])
 
     @patch("assistant.ai_engine.local.urllib.request.urlopen")
     def test_model_not_found_error(self, mock_urlopen):
