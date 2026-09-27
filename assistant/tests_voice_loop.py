@@ -13,9 +13,12 @@ from scripts.voice_loop import (
     VoiceLoopError,
     normalize_audio,
     play_audio,
+    prepare_text_for_speech,
     prepend_leading_silence,
     record_audio,
     run_voice_cycle,
+    sanitize_text_for_speech,
+    truncate_text_for_speech,
 )
 
 
@@ -34,6 +37,7 @@ class VoiceLoopTests(SimpleTestCase):
         VOICE_INPUT_SOURCE="bluez_input.realme_buds",
         VOICE_RECORD_SECONDS="6.5",
         VOICE_LEADING_SILENCE_SECONDS="0.9",
+        VOICE_MAX_SPEECH_CHARS="450",
     )
     def test_config_reads_voice_loop_settings(self):
         config = VoiceLoopConfig.from_settings()
@@ -41,6 +45,35 @@ class VoiceLoopTests(SimpleTestCase):
         self.assertEqual(config.input_source, "bluez_input.realme_buds")
         self.assertEqual(config.record_seconds, 6.5)
         self.assertEqual(config.leading_silence_seconds, 0.9)
+        self.assertEqual(config.max_speech_chars, 450)
+
+    def test_markdown_is_sanitized_for_speech(self):
+        text = "## **Local AI** uses `edge inference` and __private data__."
+
+        result = sanitize_text_for_speech(text)
+
+        self.assertEqual(
+            result,
+            "Local AI uses edge inference and private data.",
+        )
+
+    def test_markdown_bullets_are_removed_for_speech(self):
+        text = "* First item\n- Second item\n• Third item"
+
+        result = prepare_text_for_speech(text)
+
+        self.assertEqual(result, "First item Second item Third item")
+
+    def test_speech_text_truncates_at_sentence_boundary(self):
+        text = (
+            "This is the first complete sentence. "
+            "This additional sentence extends beyond the speech limit."
+        )
+
+        result = truncate_text_for_speech(text, 50)
+
+        self.assertEqual(result, "This is the first complete sentence.")
+        self.assertLessEqual(len(result), 50)
 
     def test_prepend_leading_silence(self):
         result = prepend_leading_silence(_make_wav(), 0.7)
@@ -180,15 +213,30 @@ class VoiceLoopTests(SimpleTestCase):
         mock_get_stt.return_value.transcribe.return_value = "What time is it?"
         mock_get_tts.return_value.synthesize.return_value = _make_wav()
         conversation = SimpleNamespace(id=42)
+        original_response = "**It is test time.**\n- Details are `ready`."
         mock_process_message.return_value = (
             conversation,
-            "It is test time.",
+            original_response,
             {"engine": "mock"},
             None,
         )
-        config = VoiceLoopConfig("bluez_input.test", 5, 0.7)
+        config = VoiceLoopConfig("bluez_input.test", 5, 0.7, 500)
 
-        conversation_id = run_voice_cycle(config, conversation_id=12)
+        clock_values = [
+            0.0,
+            0.0, 5.0,
+            5.0, 6.0,
+            6.0, 9.4,
+            9.4, 17.5,
+            17.5, 19.7,
+            19.7, 23.7,
+            23.9,
+        ]
+        with patch(
+            "scripts.voice_loop.time.perf_counter",
+            side_effect=clock_values,
+        ), patch("builtins.print") as mock_print:
+            conversation_id = run_voice_cycle(config, conversation_id=12)
 
         self.assertEqual(conversation_id, 42)
         mock_record.assert_called_once()
@@ -199,7 +247,13 @@ class VoiceLoopTests(SimpleTestCase):
             conversation_id=12,
         )
         mock_get_tts.return_value.synthesize.assert_called_once_with(
-            "It is test time."
+            "It is test time. Details are ready."
+        )
+        self.assertEqual(mock_process_message.return_value[1], original_response)
+        mock_print.assert_any_call(f"Assistant: {original_response}")
+        mock_print.assert_any_call(
+            "Timing: record=5.0s normalize=1.0s stt=3.4s ai=8.1s "
+            "tts=2.2s playback=4.0s total=23.9s"
         )
         mock_prepend.assert_called_once_with(_make_wav(), 0.7)
         mock_play.assert_called_once()

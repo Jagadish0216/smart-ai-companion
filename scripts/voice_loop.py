@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import io
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import wave
 
 
@@ -38,6 +40,7 @@ class VoiceLoopConfig:
     input_source: str
     record_seconds: float = 5.0
     leading_silence_seconds: float = 0.7
+    max_speech_chars: int = 500
 
     @classmethod
     def from_settings(cls) -> "VoiceLoopConfig":
@@ -47,6 +50,7 @@ class VoiceLoopConfig:
             leading_silence_seconds=float(
                 getattr(settings, "VOICE_LEADING_SILENCE_SECONDS", 0.7)
             ),
+            max_speech_chars=int(getattr(settings, "VOICE_MAX_SPEECH_CHARS", 500)),
         )
         config.validate()
         return config
@@ -63,6 +67,8 @@ class VoiceLoopConfig:
             raise VoiceLoopError(
                 "VOICE_LEADING_SILENCE_SECONDS cannot be negative."
             )
+        if self.max_speech_chars <= 0:
+            raise VoiceLoopError("VOICE_MAX_SPEECH_CHARS must be greater than zero.")
 
 
 def _stderr_text(stderr: bytes | str | None) -> str:
@@ -198,6 +204,60 @@ def prepend_leading_silence(wav_bytes: bytes, duration_seconds: float) -> bytes:
     return output.getvalue()
 
 
+def sanitize_text_for_speech(text: str) -> str:
+    """Remove common Markdown syntax while preserving its readable words."""
+    speech_text = re.sub(r"!\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    speech_text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", speech_text)
+    speech_text = re.sub(r"(?m)^\s*(?:[-*_]\s*){3,}$", " ", speech_text)
+    speech_text = re.sub(r"(?m)^\s{0,3}#{1,6}\s*", "", speech_text)
+    speech_text = re.sub(r"(?m)^\s*[-*•]+\s+", "", speech_text)
+    speech_text = re.sub(r"(?m)^\s*>\s?", "", speech_text)
+    speech_text = re.sub(r"[*_`]+", "", speech_text)
+    return re.sub(r"\s+", " ", speech_text).strip()
+
+
+def truncate_text_for_speech(text: str, max_chars: int) -> str:
+    """Limit speech text, preferring a complete sentence near the limit."""
+    if len(text) <= max_chars:
+        return text
+
+    candidate = text[:max_chars]
+    sentence_ends = [
+        match.end()
+        for match in re.finditer(r"[.!?](?:[\"')\]]+)?(?=\s|$)", candidate)
+    ]
+    practical_boundary = max_chars // 2
+    if sentence_ends and sentence_ends[-1] >= practical_boundary:
+        return candidate[:sentence_ends[-1]].strip()
+
+    shortened = candidate.rstrip()
+    if " " in shortened:
+        shortened = shortened.rsplit(" ", 1)[0]
+    shortened = shortened.rstrip(" ,;:-")
+    if max_chars == 1:
+        return "…"
+    return shortened[:max_chars - 1].rstrip() + "…"
+
+
+def prepare_text_for_speech(text: str, max_chars: int = 500) -> str:
+    """Create a Markdown-free, speech-length copy of an AI response."""
+    return truncate_text_for_speech(sanitize_text_for_speech(text), max_chars)
+
+
+def _timed_call(timings: dict[str, float], stage: str, operation, *args, **kwargs):
+    started = time.perf_counter()
+    try:
+        return operation(*args, **kwargs)
+    finally:
+        timings[stage] = time.perf_counter() - started
+
+
+def _print_timing_summary(timings: dict[str, float]) -> None:
+    order = ("record", "normalize", "stt", "ai", "tts", "playback", "total")
+    summary = " ".join(f"{stage}={timings[stage]:.1f}s" for stage in order)
+    print(f"Timing: {summary}")
+
+
 def play_audio(audio_path: Path) -> None:
     """Play a WAV through the current PulseAudio/PipeWire default sink."""
     try:
@@ -226,6 +286,8 @@ def run_voice_cycle(
     conversation_id: int | None = None,
 ) -> int | None:
     """Run one record/transcribe/respond/speak cycle."""
+    cycle_started = time.perf_counter()
+    timings = {}
     with tempfile.TemporaryDirectory(prefix="smart-ai-voice-") as temp_dir:
         temp_path = Path(temp_dir)
         recorded_path = temp_path / "recorded.wav"
@@ -233,11 +295,29 @@ def run_voice_cycle(
         playback_path = temp_path / "playback.wav"
 
         print(f"Recording for {config.record_seconds:g} seconds...")
-        record_audio(recorded_path, config.input_source, config.record_seconds)
-        normalize_audio(recorded_path, normalized_path)
+        _timed_call(
+            timings,
+            "record",
+            record_audio,
+            recorded_path,
+            config.input_source,
+            config.record_seconds,
+        )
+        _timed_call(
+            timings,
+            "normalize",
+            normalize_audio,
+            recorded_path,
+            normalized_path,
+        )
 
         try:
-            transcript = get_stt_provider().transcribe(str(normalized_path)).strip()
+            transcript = _timed_call(
+                timings,
+                "stt",
+                get_stt_provider().transcribe,
+                str(normalized_path),
+            ).strip()
         except Exception as exc:
             raise VoiceLoopError(f"Transcription failed: {exc}") from exc
         if not transcript:
@@ -246,7 +326,10 @@ def run_voice_cycle(
 
         try:
             conversation, response_text, _metadata, error = (
-                AssistantService.process_message(
+                _timed_call(
+                    timings,
+                    "ai",
+                    AssistantService.process_message,
                     transcript,
                     conversation_id=conversation_id,
                 )
@@ -257,8 +340,20 @@ def run_voice_cycle(
             raise VoiceLoopError(f"AI response failed: {error or 'empty response.'}")
         print(f"Assistant: {response_text}")
 
+        speech_text = prepare_text_for_speech(
+            response_text,
+            config.max_speech_chars,
+        )
+        if not speech_text:
+            raise VoiceLoopError("TTS failed: AI response contained no speakable text.")
+
         try:
-            speech = get_tts_provider().synthesize(response_text)
+            speech = _timed_call(
+                timings,
+                "tts",
+                get_tts_provider().synthesize,
+                speech_text,
+            )
         except Exception as exc:
             raise VoiceLoopError(f"TTS failed: {exc}") from exc
 
@@ -270,9 +365,15 @@ def run_voice_cycle(
             playback_path.write_bytes(playback_audio)
         except OSError as exc:
             raise VoiceLoopError(f"TTS failed: could not save playback WAV ({exc}).") from exc
-        play_audio(playback_path)
+        _timed_call(timings, "playback", play_audio, playback_path)
 
-        return conversation.id if conversation is not None else conversation_id
+        next_conversation_id = (
+            conversation.id if conversation is not None else conversation_id
+        )
+
+    timings["total"] = time.perf_counter() - cycle_started
+    _print_timing_summary(timings)
+    return next_conversation_id
 
 
 def main() -> int:
