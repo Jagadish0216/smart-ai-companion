@@ -36,8 +36,10 @@ from assistant.voice.factory import get_stt_provider, get_tts_provider  # noqa: 
 
 VOICE_SYSTEM_INSTRUCTION = (
     "This is a spoken voice interaction. Answer in 2–3 short sentences by default. "
+    "When the user explicitly asks for detail, depth, steps, a full explanation, "
+    "a comparison, or another comprehensive response, give a complete longer answer. "
     "Use conversational spoken language. Do not use Markdown, bullet lists, or "
-    "headings. Avoid long explanations unless the user explicitly asks for detail."
+    "headings. Avoid long explanations unless the request clearly requires them."
 )
 
 CAPTURE_SAMPLE_RATE = 16000
@@ -55,7 +57,8 @@ class VoiceLoopConfig:
     input_source: str
     record_seconds: float = 5.0
     leading_silence_seconds: float = 0.7
-    max_speech_chars: int = 500
+    tts_chunk_chars: int = 300
+    tts_max_total_chars: int = 0
     input_warmup_seconds: float = 1.0
     capture_vad_enabled: bool = False
     capture_vad_start_threshold: float = 0.02
@@ -71,7 +74,10 @@ class VoiceLoopConfig:
             leading_silence_seconds=float(
                 getattr(settings, "VOICE_LEADING_SILENCE_SECONDS", 0.7)
             ),
-            max_speech_chars=int(getattr(settings, "VOICE_MAX_SPEECH_CHARS", 500)),
+            tts_chunk_chars=int(getattr(settings, "VOICE_TTS_CHUNK_CHARS", 300)),
+            tts_max_total_chars=int(
+                getattr(settings, "VOICE_TTS_MAX_TOTAL_CHARS", 0)
+            ),
             input_warmup_seconds=float(
                 getattr(settings, "VOICE_INPUT_WARMUP_SECONDS", 1.0)
             ),
@@ -106,8 +112,10 @@ class VoiceLoopConfig:
             raise VoiceLoopError(
                 "VOICE_LEADING_SILENCE_SECONDS cannot be negative."
             )
-        if self.max_speech_chars <= 0:
-            raise VoiceLoopError("VOICE_MAX_SPEECH_CHARS must be greater than zero.")
+        if self.tts_chunk_chars <= 0:
+            raise VoiceLoopError("VOICE_TTS_CHUNK_CHARS must be greater than zero.")
+        if self.tts_max_total_chars < 0:
+            raise VoiceLoopError("VOICE_TTS_MAX_TOTAL_CHARS cannot be negative.")
         if self.input_warmup_seconds < 0:
             raise VoiceLoopError("VOICE_INPUT_WARMUP_SECONDS cannot be negative.")
         if not 0 < self.capture_vad_start_threshold <= 1:
@@ -427,32 +435,91 @@ def sanitize_text_for_speech(text: str) -> str:
     return re.sub(r"\s+", " ", speech_text).strip()
 
 
-def truncate_text_for_speech(text: str, max_chars: int) -> str:
-    """Limit speech text, preferring a complete sentence near the limit."""
-    if len(text) <= max_chars:
+def _sentence_spans(text: str) -> list[str]:
+    """Split normalized text after sentence punctuation, retaining all words."""
+    sentences = []
+    start = 0
+    for match in re.finditer(r"[.!?](?:[\"')\]]+)?(?=\s|$)", text):
+        sentences.append(text[start:match.end()].strip())
+        start = match.end()
+    remainder = text[start:].strip()
+    if remainder:
+        sentences.append(remainder)
+    return [sentence for sentence in sentences if sentence]
+
+
+def limit_text_for_speech(text: str, max_total_chars: int) -> str:
+    """Apply an optional total safety limit only at a complete sentence boundary."""
+    if max_total_chars == 0 or len(text) <= max_total_chars:
         return text
 
-    candidate = text[:max_chars]
     sentence_ends = [
         match.end()
-        for match in re.finditer(r"[.!?](?:[\"')\]]+)?(?=\s|$)", candidate)
+        for match in re.finditer(r"[.!?](?:[\"')\]]+)?(?=\s|$)", text)
     ]
-    practical_boundary = max_chars // 2
-    if sentence_ends and sentence_ends[-1] >= practical_boundary:
-        return candidate[:sentence_ends[-1]].strip()
+    boundaries_within_limit = [
+        boundary for boundary in sentence_ends if boundary <= max_total_chars
+    ]
+    if boundaries_within_limit:
+        return text[:boundaries_within_limit[-1]].strip()
 
-    shortened = candidate.rstrip()
-    if " " in shortened:
-        shortened = shortened.rsplit(" ", 1)[0]
-    shortened = shortened.rstrip(" ,;:-")
-    if max_chars == 1:
-        return "…"
-    return shortened[:max_chars - 1].rstrip() + "…"
+    # Never cut a sentence or word merely to meet the safety limit. If the first
+    # sentence itself is longer, retain it as the smallest clean spoken unit.
+    if sentence_ends:
+        return text[:sentence_ends[0]].strip()
+    return text
 
 
-def prepare_text_for_speech(text: str, max_chars: int = 500) -> str:
-    """Create a Markdown-free, speech-length copy of an AI response."""
-    return truncate_text_for_speech(sanitize_text_for_speech(text), max_chars)
+def _split_words(text: str, target_chars: int) -> list[str]:
+    """Split an unusually long sentence without splitting individual words."""
+    chunks = []
+    current = ""
+    for word in text.split():
+        candidate = f"{current} {word}".strip()
+        if current and len(candidate) > target_chars:
+            chunks.append(current)
+            current = word
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def chunk_text_for_speech(text: str, target_chars: int) -> list[str]:
+    """Pack text into natural chunks, preferring complete sentence boundaries."""
+    chunks = []
+    current = ""
+    for sentence in _sentence_spans(text):
+        if len(sentence) > target_chars:
+            if current:
+                chunks.append(current)
+                current = ""
+            sentence_parts = _split_words(sentence, target_chars)
+            chunks.extend(sentence_parts[:-1])
+            current = sentence_parts[-1]
+            continue
+
+        candidate = f"{current} {sentence}".strip()
+        if current and len(candidate) > target_chars:
+            chunks.append(current)
+            current = sentence
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def prepare_speech_chunks(
+    text: str,
+    chunk_chars: int = 300,
+    max_total_chars: int = 0,
+) -> list[str]:
+    """Create Markdown-free, sentence-aware TTS chunks from an AI response."""
+    sanitized = sanitize_text_for_speech(text)
+    limited = limit_text_for_speech(sanitized, max_total_chars)
+    return chunk_text_for_speech(limited, chunk_chars)
 
 
 def _timed_call(timings: dict[str, float], stage: str, operation, *args, **kwargs):
@@ -460,7 +527,8 @@ def _timed_call(timings: dict[str, float], stage: str, operation, *args, **kwarg
     try:
         return operation(*args, **kwargs)
     finally:
-        timings[stage] = time.perf_counter() - started
+        elapsed = time.perf_counter() - started
+        timings[stage] = timings.get(stage, 0.0) + elapsed
 
 
 def _print_timing_summary(timings: dict[str, float]) -> None:
@@ -503,7 +571,6 @@ def run_voice_cycle(
         temp_path = Path(temp_dir)
         recorded_path = temp_path / "recorded.wav"
         normalized_path = temp_path / "normalized.wav"
-        playback_path = temp_path / "playback.wav"
 
         if config.capture_vad_enabled:
             print(
@@ -574,32 +641,47 @@ def run_voice_cycle(
             raise VoiceLoopError(f"AI response failed: {error or 'empty response.'}")
         print(f"Assistant: {response_text}")
 
-        speech_text = prepare_text_for_speech(
+        speech_chunks = prepare_speech_chunks(
             response_text,
-            config.max_speech_chars,
+            config.tts_chunk_chars,
+            config.tts_max_total_chars,
         )
-        if not speech_text:
+        if not speech_chunks:
             raise VoiceLoopError("TTS failed: AI response contained no speakable text.")
+        print(f"TTS chunks: {len(speech_chunks)}")
+        tts_provider = get_tts_provider()
+        for chunk_number, speech_text in enumerate(speech_chunks, start=1):
+            try:
+                speech = _timed_call(
+                    timings,
+                    "tts",
+                    tts_provider.synthesize,
+                    speech_text,
+                )
+            except Exception as exc:
+                raise VoiceLoopError(
+                    f"TTS failed on chunk {chunk_number}/{len(speech_chunks)}: {exc}"
+                ) from exc
 
-        try:
-            speech = _timed_call(
-                timings,
-                "tts",
-                get_tts_provider().synthesize,
-                speech_text,
+            playback_audio = (
+                prepend_leading_silence(speech, config.leading_silence_seconds)
+                if chunk_number == 1
+                else speech
             )
-        except Exception as exc:
-            raise VoiceLoopError(f"TTS failed: {exc}") from exc
-
-        playback_audio = prepend_leading_silence(
-            speech,
-            config.leading_silence_seconds,
-        )
-        try:
-            playback_path.write_bytes(playback_audio)
-        except OSError as exc:
-            raise VoiceLoopError(f"TTS failed: could not save playback WAV ({exc}).") from exc
-        _timed_call(timings, "playback", play_audio, playback_path)
+            playback_path = temp_path / f"playback-{chunk_number:03d}.wav"
+            try:
+                playback_path.write_bytes(playback_audio)
+            except OSError as exc:
+                raise VoiceLoopError(
+                    f"TTS failed on chunk {chunk_number}/{len(speech_chunks)}: "
+                    f"could not save playback WAV ({exc})."
+                ) from exc
+            try:
+                _timed_call(timings, "playback", play_audio, playback_path)
+            except Exception as exc:
+                raise VoiceLoopError(
+                    f"Playback failed on chunk {chunk_number}/{len(speech_chunks)}: {exc}"
+                ) from exc
 
         next_conversation_id = (
             conversation.id if conversation is not None else conversation_id

@@ -178,7 +178,8 @@ Mock mode requires no external services and is useful for frontend development.
 | `VOICE_CAPTURE_VAD_MAX_SECONDS` | `10` | Maximum speech capture duration after speech starts |
 | `VOICE_CAPTURE_VAD_START_TIMEOUT_SECONDS` | `5` | Maximum time to wait for speech after `Speak now...` |
 | `VOICE_LEADING_SILENCE_SECONDS` | `0.7` | Silence prepended before Bluetooth playback |
-| `VOICE_MAX_SPEECH_CHARS` | `500` | Maximum sanitized AI-response characters spoken by the standalone loop |
+| `VOICE_TTS_CHUNK_CHARS` | `300` | Approximate sentence-aware Piper chunk size |
+| `VOICE_TTS_MAX_TOTAL_CHARS` | `0` | Optional spoken-response safety limit; `0` speaks the full sanitized response |
 
 ## Standalone Raspberry Pi Voice Loop
 
@@ -211,7 +212,8 @@ VOICE_CAPTURE_VAD_SILENCE_SECONDS=0.8
 VOICE_CAPTURE_VAD_MAX_SECONDS=10
 VOICE_CAPTURE_VAD_START_TIMEOUT_SECONDS=5
 VOICE_LEADING_SILENCE_SECONDS=0.7
-VOICE_MAX_SPEECH_CHARS=500
+VOICE_TTS_CHUNK_CHARS=300
+VOICE_TTS_MAX_TOTAL_CHARS=0
 ```
 
 Copy the exact source returned by `pactl list short sources` into `VOICE_INPUT_SOURCE`, then run:
@@ -222,7 +224,7 @@ python scripts/voice_loop.py
 
 Press Enter to record one cycle, wait for `Speak now...`, or type `q` and press Enter to exit. By default, the microphone remains open for the warm-up plus the full `VOICE_RECORD_SECONDS` window, preserving the original fixed-duration behavior. Set `VOICE_CAPTURE_VAD_ENABLED=true` to wait for speech and stop after trailing silence instead. This live mode uses a lightweight PCM RMS gate and keeps 300 ms of pre-roll to avoid clipping the first word; whisper.cpp Silero VAD remains a separate downstream validation option. The `record` timing includes the complete microphone-open operation, and live mode also prints the captured audio duration.
 
-The terminal and conversation retain the original AI response; only the TTS copy has Markdown removed and is limited by `VOICE_MAX_SPEECH_CHARS`. A per-stage timing summary is printed after each successful cycle. The loop uses `parecord`, `ffmpeg`, and `paplay`; wake-word detection is not implemented.
+The terminal and conversation retain the original AI response. The TTS copy has Markdown removed and is split at sentence boundaries into approximately `VOICE_TTS_CHUNK_CHARS` characters. All chunks are synthesized and played sequentially, so detailed answers are spoken in full by default. Set `VOICE_TTS_MAX_TOTAL_CHARS` to a nonzero value only when an explicit safety limit is needed; truncation then occurs at a complete sentence boundary. Bluetooth leading silence is applied only to the first chunk. The timing summary totals synthesis and playback across every chunk, and the loop also reports the number of TTS chunks. The loop uses `parecord`, `ffmpeg`, and `paplay`; wake-word detection is not implemented.
 
 ## Error Handling
 

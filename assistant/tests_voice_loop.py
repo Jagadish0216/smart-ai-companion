@@ -12,15 +12,17 @@ from scripts.voice_loop import (
     VOICE_SYSTEM_INSTRUCTION,
     VoiceLoopConfig,
     VoiceLoopError,
+    _timed_call,
+    chunk_text_for_speech,
+    limit_text_for_speech,
     normalize_audio,
     play_audio,
-    prepare_text_for_speech,
+    prepare_speech_chunks,
     prepend_leading_silence,
     record_audio,
     record_audio_with_capture_vad,
     run_voice_cycle,
     sanitize_text_for_speech,
-    truncate_text_for_speech,
 )
 
 
@@ -45,7 +47,8 @@ class VoiceLoopTests(SimpleTestCase):
         VOICE_RECORD_SECONDS="6.5",
         VOICE_INPUT_WARMUP_SECONDS="1.25",
         VOICE_LEADING_SILENCE_SECONDS="0.9",
-        VOICE_MAX_SPEECH_CHARS="450",
+        VOICE_TTS_CHUNK_CHARS="275",
+        VOICE_TTS_MAX_TOTAL_CHARS="1800",
         VOICE_CAPTURE_VAD_ENABLED="true",
         VOICE_CAPTURE_VAD_START_THRESHOLD="0.03",
         VOICE_CAPTURE_VAD_SILENCE_SECONDS="1.1",
@@ -59,7 +62,8 @@ class VoiceLoopTests(SimpleTestCase):
         self.assertEqual(config.record_seconds, 6.5)
         self.assertEqual(config.input_warmup_seconds, 1.25)
         self.assertEqual(config.leading_silence_seconds, 0.9)
-        self.assertEqual(config.max_speech_chars, 450)
+        self.assertEqual(config.tts_chunk_chars, 275)
+        self.assertEqual(config.tts_max_total_chars, 1800)
         self.assertTrue(config.capture_vad_enabled)
         self.assertEqual(config.capture_vad_start_threshold, 0.03)
         self.assertEqual(config.capture_vad_silence_seconds, 1.1)
@@ -76,23 +80,82 @@ class VoiceLoopTests(SimpleTestCase):
             "Local AI uses edge inference and private data.",
         )
 
-    def test_markdown_bullets_are_removed_for_speech(self):
-        text = "* First item\n- Second item\n• Third item"
+    def test_short_answer_remains_one_tts_chunk(self):
+        chunks = prepare_speech_chunks("A short spoken answer.", chunk_chars=300)
 
-        result = prepare_text_for_speech(text)
+        self.assertEqual(chunks, ["A short spoken answer."])
 
-        self.assertEqual(result, "First item Second item Third item")
-
-    def test_speech_text_truncates_at_sentence_boundary(self):
+    def test_long_answer_splits_at_sentence_boundaries(self):
         text = (
-            "This is the first complete sentence. "
-            "This additional sentence extends beyond the speech limit."
+            "The first sentence explains the premise. "
+            "The second sentence adds useful context. "
+            "The third sentence gives the conclusion."
         )
 
-        result = truncate_text_for_speech(text, 50)
+        chunks = chunk_text_for_speech(text, target_chars=55)
+
+        self.assertEqual(
+            chunks,
+            [
+                "The first sentence explains the premise.",
+                "The second sentence adds useful context.",
+                "The third sentence gives the conclusion.",
+            ],
+        )
+
+    def test_all_sanitized_content_is_preserved_across_chunks(self):
+        original = (
+            "## **Overview**\n"
+            "- The first section has `important details`.\n"
+            "- The second section completes the answer."
+        )
+        sanitized = sanitize_text_for_speech(original)
+
+        chunks = prepare_speech_chunks(original, chunk_chars=45, max_total_chars=0)
+
+        self.assertEqual(" ".join(chunks), sanitized)
+        spoken = " ".join(chunks)
+        self.assertNotIn("**", spoken)
+        self.assertNotIn("`", spoken)
+        self.assertNotIn("- ", spoken)
+
+    def test_long_sentence_chunks_do_not_split_words(self):
+        text = "alpha extraordinaryword beta gamma delta"
+
+        chunks = chunk_text_for_speech(text, target_chars=12)
+
+        self.assertEqual(" ".join(chunks), text)
+        self.assertIn("extraordinaryword", chunks)
+
+    def test_unlimited_speech_mode_does_not_truncate(self):
+        text = "First complete sentence. Second complete sentence. Third one."
+
+        chunks = prepare_speech_chunks(text, chunk_chars=25, max_total_chars=0)
+
+        self.assertEqual(" ".join(chunks), text)
+
+    def test_explicit_safety_limit_uses_clean_sentence_boundary(self):
+        text = (
+            "This is the first complete sentence. "
+            "This additional sentence is beyond the configured safety limit."
+        )
+
+        result = limit_text_for_speech(text, 50)
 
         self.assertEqual(result, "This is the first complete sentence.")
         self.assertLessEqual(len(result), 50)
+
+    def test_timing_accumulates_across_repeated_tts_chunks(self):
+        timings = {}
+
+        with patch(
+            "scripts.voice_loop.time.perf_counter",
+            side_effect=[0.0, 1.5, 2.0, 4.25],
+        ):
+            _timed_call(timings, "tts", lambda: None)
+            _timed_call(timings, "tts", lambda: None)
+
+        self.assertEqual(timings["tts"], 3.75)
 
     def test_prepend_leading_silence(self):
         result = prepend_leading_silence(_make_wav(), 0.7)
@@ -418,6 +481,7 @@ class VoiceLoopTests(SimpleTestCase):
         self.assertIn("headings", VOICE_SYSTEM_INSTRUCTION)
         self.assertIn("conversational spoken language", VOICE_SYSTEM_INSTRUCTION)
         self.assertIn("explicitly asks for detail", VOICE_SYSTEM_INSTRUCTION)
+        self.assertIn("complete longer answer", VOICE_SYSTEM_INSTRUCTION)
         mock_get_tts.return_value.synthesize.assert_called_once_with(
             "It is test time. Details are ready."
         )
@@ -430,6 +494,98 @@ class VoiceLoopTests(SimpleTestCase):
         mock_prepend.assert_called_once_with(_make_wav(), 0.7)
         mock_play.assert_called_once()
         self.assertFalse(Path(mock_play.call_args.args[0]).exists())
+
+    @patch("scripts.voice_loop.play_audio")
+    @patch("scripts.voice_loop.prepend_leading_silence")
+    @patch("scripts.voice_loop.normalize_audio")
+    @patch("scripts.voice_loop.record_audio")
+    @patch("scripts.voice_loop.AssistantService.process_message")
+    @patch("scripts.voice_loop.get_tts_provider")
+    @patch("scripts.voice_loop.get_stt_provider")
+    def test_voice_cycle_synthesizes_and_plays_all_chunks_sequentially(
+        self,
+        mock_get_stt,
+        mock_get_tts,
+        mock_process_message,
+        _mock_record,
+        _mock_normalize,
+        mock_prepend,
+        mock_play,
+    ):
+        mock_get_stt.return_value.transcribe.return_value = "Explain fully."
+        original_response = (
+            "**First sentence contains useful details.** "
+            "Second sentence provides more context. "
+            "Third sentence completes the explanation."
+        )
+        mock_process_message.return_value = (
+            SimpleNamespace(id=7),
+            original_response,
+            {},
+            None,
+        )
+        wav_bytes = _make_wav()
+        mock_get_tts.return_value.synthesize.return_value = wav_bytes
+        mock_prepend.return_value = b"first chunk with silence"
+        config = VoiceLoopConfig(
+            input_source="source",
+            tts_chunk_chars=50,
+            tts_max_total_chars=0,
+        )
+
+        with patch("builtins.print"):
+            result = run_voice_cycle(config)
+
+        self.assertEqual(result, 7)
+        self.assertEqual(
+            mock_get_tts.return_value.synthesize.call_args_list,
+            [
+                call("First sentence contains useful details."),
+                call("Second sentence provides more context."),
+                call("Third sentence completes the explanation."),
+            ],
+        )
+        self.assertEqual(mock_play.call_count, 3)
+        mock_prepend.assert_called_once_with(wav_bytes, 0.7)
+        self.assertEqual(mock_process_message.return_value[1], original_response)
+
+    @patch("scripts.voice_loop.play_audio")
+    @patch("scripts.voice_loop.prepend_leading_silence", return_value=b"first")
+    @patch("scripts.voice_loop.normalize_audio")
+    @patch("scripts.voice_loop.record_audio")
+    @patch("scripts.voice_loop.AssistantService.process_message")
+    @patch("scripts.voice_loop.get_tts_provider")
+    @patch("scripts.voice_loop.get_stt_provider")
+    def test_voice_cycle_reports_later_chunk_failure(
+        self,
+        mock_get_stt,
+        mock_get_tts,
+        mock_process_message,
+        _mock_record,
+        _mock_normalize,
+        _mock_prepend,
+        mock_play,
+    ):
+        mock_get_stt.return_value.transcribe.return_value = "Explain fully."
+        mock_process_message.return_value = (
+            SimpleNamespace(id=7),
+            "First complete sentence. Second complete sentence.",
+            {},
+            None,
+        )
+        mock_get_tts.return_value.synthesize.side_effect = [
+            _make_wav(),
+            RuntimeError("Piper stopped"),
+        ]
+        config = VoiceLoopConfig(input_source="source", tts_chunk_chars=26)
+
+        with patch("builtins.print"), self.assertRaisesRegex(
+            VoiceLoopError,
+            "TTS failed on chunk 2/2",
+        ):
+            run_voice_cycle(config)
+
+        mock_play.assert_called_once()
 
     @patch("scripts.voice_loop.get_stt_provider")
     @patch("scripts.voice_loop.normalize_audio")
