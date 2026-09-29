@@ -37,16 +37,42 @@ class WhisperCppProvider(SpeechToTextProvider):
     """
     Executes a local whisper.cpp binary for offline STT.
     """
-    def __init__(self, binary_path: str, model_path: str, timeout: int = 30):
+    def __init__(
+        self,
+        binary_path: str,
+        model_path: str,
+        timeout: int = 30,
+        vad_enabled: bool = False,
+        vad_model_path: str = "",
+        vad_threshold: float = 0.5,
+        vad_min_speech_ms: int = 250,
+        vad_min_silence_ms: int = 700,
+        vad_speech_pad_ms: int = 100,
+    ):
         self.binary_path = binary_path
         self.model_path = model_path
         self.timeout = timeout
+        self.vad_enabled = vad_enabled
+        self.vad_model_path = vad_model_path
+        self.vad_threshold = vad_threshold
+        self.vad_min_speech_ms = vad_min_speech_ms
+        self.vad_min_silence_ms = vad_min_silence_ms
+        self.vad_speech_pad_ms = vad_speech_pad_ms
 
     def transcribe(self, audio_file_path: str) -> str:
         if not os.path.exists(self.binary_path):
             raise STTError(f"whisper.cpp binary not found at: {self.binary_path}")
         if not os.path.exists(self.model_path):
             raise STTError(f"whisper.cpp model not found at: {self.model_path}")
+        if self.vad_enabled:
+            if not self.vad_model_path:
+                raise STTError(
+                    "whisper.cpp VAD is enabled but STT_VAD_MODEL is not configured."
+                )
+            if not os.path.exists(self.vad_model_path):
+                raise STTError(
+                    f"whisper.cpp VAD model not found at: {self.vad_model_path}"
+                )
         if not os.path.exists(audio_file_path):
             raise STTError(f"Audio file not found: {audio_file_path}")
 
@@ -58,6 +84,16 @@ class WhisperCppProvider(SpeechToTextProvider):
             "-f", audio_file_path,
             "-nt"
         ]
+
+        if self.vad_enabled:
+            cmd.extend([
+                "--vad",
+                "--vad-model", self.vad_model_path,
+                "--vad-threshold", str(self.vad_threshold),
+                "--vad-min-speech-duration-ms", str(self.vad_min_speech_ms),
+                "--vad-min-silence-duration-ms", str(self.vad_min_silence_ms),
+                "--vad-speech-pad-ms", str(self.vad_speech_pad_ms),
+            ])
 
         try:
             result = subprocess.run(

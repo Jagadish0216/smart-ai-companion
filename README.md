@@ -160,6 +160,12 @@ Mock mode requires no external services and is useful for frontend development.
 | `STT_ENGINE` | `mock` | Speech-to-Text: `mock` or `whisper_cpp` |
 | `STT_WHISPER_BIN` | `/opt/whisper.cpp/main` | Path to whisper.cpp binary |
 | `STT_WHISPER_MODEL` | `/opt/whisper.cpp/models/ggml-base.en.bin` | Path to whisper.cpp model |
+| `STT_VAD_ENABLED` | `false` | Enable whisper.cpp Silero VAD preprocessing |
+| `STT_VAD_MODEL` | _(empty)_ | Path to the Silero VAD model; required when VAD is enabled |
+| `STT_VAD_THRESHOLD` | `0.5` | Speech-detection probability threshold |
+| `STT_VAD_MIN_SPEECH_MS` | `250` | Minimum accepted speech-segment duration |
+| `STT_VAD_MIN_SILENCE_MS` | `700` | Silence duration used to split speech segments |
+| `STT_VAD_SPEECH_PAD_MS` | `100` | Padding added around detected speech segments |
 | `TTS_ENGINE` | `mock` | Text-to-Speech: `mock` or `piper` |
 | `TTS_PIPER_BIN` | `/opt/piper/piper` | Path to Piper binary |
 | `TTS_PIPER_VOICE` | `/opt/piper/en_US-lessac-medium.onnx` | Path to Piper ONNX model |
@@ -172,6 +178,17 @@ Mock mode requires no external services and is useful for frontend development.
 ## Standalone Raspberry Pi Voice Loop
 
 The standalone loop reuses the configured Whisper, AI engine, and Piper providers. It records from a named PipeWire/PulseAudio source and plays through the current default sink; it does not change the browser voice API.
+
+Optional Silero VAD runs inside whisper.cpp after the fixed-duration recording. To enable it, set `STT_VAD_ENABLED=true` and copy the exact Silero model path on the Pi into `STT_VAD_MODEL`; leave it disabled to preserve the original Whisper command and behavior.
+
+```env
+STT_VAD_ENABLED=false
+STT_VAD_MODEL=
+STT_VAD_THRESHOLD=0.5
+STT_VAD_MIN_SPEECH_MS=250
+STT_VAD_MIN_SILENCE_MS=700
+STT_VAD_SPEECH_PAD_MS=100
+```
 
 Find the Realme Buds microphone source and add it to `.env`:
 
@@ -193,7 +210,7 @@ Copy the exact source returned by `pactl list short sources` into `VOICE_INPUT_S
 python scripts/voice_loop.py
 ```
 
-Press Enter to record one cycle, wait for `Speak now...`, or type `q` and press Enter to exit. The microphone remains open for the warm-up plus the full speech window, and the reported `record` timing includes both. The terminal and conversation retain the original AI response; only the TTS copy has Markdown removed and is limited by `VOICE_MAX_SPEECH_CHARS`. A per-stage timing summary is printed after each successful cycle. The loop uses `parecord`, `ffmpeg`, and `paplay`; wake-word detection and VAD are not implemented.
+Press Enter to record one cycle, wait for `Speak now...`, or type `q` and press Enter to exit. The microphone remains open for the warm-up plus the full speech window, and the reported `record` timing includes both. The terminal and conversation retain the original AI response; only the TTS copy has Markdown removed and is limited by `VOICE_MAX_SPEECH_CHARS`. A per-stage timing summary is printed after each successful cycle. The loop uses `parecord`, `ffmpeg`, and `paplay`; wake-word detection is not implemented, and recording remains fixed-duration even when STT VAD is enabled.
 
 ## Error Handling
 

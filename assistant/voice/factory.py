@@ -22,7 +22,17 @@ def get_stt_provider() -> SpeechToTextProvider:
         bin_path = getattr(settings, 'STT_WHISPER_BIN', '')
         model_path = getattr(settings, 'STT_WHISPER_MODEL', '')
         timeout = getattr(settings, 'STT_TIMEOUT', 30)
-        _stt_provider_cache = WhisperCppProvider(bin_path, model_path, timeout)
+        _stt_provider_cache = WhisperCppProvider(
+            bin_path,
+            model_path,
+            timeout,
+            vad_enabled=getattr(settings, 'STT_VAD_ENABLED', False),
+            vad_model_path=getattr(settings, 'STT_VAD_MODEL', ''),
+            vad_threshold=getattr(settings, 'STT_VAD_THRESHOLD', 0.5),
+            vad_min_speech_ms=getattr(settings, 'STT_VAD_MIN_SPEECH_MS', 250),
+            vad_min_silence_ms=getattr(settings, 'STT_VAD_MIN_SILENCE_MS', 700),
+            vad_speech_pad_ms=getattr(settings, 'STT_VAD_SPEECH_PAD_MS', 100),
+        )
     else:
         _stt_provider_cache = MockSTTProvider()
 

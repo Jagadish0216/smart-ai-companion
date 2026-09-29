@@ -11,7 +11,7 @@ from rest_framework import status
 from conversations.models import Conversation, Message
 from assistant.voice.stt import WhisperCppProvider, STTError
 from assistant.voice.tts import PiperProvider, TTSError
-from assistant.voice.factory import reset_voice_providers
+from assistant.voice.factory import get_stt_provider, reset_voice_providers
 
 class VoiceProviderTests(TestCase):
     def setUp(self):
@@ -29,6 +29,87 @@ class VoiceProviderTests(TestCase):
 
         text = self.stt.transcribe("/fake/audio.wav")
         self.assertEqual(text, "Hello world!")
+        command = mock_run.call_args.args[0]
+        self.assertEqual(
+            command,
+            ["/fake/main", "-m", "/fake/model", "-f", "/fake/audio.wav", "-nt"],
+        )
+        self.assertNotIn("--vad", command)
+
+    @patch('os.path.exists', return_value=True)
+    @patch('subprocess.run')
+    def test_whisper_cpp_vad_flags_are_passed_when_enabled(self, mock_run, _mock_exists):
+        provider = WhisperCppProvider(
+            binary_path="/fake/main",
+            model_path="/fake/model",
+            vad_enabled=True,
+            vad_model_path="/fake/silero.bin",
+            vad_threshold=0.6,
+            vad_min_speech_ms=300,
+            vad_min_silence_ms=800,
+            vad_speech_pad_ms=120,
+        )
+        mock_result = MagicMock(returncode=0, stdout="Hello with VAD")
+        mock_run.return_value = mock_result
+
+        text = provider.transcribe("/fake/audio.wav")
+
+        self.assertEqual(text, "Hello with VAD")
+        self.assertEqual(
+            mock_run.call_args.args[0],
+            [
+                "/fake/main", "-m", "/fake/model", "-f", "/fake/audio.wav", "-nt",
+                "--vad",
+                "--vad-model", "/fake/silero.bin",
+                "--vad-threshold", "0.6",
+                "--vad-min-speech-duration-ms", "300",
+                "--vad-min-silence-duration-ms", "800",
+                "--vad-speech-pad-ms", "120",
+            ],
+        )
+
+    @patch('os.path.exists')
+    @patch('subprocess.run')
+    def test_whisper_cpp_vad_missing_model_is_clear(self, mock_run, mock_exists):
+        mock_exists.side_effect = lambda path: path != "/missing/silero.bin"
+        provider = WhisperCppProvider(
+            binary_path="/fake/main",
+            model_path="/fake/model",
+            vad_enabled=True,
+            vad_model_path="/missing/silero.bin",
+        )
+
+        with self.assertRaisesRegex(STTError, "VAD model not found"):
+            provider.transcribe("/fake/audio.wav")
+
+        mock_run.assert_not_called()
+
+    @override_settings(
+        STT_ENGINE='whisper_cpp',
+        STT_WHISPER_BIN='/fake/main',
+        STT_WHISPER_MODEL='/fake/model',
+        STT_TIMEOUT=45,
+        STT_VAD_ENABLED=True,
+        STT_VAD_MODEL='/fake/silero.bin',
+        STT_VAD_THRESHOLD=0.65,
+        STT_VAD_MIN_SPEECH_MS=275,
+        STT_VAD_MIN_SILENCE_MS=750,
+        STT_VAD_SPEECH_PAD_MS=110,
+    )
+    def test_voice_factory_wires_vad_settings(self):
+        reset_voice_providers()
+        try:
+            provider = get_stt_provider()
+        finally:
+            reset_voice_providers()
+
+        self.assertIsInstance(provider, WhisperCppProvider)
+        self.assertTrue(provider.vad_enabled)
+        self.assertEqual(provider.vad_model_path, '/fake/silero.bin')
+        self.assertEqual(provider.vad_threshold, 0.65)
+        self.assertEqual(provider.vad_min_speech_ms, 275)
+        self.assertEqual(provider.vad_min_silence_ms, 750)
+        self.assertEqual(provider.vad_speech_pad_ms, 110)
 
     @patch('os.path.exists')
     @patch('subprocess.run')
