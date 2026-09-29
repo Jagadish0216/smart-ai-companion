@@ -172,6 +172,11 @@ Mock mode requires no external services and is useful for frontend development.
 | `VOICE_INPUT_SOURCE` | _(required)_ | PipeWire/PulseAudio microphone source used by the standalone voice loop |
 | `VOICE_RECORD_SECONDS` | `5` | Speech window after microphone warm-up for each standalone voice cycle |
 | `VOICE_INPUT_WARMUP_SECONDS` | `1.0` | Delay after opening the Bluetooth microphone before prompting the user to speak |
+| `VOICE_CAPTURE_VAD_ENABLED` | `false` | Enable speech-driven capture using a lightweight live RMS gate |
+| `VOICE_CAPTURE_VAD_START_THRESHOLD` | `0.02` | Normalized PCM RMS level (0–1) that starts speech capture |
+| `VOICE_CAPTURE_VAD_SILENCE_SECONDS` | `0.8` | Trailing silence that ends speech-driven capture |
+| `VOICE_CAPTURE_VAD_MAX_SECONDS` | `10` | Maximum speech capture duration after speech starts |
+| `VOICE_CAPTURE_VAD_START_TIMEOUT_SECONDS` | `5` | Maximum time to wait for speech after `Speak now...` |
 | `VOICE_LEADING_SILENCE_SECONDS` | `0.7` | Silence prepended before Bluetooth playback |
 | `VOICE_MAX_SPEECH_CHARS` | `500` | Maximum sanitized AI-response characters spoken by the standalone loop |
 
@@ -200,6 +205,11 @@ pactl list short sources
 VOICE_INPUT_SOURCE=
 VOICE_RECORD_SECONDS=5
 VOICE_INPUT_WARMUP_SECONDS=1.0
+VOICE_CAPTURE_VAD_ENABLED=false
+VOICE_CAPTURE_VAD_START_THRESHOLD=0.02
+VOICE_CAPTURE_VAD_SILENCE_SECONDS=0.8
+VOICE_CAPTURE_VAD_MAX_SECONDS=10
+VOICE_CAPTURE_VAD_START_TIMEOUT_SECONDS=5
 VOICE_LEADING_SILENCE_SECONDS=0.7
 VOICE_MAX_SPEECH_CHARS=500
 ```
@@ -210,7 +220,9 @@ Copy the exact source returned by `pactl list short sources` into `VOICE_INPUT_S
 python scripts/voice_loop.py
 ```
 
-Press Enter to record one cycle, wait for `Speak now...`, or type `q` and press Enter to exit. The microphone remains open for the warm-up plus the full speech window, and the reported `record` timing includes both. The terminal and conversation retain the original AI response; only the TTS copy has Markdown removed and is limited by `VOICE_MAX_SPEECH_CHARS`. A per-stage timing summary is printed after each successful cycle. The loop uses `parecord`, `ffmpeg`, and `paplay`; wake-word detection is not implemented, and recording remains fixed-duration even when STT VAD is enabled.
+Press Enter to record one cycle, wait for `Speak now...`, or type `q` and press Enter to exit. By default, the microphone remains open for the warm-up plus the full `VOICE_RECORD_SECONDS` window, preserving the original fixed-duration behavior. Set `VOICE_CAPTURE_VAD_ENABLED=true` to wait for speech and stop after trailing silence instead. This live mode uses a lightweight PCM RMS gate and keeps 300 ms of pre-roll to avoid clipping the first word; whisper.cpp Silero VAD remains a separate downstream validation option. The `record` timing includes the complete microphone-open operation, and live mode also prints the captured audio duration.
+
+The terminal and conversation retain the original AI response; only the TTS copy has Markdown removed and is limited by `VOICE_MAX_SPEECH_CHARS`. A per-stage timing summary is printed after each successful cycle. The loop uses `parecord`, `ffmpeg`, and `paplay`; wake-word detection is not implemented.
 
 ## Error Handling
 

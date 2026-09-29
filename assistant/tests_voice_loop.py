@@ -17,6 +17,7 @@ from scripts.voice_loop import (
     prepare_text_for_speech,
     prepend_leading_silence,
     record_audio,
+    record_audio_with_capture_vad,
     run_voice_cycle,
     sanitize_text_for_speech,
     truncate_text_for_speech,
@@ -33,6 +34,11 @@ def _make_wav(frame_count=160, sample_rate=16000):
     return output.getvalue()
 
 
+def _pcm_chunk(amplitude=0, frame_count=320):
+    sample = int(amplitude).to_bytes(2, "little", signed=True)
+    return sample * frame_count
+
+
 class VoiceLoopTests(SimpleTestCase):
     @override_settings(
         VOICE_INPUT_SOURCE="bluez_input.realme_buds",
@@ -40,6 +46,11 @@ class VoiceLoopTests(SimpleTestCase):
         VOICE_INPUT_WARMUP_SECONDS="1.25",
         VOICE_LEADING_SILENCE_SECONDS="0.9",
         VOICE_MAX_SPEECH_CHARS="450",
+        VOICE_CAPTURE_VAD_ENABLED="true",
+        VOICE_CAPTURE_VAD_START_THRESHOLD="0.03",
+        VOICE_CAPTURE_VAD_SILENCE_SECONDS="1.1",
+        VOICE_CAPTURE_VAD_MAX_SECONDS="12",
+        VOICE_CAPTURE_VAD_START_TIMEOUT_SECONDS="6",
     )
     def test_config_reads_voice_loop_settings(self):
         config = VoiceLoopConfig.from_settings()
@@ -49,6 +60,11 @@ class VoiceLoopTests(SimpleTestCase):
         self.assertEqual(config.input_warmup_seconds, 1.25)
         self.assertEqual(config.leading_silence_seconds, 0.9)
         self.assertEqual(config.max_speech_chars, 450)
+        self.assertTrue(config.capture_vad_enabled)
+        self.assertEqual(config.capture_vad_start_threshold, 0.03)
+        self.assertEqual(config.capture_vad_silence_seconds, 1.1)
+        self.assertEqual(config.capture_vad_max_seconds, 12)
+        self.assertEqual(config.capture_vad_start_timeout_seconds, 6)
 
     def test_markdown_is_sanitized_for_speech(self):
         text = "## **Local AI** uses `edge inference` and __private data__."
@@ -190,6 +206,124 @@ class VoiceLoopTests(SimpleTestCase):
         process.kill.assert_not_called()
         process.communicate.assert_called_once_with(timeout=5)
 
+    @patch("scripts.voice_loop.subprocess.Popen")
+    def test_capture_vad_detects_speech_and_stops_after_silence(self, mock_popen):
+        silence = _pcm_chunk()
+        speech = _pcm_chunk(2000)
+        process = MagicMock()
+        process.stdout.read.side_effect = [
+            silence,
+            silence,
+            speech,
+            speech,
+            silence,
+            silence,
+        ]
+        process.communicate.return_value = (b"", b"")
+        mock_popen.return_value = process
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "scripts.voice_loop.time.sleep"
+        ), patch("builtins.print") as mock_print:
+            output_path = Path(temp_dir) / "recorded.wav"
+            record_audio_with_capture_vad(
+                output_path,
+                "bluez_input.test_source",
+                warmup_seconds=1,
+                start_threshold=0.02,
+                silence_seconds=0.04,
+                max_seconds=10,
+                start_timeout_seconds=5,
+            )
+            with wave.open(str(output_path), "rb") as wav_file:
+                self.assertEqual(wav_file.getnframes(), 6 * 320)
+
+        command = mock_popen.call_args.args[0]
+        self.assertIn("--raw", command)
+        self.assertIn("--format=s16le", command)
+        self.assertIn("--rate=16000", command)
+        self.assertIn("--device=bluez_input.test_source", command)
+        process.terminate.assert_called_once_with()
+        mock_print.assert_any_call("Speak now...")
+        mock_print.assert_any_call("Capture complete: 0.1s audio.")
+
+    @patch("scripts.voice_loop.subprocess.Popen")
+    def test_capture_vad_stops_at_maximum_recording_time(self, mock_popen):
+        speech = _pcm_chunk(2000)
+        process = MagicMock()
+        process.stdout.read.side_effect = [speech, speech, speech, speech]
+        process.communicate.return_value = (b"", b"")
+        mock_popen.return_value = process
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "scripts.voice_loop.time.sleep"
+        ), patch("builtins.print"):
+            output_path = Path(temp_dir) / "recorded.wav"
+            record_audio_with_capture_vad(
+                output_path,
+                "source",
+                warmup_seconds=0,
+                start_threshold=0.02,
+                silence_seconds=1,
+                max_seconds=0.06,
+                start_timeout_seconds=1,
+            )
+            with wave.open(str(output_path), "rb") as wav_file:
+                self.assertEqual(wav_file.getnframes(), 3 * 320)
+
+        self.assertEqual(process.stdout.read.call_count, 3)
+        process.terminate.assert_called_once_with()
+
+    @patch("scripts.voice_loop.subprocess.Popen")
+    def test_capture_vad_no_speech_timeout_cleans_up(self, mock_popen):
+        process = MagicMock()
+        process.stdout.read.side_effect = [_pcm_chunk(), _pcm_chunk(), _pcm_chunk()]
+        process.communicate.return_value = (b"", b"")
+        mock_popen.return_value = process
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "scripts.voice_loop.time.sleep"
+        ):
+            output_path = Path(temp_dir) / "recorded.wav"
+            with self.assertRaisesRegex(VoiceLoopError, "no speech detected"):
+                record_audio_with_capture_vad(
+                    output_path,
+                    "source",
+                    warmup_seconds=0,
+                    start_threshold=0.02,
+                    silence_seconds=0.8,
+                    max_seconds=10,
+                    start_timeout_seconds=0.06,
+                )
+
+        self.assertFalse(output_path.exists())
+        process.terminate.assert_called_once_with()
+        process.communicate.assert_called_once_with(timeout=5)
+
+    @patch("scripts.voice_loop.subprocess.Popen")
+    def test_capture_vad_keyboard_interrupt_cleans_up(self, mock_popen):
+        process = MagicMock()
+        process.stdout.read.side_effect = KeyboardInterrupt
+        process.communicate.return_value = (b"", b"")
+        mock_popen.return_value = process
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "scripts.voice_loop.time.sleep"
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                record_audio_with_capture_vad(
+                    Path(temp_dir) / "recorded.wav",
+                    "source",
+                    warmup_seconds=0,
+                    start_threshold=0.02,
+                    silence_seconds=0.8,
+                    max_seconds=10,
+                    start_timeout_seconds=5,
+                )
+
+        process.terminate.assert_called_once_with()
+        process.communicate.assert_called_once_with(timeout=5)
+
     @patch("scripts.voice_loop.subprocess.run")
     def test_normalize_audio_runs_ffmpeg_for_mono_16khz_pcm(self, mock_run):
         def complete_conversion(command, **_kwargs):
@@ -223,6 +357,7 @@ class VoiceLoopTests(SimpleTestCase):
     @patch("scripts.voice_loop.prepend_leading_silence", return_value=b"final wav")
     @patch("scripts.voice_loop.normalize_audio")
     @patch("scripts.voice_loop.record_audio")
+    @patch("scripts.voice_loop.record_audio_with_capture_vad")
     @patch("scripts.voice_loop.AssistantService.process_message")
     @patch("scripts.voice_loop.get_tts_provider")
     @patch("scripts.voice_loop.get_stt_provider")
@@ -231,6 +366,7 @@ class VoiceLoopTests(SimpleTestCase):
         mock_get_stt,
         mock_get_tts,
         mock_process_message,
+        mock_capture_vad,
         mock_record,
         mock_normalize,
         mock_prepend,
@@ -247,6 +383,7 @@ class VoiceLoopTests(SimpleTestCase):
             None,
         )
         config = VoiceLoopConfig("bluez_input.test", 5, 0.7, 500)
+        self.assertFalse(config.capture_vad_enabled)
 
         clock_values = [
             0.0,
@@ -266,6 +403,7 @@ class VoiceLoopTests(SimpleTestCase):
 
         self.assertEqual(conversation_id, 42)
         mock_record.assert_called_once()
+        mock_capture_vad.assert_not_called()
         self.assertEqual(mock_record.call_args.args[2:], (5, 1.0))
         mock_normalize.assert_called_once()
         mock_get_stt.return_value.transcribe.assert_called_once()
@@ -292,6 +430,37 @@ class VoiceLoopTests(SimpleTestCase):
         mock_prepend.assert_called_once_with(_make_wav(), 0.7)
         mock_play.assert_called_once()
         self.assertFalse(Path(mock_play.call_args.args[0]).exists())
+
+    @patch("scripts.voice_loop.get_stt_provider")
+    @patch("scripts.voice_loop.normalize_audio")
+    @patch("scripts.voice_loop.record_audio")
+    @patch("scripts.voice_loop.record_audio_with_capture_vad")
+    def test_voice_cycle_uses_capture_vad_when_enabled(
+        self,
+        mock_capture_vad,
+        mock_record,
+        _mock_normalize,
+        mock_get_stt,
+    ):
+        mock_get_stt.return_value.transcribe.return_value = ""
+        config = VoiceLoopConfig(
+            input_source="bluez_input.test",
+            input_warmup_seconds=1.25,
+            capture_vad_enabled=True,
+            capture_vad_start_threshold=0.03,
+            capture_vad_silence_seconds=0.9,
+            capture_vad_max_seconds=12,
+            capture_vad_start_timeout_seconds=6,
+        )
+
+        with self.assertRaisesRegex(VoiceLoopError, "no speech was recognized"):
+            run_voice_cycle(config)
+
+        mock_record.assert_not_called()
+        self.assertEqual(
+            mock_capture_vad.call_args.args[1:],
+            ("bluez_input.test", 1.25, 0.03, 0.9, 12, 6),
+        )
 
     @patch("scripts.voice_loop.AssistantService.process_message")
     @patch("scripts.voice_loop.get_stt_provider")

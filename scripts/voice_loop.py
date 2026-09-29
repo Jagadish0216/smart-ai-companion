@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import io
+import math
 import os
 import re
+import struct
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 import subprocess
@@ -37,6 +40,11 @@ VOICE_SYSTEM_INSTRUCTION = (
     "headings. Avoid long explanations unless the user explicitly asks for detail."
 )
 
+CAPTURE_SAMPLE_RATE = 16000
+CAPTURE_SAMPLE_WIDTH = 2
+CAPTURE_CHUNK_SECONDS = 0.02
+CAPTURE_PREROLL_SECONDS = 0.3
+
 
 class VoiceLoopError(Exception):
     """Raised when one stage of a voice cycle cannot complete."""
@@ -49,6 +57,11 @@ class VoiceLoopConfig:
     leading_silence_seconds: float = 0.7
     max_speech_chars: int = 500
     input_warmup_seconds: float = 1.0
+    capture_vad_enabled: bool = False
+    capture_vad_start_threshold: float = 0.02
+    capture_vad_silence_seconds: float = 0.8
+    capture_vad_max_seconds: float = 10.0
+    capture_vad_start_timeout_seconds: float = 5.0
 
     @classmethod
     def from_settings(cls) -> "VoiceLoopConfig":
@@ -61,6 +74,21 @@ class VoiceLoopConfig:
             max_speech_chars=int(getattr(settings, "VOICE_MAX_SPEECH_CHARS", 500)),
             input_warmup_seconds=float(
                 getattr(settings, "VOICE_INPUT_WARMUP_SECONDS", 1.0)
+            ),
+            capture_vad_enabled=_as_bool(
+                getattr(settings, "VOICE_CAPTURE_VAD_ENABLED", False)
+            ),
+            capture_vad_start_threshold=float(
+                getattr(settings, "VOICE_CAPTURE_VAD_START_THRESHOLD", 0.02)
+            ),
+            capture_vad_silence_seconds=float(
+                getattr(settings, "VOICE_CAPTURE_VAD_SILENCE_SECONDS", 0.8)
+            ),
+            capture_vad_max_seconds=float(
+                getattr(settings, "VOICE_CAPTURE_VAD_MAX_SECONDS", 10)
+            ),
+            capture_vad_start_timeout_seconds=float(
+                getattr(settings, "VOICE_CAPTURE_VAD_START_TIMEOUT_SECONDS", 5)
             ),
         )
         config.validate()
@@ -82,6 +110,28 @@ class VoiceLoopConfig:
             raise VoiceLoopError("VOICE_MAX_SPEECH_CHARS must be greater than zero.")
         if self.input_warmup_seconds < 0:
             raise VoiceLoopError("VOICE_INPUT_WARMUP_SECONDS cannot be negative.")
+        if not 0 < self.capture_vad_start_threshold <= 1:
+            raise VoiceLoopError(
+                "VOICE_CAPTURE_VAD_START_THRESHOLD must be greater than zero and at most 1."
+            )
+        if self.capture_vad_silence_seconds <= 0:
+            raise VoiceLoopError(
+                "VOICE_CAPTURE_VAD_SILENCE_SECONDS must be greater than zero."
+            )
+        if self.capture_vad_max_seconds <= 0:
+            raise VoiceLoopError(
+                "VOICE_CAPTURE_VAD_MAX_SECONDS must be greater than zero."
+            )
+        if self.capture_vad_start_timeout_seconds <= 0:
+            raise VoiceLoopError(
+                "VOICE_CAPTURE_VAD_START_TIMEOUT_SECONDS must be greater than zero."
+            )
+
+
+def _as_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
 
 
 def _stderr_text(stderr: bytes | str | None) -> str:
@@ -165,6 +215,147 @@ def record_audio(
 
     if not output_path.exists() or output_path.stat().st_size == 0:
         raise VoiceLoopError("Recording failed: parecord produced no audio file.")
+
+
+def _normalized_pcm_rms(chunk: bytes) -> float:
+    """Return the RMS amplitude of little-endian signed 16-bit PCM on a 0..1 scale."""
+    sample_bytes = len(chunk) - (len(chunk) % CAPTURE_SAMPLE_WIDTH)
+    if sample_bytes == 0:
+        return 0.0
+    samples = struct.iter_unpack("<h", chunk[:sample_bytes])
+    square_sum = sum(sample[0] * sample[0] for sample in samples)
+    sample_count = sample_bytes // CAPTURE_SAMPLE_WIDTH
+    return math.sqrt(square_sum / sample_count) / 32768.0
+
+
+def record_audio_with_capture_vad(
+    output_path: Path,
+    source: str,
+    warmup_seconds: float,
+    start_threshold: float,
+    silence_seconds: float,
+    max_seconds: float,
+    start_timeout_seconds: float,
+) -> None:
+    """Record raw PCM until speech ends, retaining a short pre-roll buffer."""
+    command = [
+        "parecord",
+        f"--device={source}",
+        "--raw",
+        "--format=s16le",
+        f"--rate={CAPTURE_SAMPLE_RATE}",
+        "--channels=1",
+    ]
+    try:
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except FileNotFoundError as exc:
+        raise VoiceLoopError(
+            "Recording failed: parecord was not found on PATH."
+        ) from exc
+    except OSError as exc:
+        raise VoiceLoopError(f"Recording failed: {exc}") from exc
+
+    chunk_bytes = round(
+        CAPTURE_SAMPLE_RATE
+        * CAPTURE_SAMPLE_WIDTH
+        * CAPTURE_CHUNK_SECONDS
+    )
+    preroll_chunks = max(
+        1,
+        math.ceil(CAPTURE_PREROLL_SECONDS / CAPTURE_CHUNK_SECONDS),
+    )
+    preroll = deque(maxlen=preroll_chunks)
+    frames: list[bytes] = []
+    wait_elapsed = 0.0
+    capture_elapsed = 0.0
+    silence_elapsed = 0.0
+    speech_started = False
+
+    try:
+        time.sleep(warmup_seconds)
+        print("Speak now...")
+        if process.stdout is None:
+            raise VoiceLoopError("Recording failed: parecord audio stream is unavailable.")
+
+        while True:
+            chunk = process.stdout.read(chunk_bytes)
+            if not chunk:
+                raise VoiceLoopError(
+                    "Recording failed: parecord stopped before capture completed."
+                )
+            chunk_duration = (
+                len(chunk) / CAPTURE_SAMPLE_WIDTH / CAPTURE_SAMPLE_RATE
+            )
+            has_speech = _normalized_pcm_rms(chunk) >= start_threshold
+
+            if not speech_started:
+                preroll.append(chunk)
+                wait_elapsed += chunk_duration
+                if has_speech:
+                    speech_started = True
+                    frames.extend(preroll)
+                    preroll.clear()
+                    capture_elapsed = chunk_duration
+                elif wait_elapsed >= start_timeout_seconds:
+                    raise VoiceLoopError(
+                        "Recording stopped: no speech detected before the start timeout."
+                    )
+                continue
+
+            frames.append(chunk)
+            capture_elapsed += chunk_duration
+            if has_speech:
+                silence_elapsed = 0.0
+            else:
+                silence_elapsed += chunk_duration
+
+            if silence_elapsed >= silence_seconds:
+                break
+            if capture_elapsed >= max_seconds:
+                break
+    except KeyboardInterrupt:
+        try:
+            _terminate_and_reap(process)
+        except Exception:
+            pass
+        raise
+    except VoiceLoopError:
+        try:
+            _terminate_and_reap(process)
+        except Exception:
+            pass
+        raise
+    except Exception as exc:
+        try:
+            _terminate_and_reap(process)
+        except Exception:
+            pass
+        raise VoiceLoopError(f"Recording failed: {exc}") from exc
+    else:
+        try:
+            _terminate_and_reap(process)
+        except Exception as exc:
+            raise VoiceLoopError(f"Recording cleanup failed: {exc}") from exc
+
+    try:
+        with wave.open(str(output_path), "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(CAPTURE_SAMPLE_WIDTH)
+            wav_file.setframerate(CAPTURE_SAMPLE_RATE)
+            wav_file.writeframes(b"".join(frames))
+    except (OSError, wave.Error) as exc:
+        raise VoiceLoopError(f"Recording failed: could not save WAV ({exc}).") from exc
+
+    if not output_path.exists() or output_path.stat().st_size == 0:
+        raise VoiceLoopError("Recording failed: parecord produced no audio file.")
+    captured_audio_seconds = sum(len(frame) for frame in frames) / (
+        CAPTURE_SAMPLE_RATE * CAPTURE_SAMPLE_WIDTH
+    )
+    print(f"Capture complete: {captured_audio_seconds:.1f}s audio.")
 
 
 def normalize_audio(input_path: Path, output_path: Path) -> None:
@@ -314,19 +505,37 @@ def run_voice_cycle(
         normalized_path = temp_path / "normalized.wav"
         playback_path = temp_path / "playback.wav"
 
-        print(
-            f"Preparing microphone ({config.input_warmup_seconds:g}s warm-up, "
-            f"then {config.record_seconds:g}s recording)..."
-        )
-        _timed_call(
-            timings,
-            "record",
-            record_audio,
-            recorded_path,
-            config.input_source,
-            config.record_seconds,
-            config.input_warmup_seconds,
-        )
+        if config.capture_vad_enabled:
+            print(
+                f"Preparing microphone ({config.input_warmup_seconds:g}s warm-up, "
+                "then speech-driven capture)..."
+            )
+            _timed_call(
+                timings,
+                "record",
+                record_audio_with_capture_vad,
+                recorded_path,
+                config.input_source,
+                config.input_warmup_seconds,
+                config.capture_vad_start_threshold,
+                config.capture_vad_silence_seconds,
+                config.capture_vad_max_seconds,
+                config.capture_vad_start_timeout_seconds,
+            )
+        else:
+            print(
+                f"Preparing microphone ({config.input_warmup_seconds:g}s warm-up, "
+                f"then {config.record_seconds:g}s recording)..."
+            )
+            _timed_call(
+                timings,
+                "record",
+                record_audio,
+                recorded_path,
+                config.input_source,
+                config.record_seconds,
+                config.input_warmup_seconds,
+            )
         _timed_call(
             timings,
             "normalize",
