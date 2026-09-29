@@ -164,7 +164,8 @@ Mock mode requires no external services and is useful for frontend development.
 | `TTS_PIPER_BIN` | `/opt/piper/piper` | Path to Piper binary |
 | `TTS_PIPER_VOICE` | `/opt/piper/en_US-lessac-medium.onnx` | Path to Piper ONNX model |
 | `VOICE_INPUT_SOURCE` | _(required)_ | PipeWire/PulseAudio microphone source used by the standalone voice loop |
-| `VOICE_RECORD_SECONDS` | `5` | Recording duration for each standalone voice cycle |
+| `VOICE_RECORD_SECONDS` | `5` | Speech window after microphone warm-up for each standalone voice cycle |
+| `VOICE_INPUT_WARMUP_SECONDS` | `1.0` | Delay after opening the Bluetooth microphone before prompting the user to speak |
 | `VOICE_LEADING_SILENCE_SECONDS` | `0.7` | Silence prepended before Bluetooth playback |
 | `VOICE_MAX_SPEECH_CHARS` | `500` | Maximum sanitized AI-response characters spoken by the standalone loop |
 
@@ -181,6 +182,7 @@ pactl list short sources
 ```env
 VOICE_INPUT_SOURCE=
 VOICE_RECORD_SECONDS=5
+VOICE_INPUT_WARMUP_SECONDS=1.0
 VOICE_LEADING_SILENCE_SECONDS=0.7
 VOICE_MAX_SPEECH_CHARS=500
 ```
@@ -191,7 +193,7 @@ Copy the exact source returned by `pactl list short sources` into `VOICE_INPUT_S
 python scripts/voice_loop.py
 ```
 
-Press Enter to record one cycle, or type `q` and press Enter to exit. The terminal and conversation retain the original AI response; only the TTS copy has Markdown removed and is limited by `VOICE_MAX_SPEECH_CHARS`. A per-stage timing summary is printed after each successful cycle. The loop uses `parecord`, `ffmpeg`, and `paplay`; wake-word detection and VAD are not implemented.
+Press Enter to record one cycle, wait for `Speak now...`, or type `q` and press Enter to exit. The microphone remains open for the warm-up plus the full speech window, and the reported `record` timing includes both. The terminal and conversation retain the original AI response; only the TTS copy has Markdown removed and is limited by `VOICE_MAX_SPEECH_CHARS`. A per-stage timing summary is printed after each successful cycle. The loop uses `parecord`, `ffmpeg`, and `paplay`; wake-word detection and VAD are not implemented.
 
 ## Error Handling
 

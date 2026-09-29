@@ -48,6 +48,7 @@ class VoiceLoopConfig:
     record_seconds: float = 5.0
     leading_silence_seconds: float = 0.7
     max_speech_chars: int = 500
+    input_warmup_seconds: float = 1.0
 
     @classmethod
     def from_settings(cls) -> "VoiceLoopConfig":
@@ -58,6 +59,9 @@ class VoiceLoopConfig:
                 getattr(settings, "VOICE_LEADING_SILENCE_SECONDS", 0.7)
             ),
             max_speech_chars=int(getattr(settings, "VOICE_MAX_SPEECH_CHARS", 500)),
+            input_warmup_seconds=float(
+                getattr(settings, "VOICE_INPUT_WARMUP_SECONDS", 1.0)
+            ),
         )
         config.validate()
         return config
@@ -76,6 +80,8 @@ class VoiceLoopConfig:
             )
         if self.max_speech_chars <= 0:
             raise VoiceLoopError("VOICE_MAX_SPEECH_CHARS must be greater than zero.")
+        if self.input_warmup_seconds < 0:
+            raise VoiceLoopError("VOICE_INPUT_WARMUP_SECONDS cannot be negative.")
 
 
 def _stderr_text(stderr: bytes | str | None) -> str:
@@ -101,8 +107,13 @@ def _terminate_and_reap(process: subprocess.Popen) -> tuple[bytes, bytes]:
         return process.communicate()
 
 
-def record_audio(output_path: Path, source: str, duration_seconds: float) -> None:
-    """Record a fixed-duration WAV from a named PulseAudio source."""
+def record_audio(
+    output_path: Path,
+    source: str,
+    duration_seconds: float,
+    warmup_seconds: float = 1.0,
+) -> None:
+    """Warm up a PulseAudio source, then record a full speech window."""
     command = [
         "parecord",
         f"--device={source}",
@@ -124,6 +135,8 @@ def record_audio(output_path: Path, source: str, duration_seconds: float) -> Non
         raise VoiceLoopError(f"Recording failed: {exc}") from exc
 
     try:
+        time.sleep(warmup_seconds)
+        print("Speak now...")
         _, stderr = process.communicate(timeout=duration_seconds)
     except subprocess.TimeoutExpired:
         try:
@@ -301,7 +314,10 @@ def run_voice_cycle(
         normalized_path = temp_path / "normalized.wav"
         playback_path = temp_path / "playback.wav"
 
-        print(f"Recording for {config.record_seconds:g} seconds...")
+        print(
+            f"Preparing microphone ({config.input_warmup_seconds:g}s warm-up, "
+            f"then {config.record_seconds:g}s recording)..."
+        )
         _timed_call(
             timings,
             "record",
@@ -309,6 +325,7 @@ def run_voice_cycle(
             recorded_path,
             config.input_source,
             config.record_seconds,
+            config.input_warmup_seconds,
         )
         _timed_call(
             timings,

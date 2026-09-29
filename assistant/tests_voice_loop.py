@@ -37,6 +37,7 @@ class VoiceLoopTests(SimpleTestCase):
     @override_settings(
         VOICE_INPUT_SOURCE="bluez_input.realme_buds",
         VOICE_RECORD_SECONDS="6.5",
+        VOICE_INPUT_WARMUP_SECONDS="1.25",
         VOICE_LEADING_SILENCE_SECONDS="0.9",
         VOICE_MAX_SPEECH_CHARS="450",
     )
@@ -45,6 +46,7 @@ class VoiceLoopTests(SimpleTestCase):
 
         self.assertEqual(config.input_source, "bluez_input.realme_buds")
         self.assertEqual(config.record_seconds, 6.5)
+        self.assertEqual(config.input_warmup_seconds, 1.25)
         self.assertEqual(config.leading_silence_seconds, 0.9)
         self.assertEqual(config.max_speech_chars, 450)
 
@@ -98,10 +100,15 @@ class VoiceLoopTests(SimpleTestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "recorded.wav"
             output_path.write_bytes(b"recorded audio")
-            record_audio(output_path, "bluez_input.test_source", 5)
+            with patch("scripts.voice_loop.time.sleep") as mock_sleep, patch(
+                "builtins.print"
+            ) as mock_print:
+                record_audio(output_path, "bluez_input.test_source", 5, 1.25)
 
         command = mock_popen.call_args.args[0]
         self.assertIn("--device=bluez_input.test_source", command)
+        mock_sleep.assert_called_once_with(1.25)
+        mock_print.assert_called_once_with("Speak now...")
         self.assertEqual(
             process.communicate.call_args_list,
             [call(timeout=5), call(timeout=5)],
@@ -122,7 +129,7 @@ class VoiceLoopTests(SimpleTestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "recorded.wav"
             output_path.write_bytes(b"recorded audio")
-            record_audio(output_path, "bluez_input.test_source", 5)
+            record_audio(output_path, "bluez_input.test_source", 5, 0)
 
         process.terminate.assert_called_once_with()
         process.kill.assert_called_once_with()
@@ -141,7 +148,7 @@ class VoiceLoopTests(SimpleTestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "recorded.wav"
             with self.assertRaises(KeyboardInterrupt):
-                record_audio(output_path, "bluez_input.test_source", 5)
+                record_audio(output_path, "bluez_input.test_source", 5, 0)
 
         process.terminate.assert_called_once_with()
         process.kill.assert_called_once_with()
@@ -159,11 +166,29 @@ class VoiceLoopTests(SimpleTestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "recorded.wav"
             with self.assertRaisesRegex(VoiceLoopError, "Recording failed"):
-                record_audio(output_path, "bluez_input.test_source", 5)
+                record_audio(output_path, "bluez_input.test_source", 5, 0)
 
         process.terminate.assert_called_once_with()
         process.kill.assert_not_called()
         self.assertEqual(process.communicate.call_args_list[-1], call(timeout=5))
+
+    @patch("scripts.voice_loop.subprocess.Popen")
+    def test_record_audio_reaps_process_if_warmup_is_interrupted(self, mock_popen):
+        process = MagicMock()
+        process.communicate.return_value = (b"", b"")
+        mock_popen.return_value = process
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "scripts.voice_loop.time.sleep",
+            side_effect=KeyboardInterrupt,
+        ):
+            output_path = Path(temp_dir) / "recorded.wav"
+            with self.assertRaises(KeyboardInterrupt):
+                record_audio(output_path, "bluez_input.test_source", 5, 1)
+
+        process.terminate.assert_called_once_with()
+        process.kill.assert_not_called()
+        process.communicate.assert_called_once_with(timeout=5)
 
     @patch("scripts.voice_loop.subprocess.run")
     def test_normalize_audio_runs_ffmpeg_for_mono_16khz_pcm(self, mock_run):
@@ -241,6 +266,7 @@ class VoiceLoopTests(SimpleTestCase):
 
         self.assertEqual(conversation_id, 42)
         mock_record.assert_called_once()
+        self.assertEqual(mock_record.call_args.args[2:], (5, 1.0))
         mock_normalize.assert_called_once()
         mock_get_stt.return_value.transcribe.assert_called_once()
         mock_process_message.assert_called_once_with(
