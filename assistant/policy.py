@@ -47,6 +47,7 @@ class CapabilityRegistry:
     @classmethod
     def from_settings(cls) -> "CapabilityRegistry":
         from django.conf import settings
+        from knowledge_base.services import is_rag_available
 
         return cls([
             CapabilityStatus(
@@ -76,7 +77,7 @@ class CapabilityRegistry:
             ),
             CapabilityStatus(
                 Capability.LOCAL_RAG,
-                False,
+                is_rag_available(),
                 "Retrieval from locally indexed documents",
                 "I can't search local documents yet because the local knowledge system isn't available.",
             ),

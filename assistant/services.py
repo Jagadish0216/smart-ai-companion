@@ -9,8 +9,9 @@ AI engines directly.
 import logging
 
 from conversations.models import Conversation, Message
+from knowledge_base.services import build_rag_instruction, get_retriever
 from .ai_engine import get_engine, EngineUnavailableError
-from .policy import CapabilityRegistry, ResponsePlan
+from .policy import Capability, CapabilityRegistry, ResponsePlan
 
 logger = logging.getLogger(__name__)
 
@@ -83,14 +84,19 @@ class AssistantService:
                     "model": None,
                     "mode": "offline",
                     "latency_ms": 0,
+                    "rag_used": False,
+                    "rag_sources": [],
+                    "rag_chunks": 0,
                 }
                 return conversation, response_text, metadata, None
 
-        grounding_instruction = (
-            CapabilityRegistry.from_settings().build_grounding_instruction()
-        )
+        registry = CapabilityRegistry.from_settings()
+        rag_results = _retrieve_local_knowledge(query, registry)
+        rag_instruction = build_rag_instruction(rag_results) if rag_results else None
+        grounding_instruction = registry.build_grounding_instruction()
         effective_instruction = _combine_instructions(
             effective_instruction,
+            rag_instruction,
             grounding_instruction,
         )
 
@@ -123,6 +129,12 @@ class AssistantService:
                 "model": result.model,
                 "mode": result.mode,
                 "latency_ms": result.latency_ms,
+                "rag_used": bool(rag_results),
+                "rag_sources": [
+                    retrieved.source_metadata()
+                    for retrieved in rag_results
+                ],
+                "rag_chunks": len(rag_results),
             }
 
             return conversation, result.text, metadata, None
@@ -136,6 +148,16 @@ class AssistantService:
         except Exception as exc:
             logger.exception("Unexpected error during AI inference")
             return conversation, None, None, "Failed to process query."
+
+
+def _retrieve_local_knowledge(query: str, registry: CapabilityRegistry) -> list:
+    if not registry.is_available(Capability.LOCAL_RAG):
+        return []
+    try:
+        return get_retriever().retrieve(query)
+    except Exception:
+        logger.exception("Local knowledge retrieval failed; continuing without RAG")
+        return []
 
 
 def _combine_instructions(*instructions: str | None) -> str:

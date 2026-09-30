@@ -19,7 +19,7 @@ A Raspberry Pi 5-based offline-first AI companion. The Django web application se
 | `dashboard` | Control center UI templates and views |
 | `assistant` | Chat API, Voice API, AI engine abstraction, STT/TTS providers |
 | `conversations` | Chat history persistence (Conversation + Message models) |
-| `knowledge_base` | Document upload and RAG metadata (foundation only) |
+| `knowledge_base` | Local text/Markdown ingestion, chunk storage, and lexical retrieval |
 | `system` | Device metrics, companion state, settings, logging |
 
 ### AI Engine Architecture
@@ -33,6 +33,8 @@ Optional AssistantResponsePolicy
     ↓  response mode + capability check + request budget
 AssistantService.process_message()
     ↓
+Optional local knowledge retrieval
+    ↓  request-scoped context when relevance passes the threshold
 get_engine()  ← reads AI_ENGINE from settings
     ↓
 ┌──────────────────────────────────────────┐
@@ -59,9 +61,39 @@ API: {conversation_id, response, engine, model, mode}
 
 ### Assistant Response Policy
 
-The reusable policy layer classifies requests as `BRIEF`, `NORMAL`, `DETAILED`, `ACTION`, or `CLARIFICATION`. The standalone voice loop uses this classification to select response depth and a request-scoped Ollama generation budget without changing the global `OLLAMA_NUM_PREDICT=128` fallback. Existing browser and service calls that omit a response plan retain their original engine call behavior.
+The reusable policy layer classifies requests as `BRIEF`, `NORMAL`, `DETAILED`, `ACTION`, or `CLARIFICATION`. The standalone voice loop uses this classification to select response depth and a request-scoped Ollama generation budget without changing the global `OLLAMA_NUM_PREDICT=128` fallback. Browser and service calls retain the same public behavior while all LLM requests receive request-scoped capability grounding.
 
-The capability registry reflects configured, implemented components such as conversation persistence, local generation, whisper.cpp STT, and Piper TTS. RAG, online retrieval, sensors, camera understanding, ESP32/device control, movement, and reminders remain unavailable. Recognized requests for unavailable actions receive a natural grounded response; the assistant must not claim that an action or observation occurred. Future modules can register those capabilities and route to their real executors without replacing the response policy.
+The capability registry reflects configured, implemented components such as conversation persistence, local generation, whisper.cpp STT, Piper TTS, and local retrieval. `LOCAL_RAG` is available only when RAG is enabled, its configuration is valid, and at least one chunk belongs to an indexed document. Online retrieval, sensors, camera understanding, ESP32/device control, movement, and reminders remain unavailable. Recognized requests for unavailable actions receive a natural grounded response; the assistant must not claim that an action or observation occurred. Future modules can register those capabilities and route to their real executors without replacing the response policy.
+
+### Local Knowledge / RAG
+
+The v1 local knowledge pipeline is offline and dependency-free. It reuses the existing `Document` model, stores deterministic child chunks in SQLite, and retrieves them with normalized lexical term coverage. Database-side term filtering prevents every chunk body from being loaded into Python, and the retriever keeps only the configured top results in memory. This is appropriate for a modest Pi-hosted project knowledge base and does not load an embedding model per request.
+
+Supported source formats are UTF-8 plain text (`.txt`) and Markdown (`.md` or `.markdown`). PDF, OCR, image extraction, semantic embeddings, and external vector databases are intentionally outside this milestone.
+
+Run migrations, ingest a source, and enable retrieval:
+
+```bash
+python manage.py migrate
+python manage.py ingest_knowledge path/to/project-notes.md
+```
+
+```env
+RAG_ENABLED=true
+AI_ENGINE=local
+```
+
+The command uses the resolved source path as its stable identifier by default. Re-ingesting the same source replaces its stored file and chunks instead of creating a second document. Use `--source-id stable-name` when the source may move:
+
+```bash
+python manage.py ingest_knowledge notes/relay-wiring.txt --source-id relay-wiring
+```
+
+At request time, the retriever returns up to `RAG_TOP_K` chunks whose score meets `RAG_MIN_RELEVANCE`. Useful chunks are added only to the internal request instruction; the user query and conversation history are unchanged. The LLM is told to prefer this trusted local material, avoid unsupported details, and not mention filenames or retrieval internals unless asked. If nothing meets the threshold, generation follows the existing non-RAG path.
+
+`LOCAL_RAG` is reported unavailable when the local LLM is not selected, RAG is disabled, configuration is invalid, or no indexed chunks exist. This conservative empty-index behavior prevents the assistant from claiming it can search local knowledge before ingestion has succeeded.
+
+The lexical baseline works best when the question and source share important terms. A future semantic retriever can implement the existing retriever interface without changing ingestion, `AssistantService`, the voice loop, or public APIs.
 
 ## Setup Instructions
 
@@ -166,6 +198,12 @@ Mock mode requires no external services and is useful for frontend development.
 | `OLLAMA_KEEP_ALIVE` | `30m` | How long Ollama keeps the model loaded after a request |
 | `OLLAMA_NUM_PREDICT` | `128` | Maximum number of tokens Ollama generates per response |
 | `CHAT_REQUEST_TIMEOUT_SECONDS` | `30` | Browser timeout for chat POST requests |
+| `RAG_ENABLED` | `false` | Enable local retrieval with `AI_ENGINE=local` after knowledge has been ingested |
+| `RAG_RETRIEVER` | `lexical` | Local retriever implementation; v1 supports `lexical` |
+| `RAG_CHUNK_CHARS` | `1000` | Approximate source chunk size in characters |
+| `RAG_CHUNK_OVERLAP_CHARS` | `150` | Approximate overlap between adjacent chunks |
+| `RAG_TOP_K` | `4` | Maximum relevant chunks supplied to one request |
+| `RAG_MIN_RELEVANCE` | `0.5` | Minimum lexical query-term coverage score from 0 to 1 |
 | `STT_ENGINE` | `mock` | Speech-to-Text: `mock` or `whisper_cpp` |
 | `STT_WHISPER_BIN` | `/opt/whisper.cpp/main` | Path to whisper.cpp binary |
 | `STT_WHISPER_MODEL` | `/opt/whisper.cpp/models/ggml-base.en.bin` | Path to whisper.cpp model |
@@ -260,7 +298,11 @@ python manage.py makemigrations --check
 python manage.py test
 ```
 
-The suite includes mocked Ollama, voice-provider, and standalone voice-loop coverage. Tests run without real Ollama, Whisper, Piper, or PulseAudio services.
+The suite includes local knowledge chunking/ingestion/retrieval tests plus mocked Ollama, voice-provider, and standalone voice-loop coverage. Tests run without real Ollama, Whisper, Piper, or PulseAudio services. Run only the RAG coverage with:
+
+```bash
+python manage.py test knowledge_base.tests knowledge_base.tests_rag
+```
 
 ## Raspberry Pi Benchmark Results
 
@@ -293,7 +335,7 @@ The suite includes mocked Ollama, voice-provider, and standalone voice-loop cove
 | Document Upload | ✅ Implemented |
 | Device Metrics (simulated) | ✅ Implemented |
 | Companion State Control | ✅ Implemented |
-| RAG Pipeline | ⬜ Not implemented |
+| Local RAG Pipeline | ✅ Implemented (text/Markdown + lexical retrieval) |
 | Voice Input (STT - whisper.cpp) | ✅ Implemented (API & Browser Mic) |
 | Voice Output (TTS - Piper) | ✅ Implemented (API & Browser Playback) |
 | Online Retrieval | ⬜ Not implemented |
@@ -303,7 +345,8 @@ The suite includes mocked Ollama, voice-provider, and standalone voice-loop cove
 ### Important Notes
 
 - The local LLM runs on **CPU only** (Raspberry Pi 5 has no GPU). Inference speed is limited by ARM CPU performance.
-- RAG (Retrieval-Augmented Generation) is **not implemented**. The LLM answers from its training data only.
+- Local RAG uses lexical matching rather than semantic embeddings, so sources and questions should share meaningful terminology.
+- Only UTF-8 text and Markdown are indexed in v1; PDF/OCR support is not included.
 - Online/web retrieval is **not implemented**. All inference is offline.
 - The system prompt establishes the companion persona but the model's behavior depends on its training.
 
@@ -313,5 +356,5 @@ The suite includes mocked Ollama, voice-provider, and standalone voice-loop cove
 2. **Local LLM** ✅
 3. **Voice Pipeline** ✅ (Browser UI -> STT -> LLM -> TTS -> Browser Audio)
 4. **Physical Hardware I/O** ← add Pi-connected microphone and speaker
-5. **Local LLM + RAG** ← add vector store + document processing
+5. **Local LLM + lexical RAG** ✅
 6. **Local LLM + RAG + Online Retrieval** ← add query router

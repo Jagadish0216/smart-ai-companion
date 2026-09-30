@@ -152,6 +152,14 @@ OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', 'llama3.2:1b')
 OLLAMA_TIMEOUT = int(os.environ.get('OLLAMA_TIMEOUT', '120'))
 CHAT_REQUEST_TIMEOUT_SECONDS = int(os.environ.get('CHAT_REQUEST_TIMEOUT_SECONDS', '30'))
 
+# Offline local knowledge / RAG
+RAG_ENABLED = os.environ.get('RAG_ENABLED', 'false').lower() in ('1', 'true', 'yes', 'on')
+RAG_RETRIEVER = os.environ.get('RAG_RETRIEVER', 'lexical')
+RAG_CHUNK_CHARS = int(os.environ.get('RAG_CHUNK_CHARS', '1000'))
+RAG_CHUNK_OVERLAP_CHARS = int(os.environ.get('RAG_CHUNK_OVERLAP_CHARS', '150'))
+RAG_TOP_K = int(os.environ.get('RAG_TOP_K', '4'))
+RAG_MIN_RELEVANCE = float(os.environ.get('RAG_MIN_RELEVANCE', '0.5'))
+
 # Voice Engine Configuration
 STT_ENGINE = os.environ.get('STT_ENGINE', 'mock')
 STT_WHISPER_BIN = os.environ.get('STT_WHISPER_BIN', '/opt/whisper.cpp/main')
