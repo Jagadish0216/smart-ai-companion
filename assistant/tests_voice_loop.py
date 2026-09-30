@@ -8,8 +8,8 @@ import wave
 
 from django.test import SimpleTestCase, override_settings
 
+from assistant.policy import AssistantResponsePolicy, ResponseMode
 from scripts.voice_loop import (
-    VOICE_SYSTEM_INSTRUCTION,
     VoiceLoopConfig,
     VoiceLoopError,
     _timed_call,
@@ -473,15 +473,14 @@ class VoiceLoopTests(SimpleTestCase):
         mock_process_message.assert_called_once_with(
             "What time is it?",
             conversation_id=12,
-            system_instruction=VOICE_SYSTEM_INSTRUCTION,
+            response_plan=AssistantResponsePolicy.plan_voice_response(
+                "What time is it?"
+            ),
         )
-        self.assertIn("2–3 short sentences", VOICE_SYSTEM_INSTRUCTION)
-        self.assertIn("Do not use Markdown", VOICE_SYSTEM_INSTRUCTION)
-        self.assertIn("bullet lists", VOICE_SYSTEM_INSTRUCTION)
-        self.assertIn("headings", VOICE_SYSTEM_INSTRUCTION)
-        self.assertIn("conversational spoken language", VOICE_SYSTEM_INSTRUCTION)
-        self.assertIn("explicitly asks for detail", VOICE_SYSTEM_INSTRUCTION)
-        self.assertIn("complete longer answer", VOICE_SYSTEM_INSTRUCTION)
+        response_plan = mock_process_message.call_args.kwargs["response_plan"]
+        self.assertEqual(response_plan.mode, ResponseMode.NORMAL)
+        self.assertIn("concise but sufficient", response_plan.system_instruction)
+        self.assertIn("Do not use Markdown", response_plan.system_instruction)
         mock_get_tts.return_value.synthesize.assert_called_once_with(
             "It is test time. Details are ready."
         )

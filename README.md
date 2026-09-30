@@ -29,6 +29,8 @@ The assistant uses a pluggable engine system. Django never calls a specific LLM 
 ```
 ChatAPIView
     ↓
+Optional AssistantResponsePolicy
+    ↓  response mode + capability check + request budget
 AssistantService.process_message()
     ↓
 get_engine()  ← reads AI_ENGINE from settings
@@ -52,7 +54,14 @@ API: {conversation_id, response, engine, model, mode}
 - [`assistant/ai_engine/mock.py`](assistant/ai_engine/mock.py) — `MockAIEngine` (development/testing)
 - [`assistant/ai_engine/local.py`](assistant/ai_engine/local.py) — `LocalLLMEngine` (Ollama + Llama 3.2)
 - [`assistant/ai_engine/__init__.py`](assistant/ai_engine/__init__.py) — `get_engine()` factory
+- [`assistant/policy.py`](assistant/policy.py) — response modes, deterministic intent policy, and capability registry
 - [`assistant/services.py`](assistant/services.py) — `AssistantService` orchestration
+
+### Assistant Response Policy
+
+The reusable policy layer classifies requests as `BRIEF`, `NORMAL`, `DETAILED`, `ACTION`, or `CLARIFICATION`. The standalone voice loop uses this classification to select response depth and a request-scoped Ollama generation budget without changing the global `OLLAMA_NUM_PREDICT=128` fallback. Existing browser and service calls that omit a response plan retain their original engine call behavior.
+
+The capability registry reflects configured, implemented components such as conversation persistence, local generation, whisper.cpp STT, and Piper TTS. RAG, online retrieval, sensors, camera understanding, ESP32/device control, movement, and reminders remain unavailable. Recognized requests for unavailable actions receive a natural grounded response; the assistant must not claim that an action or observation occurred. Future modules can register those capabilities and route to their real executors without replacing the response policy.
 
 ## Setup Instructions
 
@@ -180,6 +189,9 @@ Mock mode requires no external services and is useful for frontend development.
 | `VOICE_LEADING_SILENCE_SECONDS` | `0.7` | Silence prepended before Bluetooth playback |
 | `VOICE_TTS_CHUNK_CHARS` | `300` | Approximate sentence-aware Piper chunk size |
 | `VOICE_TTS_MAX_TOTAL_CHARS` | `0` | Optional spoken-response safety limit; `0` speaks the full sanitized response |
+| `VOICE_LLM_BRIEF_NUM_PREDICT` | `96` | Request-scoped Ollama budget for brief voice responses |
+| `VOICE_LLM_NORMAL_NUM_PREDICT` | `160` | Request-scoped Ollama budget for normal voice responses |
+| `VOICE_LLM_DETAILED_NUM_PREDICT` | `384` | Request-scoped Ollama budget for detailed voice responses |
 
 ## Standalone Raspberry Pi Voice Loop
 
@@ -214,6 +226,9 @@ VOICE_CAPTURE_VAD_START_TIMEOUT_SECONDS=5
 VOICE_LEADING_SILENCE_SECONDS=0.7
 VOICE_TTS_CHUNK_CHARS=300
 VOICE_TTS_MAX_TOTAL_CHARS=0
+VOICE_LLM_BRIEF_NUM_PREDICT=96
+VOICE_LLM_NORMAL_NUM_PREDICT=160
+VOICE_LLM_DETAILED_NUM_PREDICT=384
 ```
 
 Copy the exact source returned by `pactl list short sources` into `VOICE_INPUT_SOURCE`, then run:
@@ -223,6 +238,8 @@ python scripts/voice_loop.py
 ```
 
 Press Enter to record one cycle, wait for `Speak now...`, or type `q` and press Enter to exit. By default, the microphone remains open for the warm-up plus the full `VOICE_RECORD_SECONDS` window, preserving the original fixed-duration behavior. Set `VOICE_CAPTURE_VAD_ENABLED=true` to wait for speech and stop after trailing silence instead. This live mode uses a lightweight PCM RMS gate and keeps 300 ms of pre-roll to avoid clipping the first word; whisper.cpp Silero VAD remains a separate downstream validation option. The `record` timing includes the complete microphone-open operation, and live mode also prints the captured audio duration.
+
+The voice loop applies the assistant response policy before generation. Brief requests stay direct, normal requests remain concise but sufficient, and explicit requests for detail, steps, examples, or comparisons can use the larger detailed budget and produce complete answers. Ambiguous commands ask for clarification. Recognized actions that require an unavailable sensor, device, camera, retrieval source, or scheduler are answered honestly instead of being presented as completed.
 
 The terminal and conversation retain the original AI response. The TTS copy has Markdown removed and is split at sentence boundaries into approximately `VOICE_TTS_CHUNK_CHARS` characters. All chunks are synthesized and played sequentially, so detailed answers are spoken in full by default. Set `VOICE_TTS_MAX_TOTAL_CHARS` to a nonzero value only when an explicit safety limit is needed; truncation then occurs at a complete sentence boundary. Bluetooth leading silence is applied only to the first chunk. The timing summary totals synthesis and playback across every chunk, and the loop also reports the number of TTS chunks. The loop uses `parecord`, `ffmpeg`, and `paplay`; wake-word detection is not implemented.
 

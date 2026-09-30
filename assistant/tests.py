@@ -101,16 +101,17 @@ class MockAIEngineTests(TestCase):
 
     def test_keyword_status(self):
         result = self.engine.generate("system status check")
-        self.assertIn("online", result.text.lower())
+        self.assertIn("don't have live", result.text.lower())
 
     def test_keyword_knowledge(self):
         result = self.engine.generate("search my documents")
         self.assertIn("documents", result.text.lower())
+        self.assertIn("isn't available", result.text.lower())
 
     def test_fallback_response(self):
         result = self.engine.generate("arbitrary test input 42 xkcd")
         self.assertIn("arbitrary test input 42 xkcd", result.text)
-        self.assertIn("mock", result.text.lower())
+        self.assertNotIn("mock", result.text.lower())
 
     def test_health_check(self):
         self.assertTrue(self.engine.health_check())
@@ -382,6 +383,21 @@ class LocalLLMEngineMockedTests(TestCase):
         request_obj = mock_urlopen.call_args[0][0]
         sent_payload = json.loads(request_obj.data.decode("utf-8"))
         self.assertEqual(sent_payload["options"], {"num_predict": 256})
+
+    @patch("assistant.ai_engine.local.urllib.request.urlopen")
+    def test_request_scoped_num_predict_overrides_global_fallback(self, mock_urlopen):
+        mock_urlopen.return_value = self._make_mock_response({
+            "message": {"role": "assistant", "content": "Detailed response"},
+        })
+
+        self.engine._call_ollama_chat(
+            [{"role": "user", "content": "Explain in detail"}],
+            num_predict=384,
+        )
+
+        request_obj = mock_urlopen.call_args[0][0]
+        sent_payload = json.loads(request_obj.data.decode("utf-8"))
+        self.assertEqual(sent_payload["options"], {"num_predict": 384})
 
     @patch("assistant.ai_engine.local.logger.info")
     @patch("assistant.ai_engine.local.urllib.request.urlopen")

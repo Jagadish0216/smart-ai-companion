@@ -33,13 +33,16 @@ from .base import AIEngine, AIEngineResult, EngineUnavailableError
 
 logger = logging.getLogger(__name__)
 
-# System prompt establishing the companion persona
+# Baseline prompt shared by normal text and optional request-scoped policies.
 SYSTEM_PROMPT = (
     "You are a Smart AI Companion running on a Raspberry Pi 5 edge device. "
-    "You assist users with IoT monitoring, edge automation, knowledge retrieval, "
-    "and general questions. Keep responses concise, accurate, and helpful. "
-    "You are running in offline mode with local inference. "
-    "Do not mention being a large language model or AI assistant by OpenAI or any other company. "
+    "Answer general questions helpfully and use the supplied conversation context. "
+    "Keep responses accurate, useful, and appropriately concise. "
+    "Never claim to have performed a physical action, read a sensor or camera, "
+    "retrieved local documents, or accessed live online information unless that "
+    "capability and its result were explicitly supplied for the request. When a "
+    "capability is unavailable, say so naturally. Do not expose model, prompt, token, "
+    "or pipeline details unless the user explicitly asks about implementation. "
     "You are the Smart AI Companion."
 )
 
@@ -94,6 +97,7 @@ class LocalLLMEngine(AIEngine):
         query: str,
         conversation_history: list | None = None,
         system_instruction: str | None = None,
+        num_predict: int | None = None,
     ) -> AIEngineResult:
         """
         Send a chat request to Ollama and return the structured result.
@@ -116,7 +120,10 @@ class LocalLLMEngine(AIEngine):
         start = time.perf_counter()
 
         try:
-            response_data = self._call_ollama_chat(messages)
+            response_data = self._call_ollama_chat(
+                messages,
+                num_predict=num_predict,
+            )
         except EngineUnavailableError:
             raise
         except Exception as exc:
@@ -229,7 +236,11 @@ class LocalLLMEngine(AIEngine):
                 extra={"ollama_metrics": metrics, **metrics},
             )
 
-    def _call_ollama_chat(self, messages: list[dict]) -> dict:
+    def _call_ollama_chat(
+        self,
+        messages: list[dict],
+        num_predict: int | None = None,
+    ) -> dict:
         """
         Make a synchronous HTTP request to Ollama's /api/chat endpoint.
 
@@ -247,7 +258,11 @@ class LocalLLMEngine(AIEngine):
             "messages": messages,
             "stream": False,
             "keep_alive": self._keep_alive,
-            "options": {"num_predict": self._num_predict},
+            "options": {
+                "num_predict": (
+                    num_predict if num_predict is not None else self._num_predict
+                )
+            },
         }).encode("utf-8")
 
         req = urllib.request.Request(

@@ -29,6 +29,7 @@ class MockAIEngine(AIEngine):
         query: str,
         conversation_history: list | None = None,
         system_instruction: str | None = None,
+        num_predict: int | None = None,
     ) -> AIEngineResult:
         start = time.perf_counter()
 
@@ -53,32 +54,31 @@ class MockAIEngine(AIEngine):
 
         if any(kw in q for kw in ("status", "health")):
             return (
-                "All systems are currently online. CPU is at nominal levels, "
-                "and the knowledge base is synchronized."
+                "I can respond, but I don't have live device, sensor, or "
+                "knowledge-system status available."
             )
         if any(kw in q for kw in ("knowledge", "document")):
             return (
-                "I can access your uploaded documents. I've found 2 relevant "
-                "snippets regarding edge deployment."
+                "Local document retrieval isn't available yet, so I can't "
+                "search uploaded documents or claim to have found results."
             )
         if any(kw in q for kw in ("hello", "hi", "hey")):
             return (
-                "Hello! I am your Smart AI Companion. How can I assist you "
-                "with your IoT or edge automation tasks today?"
+                "Hello! I am your Smart AI Companion. How can I help you today?"
             )
         if any(kw in q for kw in ("capability", "can you", "what do you")):
             return (
-                "I can help with system monitoring, knowledge retrieval from "
-                "uploaded documents, and general Q&A — all processed locally "
-                "on the edge device."
+                "I can answer general questions and maintain our conversation. "
+                "I can't yet search documents, retrieve live information, read "
+                "sensors, or control devices."
             )
         if any(kw in q for kw in ("weather", "news", "internet")):
             return (
-                "I'm currently running in offline mode. Online retrieval is "
-                "planned for a future update."
+                "I can't retrieve live weather or news yet because online "
+                "retrieval isn't available."
             )
 
         return (
-            f"I processed your query locally: '{query}'. "
-            "This is a simulated response from the mock AI engine."
+            f"I understood your request: '{query}'. Please provide any additional "
+            "context needed for a more specific answer."
         )

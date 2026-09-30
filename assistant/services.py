@@ -10,6 +10,7 @@ import logging
 
 from conversations.models import Conversation, Message
 from .ai_engine import get_engine, EngineUnavailableError
+from .policy import ResponsePlan
 
 logger = logging.getLogger(__name__)
 
@@ -21,13 +22,16 @@ class AssistantService:
         query: str,
         conversation_id: int = None,
         system_instruction: str | None = None,
+        num_predict: int | None = None,
+        response_plan: ResponsePlan | None = None,
     ) -> tuple:
         """
         Process a user message: persist it, run AI inference, persist the
         AI response.
 
-        ``system_instruction`` is optional and scoped to this inference call.
-        Omitting it preserves the normal text-chat engine call unchanged.
+        Request instructions, generation budgets, and response plans are optional
+        and scoped to this inference call. Omitting them preserves the normal
+        text-chat engine call unchanged.
 
         Returns:
             (conversation, response_text, metadata_dict, error_string)
@@ -53,6 +57,35 @@ class AssistantService:
             text=query,
         )
 
+        effective_instruction = system_instruction
+        effective_num_predict = num_predict
+        if response_plan is not None:
+            if response_plan.system_instruction:
+                effective_instruction = (
+                    f"{effective_instruction}\n\n{response_plan.system_instruction}"
+                    if effective_instruction
+                    else response_plan.system_instruction
+                )
+            if effective_num_predict is None:
+                effective_num_predict = response_plan.num_predict
+
+            if response_plan.direct_response:
+                response_text = response_plan.direct_response
+                Message.objects.create(
+                    conversation=conversation,
+                    sender='AI',
+                    text=response_text,
+                    processing_time_ms=0,
+                )
+                conversation.save(update_fields=['updated_at'])
+                metadata = {
+                    "engine": "policy",
+                    "model": None,
+                    "mode": "offline",
+                    "latency_ms": 0,
+                }
+                return conversation, response_text, metadata, None
+
         # ── Run AI inference ──
         try:
             engine = get_engine()
@@ -60,14 +93,12 @@ class AssistantService:
             # Build lightweight conversation history for context
             history = _get_conversation_history(conversation)
 
-            if system_instruction:
-                result = engine.generate(
-                    query,
-                    conversation_history=history,
-                    system_instruction=system_instruction,
-                )
-            else:
-                result = engine.generate(query, conversation_history=history)
+            generation_kwargs = {"conversation_history": history}
+            if effective_instruction:
+                generation_kwargs["system_instruction"] = effective_instruction
+            if effective_num_predict is not None:
+                generation_kwargs["num_predict"] = effective_num_predict
+            result = engine.generate(query, **generation_kwargs)
 
             # ── Persist AI response ──
             Message.objects.create(

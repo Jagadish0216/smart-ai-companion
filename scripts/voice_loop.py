@@ -31,16 +31,8 @@ django.setup()
 from django.conf import settings  # noqa: E402
 
 from assistant.services import AssistantService  # noqa: E402
+from assistant.policy import AssistantResponsePolicy  # noqa: E402
 from assistant.voice.factory import get_stt_provider, get_tts_provider  # noqa: E402
-
-
-VOICE_SYSTEM_INSTRUCTION = (
-    "This is a spoken voice interaction. Answer in 2–3 short sentences by default. "
-    "When the user explicitly asks for detail, depth, steps, a full explanation, "
-    "a comparison, or another comprehensive response, give a complete longer answer. "
-    "Use conversational spoken language. Do not use Markdown, bullet lists, or "
-    "headings. Avoid long explanations unless the request clearly requires them."
-)
 
 CAPTURE_SAMPLE_RATE = 16000
 CAPTURE_SAMPLE_WIDTH = 2
@@ -623,6 +615,7 @@ def run_voice_cycle(
         if not transcript:
             raise VoiceLoopError("Transcription failed: no speech was recognized.")
         print(f"You: {transcript}")
+        response_plan = AssistantResponsePolicy.plan_voice_response(transcript)
 
         try:
             conversation, response_text, _metadata, error = (
@@ -632,7 +625,7 @@ def run_voice_cycle(
                     AssistantService.process_message,
                     transcript,
                     conversation_id=conversation_id,
-                    system_instruction=VOICE_SYSTEM_INSTRUCTION,
+                    response_plan=response_plan,
                 )
             )
         except Exception as exc:

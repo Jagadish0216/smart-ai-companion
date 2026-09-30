@@ -45,6 +45,7 @@ class AIEngine(ABC):
         query: str,
         conversation_history: list | None = None,
         system_instruction: str | None = None,
+        num_predict: int | None = None,
     ) -> AIEngineResult:
         """
         Generate a response for the given query.
@@ -55,6 +56,7 @@ class AIEngine(ABC):
                                   [{"role": "USER"|"AI", "content": "..."}]
                                   for context-aware responses.
             system_instruction: Optional instruction scoped to this request.
+            num_predict: Optional request-scoped generation-token budget.
 
         Returns:
             AIEngineResult with the response text and metadata.
