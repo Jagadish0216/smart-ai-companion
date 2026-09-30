@@ -615,7 +615,7 @@ class AssistantServiceEngineIntegrationTests(TestCase):
 
 class AssistantServiceRequestInstructionTests(TestCase):
     @patch("assistant.services.get_engine")
-    def test_default_call_does_not_pass_request_instruction(self, mock_get_engine):
+    def test_default_call_passes_only_capability_grounding(self, mock_get_engine):
         engine = MagicMock()
         engine.generate.return_value = AIEngineResult(
             text="Normal response",
@@ -633,7 +633,11 @@ class AssistantServiceRequestInstructionTests(TestCase):
         self.assertIsNone(error)
         self.assertEqual(text, "Normal response")
         call_kwargs = engine.generate.call_args.kwargs
-        self.assertNotIn("system_instruction", call_kwargs)
+        self.assertIn(
+            "Use this runtime capability state",
+            call_kwargs["system_instruction"],
+        )
+        self.assertNotIn("num_predict", call_kwargs)
         self.assertEqual(conversation.messages.count(), 2)
 
     @patch("assistant.services.get_engine")
@@ -657,10 +661,9 @@ class AssistantServiceRequestInstructionTests(TestCase):
 
         self.assertIsNone(error)
         self.assertEqual(text, "Concise spoken response.")
-        self.assertEqual(
-            engine.generate.call_args.kwargs["system_instruction"],
-            instruction,
-        )
+        request_instruction = engine.generate.call_args.kwargs["system_instruction"]
+        self.assertIn(instruction, request_instruction)
+        self.assertIn("Use this runtime capability state", request_instruction)
         self.assertEqual(
             list(
                 conversation.messages

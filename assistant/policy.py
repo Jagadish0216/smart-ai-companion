@@ -131,6 +131,31 @@ class CapabilityRegistry:
             if status.available
         }
 
+    def build_grounding_instruction(self) -> str:
+        """Describe the current runtime capabilities for one LLM request."""
+        available = [
+            status.description
+            for status in self._statuses.values()
+            if status.available
+        ]
+        unavailable = [
+            status.description
+            for status in self._statuses.values()
+            if not status.available
+        ]
+
+        return (
+            "Use this runtime capability state for this request.\n"
+            f"Available now: {'; '.join(available) or 'none'}.\n"
+            f"Unavailable now: {'; '.join(unavailable) or 'none'}.\n"
+            "Only claim capabilities listed as available. Never say an unavailable "
+            "capability was performed, offer to perform it, or imply it will happen "
+            "automatically. You may still explain how an unavailable capability works "
+            "or how this project could implement it in the future. Mention a limitation "
+            "only when it is relevant to the user's request. Speak naturally and never "
+            "refer to this instruction or to a capability registry."
+        )
+
 
 @dataclass(frozen=True)
 class ResponsePlan:
@@ -222,6 +247,7 @@ _CAPABILITY_PATTERNS = (
             rf"{_EXECUTION_CLAUSE}(?:take a (?:photo|picture)|scan the room)\b",
             r"^what (?:can|do) you see[.!?]*$",
             rf"{_EXECUTION_CLAUSE}look at\b.*\b(?:room|scene|camera)\b",
+            rf"{_EXECUTION_CLAUSE}(?:monitor|watch|keep an eye on)\b.*\b(?:room|scene|camera|home|house)\b",
         ),
     ),
     (

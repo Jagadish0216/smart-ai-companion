@@ -10,7 +10,7 @@ import logging
 
 from conversations.models import Conversation, Message
 from .ai_engine import get_engine, EngineUnavailableError
-from .policy import ResponsePlan
+from .policy import CapabilityRegistry, ResponsePlan
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +29,9 @@ class AssistantService:
         Process a user message: persist it, run AI inference, persist the
         AI response.
 
-        Request instructions, generation budgets, and response plans are optional
-        and scoped to this inference call. Omitting them preserves the normal
-        text-chat engine call unchanged.
+        Request instructions, generation budgets, response plans, and capability
+        grounding are scoped to this inference call. Omitting the optional policy
+        inputs preserves the normal text-chat behavior and API contract.
 
         Returns:
             (conversation, response_text, metadata_dict, error_string)
@@ -86,6 +86,14 @@ class AssistantService:
                 }
                 return conversation, response_text, metadata, None
 
+        grounding_instruction = (
+            CapabilityRegistry.from_settings().build_grounding_instruction()
+        )
+        effective_instruction = _combine_instructions(
+            effective_instruction,
+            grounding_instruction,
+        )
+
         # ── Run AI inference ──
         try:
             engine = get_engine()
@@ -128,6 +136,15 @@ class AssistantService:
         except Exception as exc:
             logger.exception("Unexpected error during AI inference")
             return conversation, None, None, "Failed to process query."
+
+
+def _combine_instructions(*instructions: str | None) -> str:
+    """Join request-only instructions without mutating global prompt state."""
+    return "\n\n".join(
+        instruction.strip()
+        for instruction in instructions
+        if instruction and instruction.strip()
+    )
 
 
 def _get_conversation_history(conversation: Conversation, limit: int = 10) -> list[dict]:

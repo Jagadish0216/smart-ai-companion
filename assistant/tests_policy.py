@@ -1,12 +1,15 @@
 from unittest.mock import MagicMock, patch
 
+from django.conf import settings
 from django.test import TestCase, override_settings
 
 from assistant.ai_engine.base import AIEngineResult
+from assistant.ai_engine.mock import MockAIEngine
 from assistant.policy import (
     AssistantResponsePolicy,
     Capability,
     CapabilityRegistry,
+    CapabilityStatus,
     ResponseMode,
 )
 from assistant.services import AssistantService
@@ -58,6 +61,7 @@ class AssistantResponsePolicyTests(TestCase):
                 ResponseMode.NORMAL,
             ),
             ("How can I control a light using an ESP32?", ResponseMode.NORMAL),
+            ("How can I control lights using an ESP32?", ResponseMode.NORMAL),
             ("Explain relay control.", ResponseMode.NORMAL),
             ("Tell me about smart lighting.", ResponseMode.NORMAL),
             ("How do reminders work?", ResponseMode.NORMAL),
@@ -74,6 +78,7 @@ class AssistantResponsePolicyTests(TestCase):
     def test_explicit_capability_execution_is_classified_as_action(self):
         cases = (
             ("Turn on the light.", Capability.DEVICE_CONTROL),
+            ("Can you control my lights?", Capability.DEVICE_CONTROL),
             ("Turn on the lights.", Capability.DEVICE_CONTROL),
             ("Switch on the light.", Capability.DEVICE_CONTROL),
             ("Switch the lights off.", Capability.DEVICE_CONTROL),
@@ -94,6 +99,7 @@ class AssistantResponsePolicyTests(TestCase):
             ("Move forward.", Capability.MOVEMENT),
             ("Search my documents for the report.", Capability.LOCAL_RAG),
             ("Search the web for today's AI news.", Capability.ONLINE_RETRIEVAL),
+            ("Keep an eye on the room.", Capability.CAMERA_VISION),
         )
 
         for query, capability in cases:
@@ -161,6 +167,31 @@ class AssistantResponsePolicyTests(TestCase):
         self.assertFalse(registry.is_available(Capability.MOVEMENT))
         self.assertFalse(registry.is_available(Capability.REMINDERS))
 
+    def test_grounding_instruction_is_built_from_registry_state(self):
+        registry = CapabilityRegistry([
+            CapabilityStatus(
+                Capability.LOCAL_CONVERSATION,
+                True,
+                "Configured available capability",
+            ),
+            CapabilityStatus(
+                Capability.REMINDERS,
+                False,
+                "Configured unavailable capability",
+            ),
+        ])
+
+        instruction = registry.build_grounding_instruction()
+
+        self.assertIn("Available now: Configured available capability", instruction)
+        self.assertIn(
+            "Unavailable now: Configured unavailable capability",
+            instruction,
+        )
+        self.assertIn("Only claim capabilities listed as available", instruction)
+        self.assertIn("may still explain", instruction)
+        self.assertIn("never refer", instruction)
+
     def test_unavailable_sensor_request_is_grounded(self):
         plan = AssistantResponsePolicy.plan_voice_response(
             "Check the room temperature."
@@ -174,6 +205,50 @@ class AssistantResponsePolicyTests(TestCase):
 
 
 class AssistantPolicyServiceTests(TestCase):
+    @patch("assistant.services.get_engine")
+    def test_normal_request_receives_capability_grounding(self, mock_get_engine):
+        engine = MagicMock()
+        engine.generate.return_value = AIEngineResult(
+            text="Sure, talk to you later.",
+            engine="local",
+            latency_ms=1,
+        )
+        mock_get_engine.return_value = engine
+
+        conversation, text, _metadata, error = AssistantService.process_message(
+            "I'll talk to you later."
+        )
+
+        instruction = engine.generate.call_args.kwargs["system_instruction"]
+        self.assertIsNone(error)
+        self.assertEqual(text, "Sure, talk to you later.")
+        self.assertNotIn("remind", text.lower())
+        self.assertIn("Reminder, alarm, and timer scheduling", instruction)
+        self.assertIn("Never say an unavailable capability was performed", instruction)
+        self.assertEqual(conversation.messages.count(), 2)
+
+    @patch("assistant.services.get_engine")
+    def test_detailed_request_receives_voice_policy_and_grounding(
+        self,
+        mock_get_engine,
+    ):
+        engine = MagicMock()
+        engine.generate.return_value = AIEngineResult(
+            text="A detailed answer.",
+            engine="local",
+            latency_ms=1,
+        )
+        mock_get_engine.return_value = engine
+        query = "Explain edge computing in detail."
+        plan = AssistantResponsePolicy.plan_voice_response(query)
+
+        AssistantService.process_message(query, response_plan=plan)
+
+        instruction = engine.generate.call_args.kwargs["system_instruction"]
+        self.assertIn(plan.system_instruction, instruction)
+        self.assertIn("Use this runtime capability state", instruction)
+        self.assertIn("do not impose a short response limit", instruction)
+
     @patch("assistant.services.get_engine")
     def test_educational_capability_request_reaches_engine(self, mock_get_engine):
         engine = MagicMock()
@@ -255,10 +330,9 @@ class AssistantPolicyServiceTests(TestCase):
             engine.generate.call_args.kwargs["num_predict"],
             plan.num_predict,
         )
-        self.assertEqual(
-            engine.generate.call_args.kwargs["system_instruction"],
-            plan.system_instruction,
-        )
+        request_instruction = engine.generate.call_args.kwargs["system_instruction"]
+        self.assertIn(plan.system_instruction, request_instruction)
+        self.assertIn("Use this runtime capability state", request_instruction)
         persisted_text = list(
             conversation.messages.order_by("id").values_list("sender", "text")
         )
@@ -271,3 +345,118 @@ class AssistantPolicyServiceTests(TestCase):
         )
         self.assertNotIn(str(plan.num_predict), str(persisted_text))
         self.assertNotIn(plan.system_instruction, str(persisted_text))
+        self.assertNotIn("Use this runtime capability state", str(persisted_text))
+
+    @patch("assistant.services.get_engine")
+    @override_settings(
+        AI_ENGINE="local",
+        STT_ENGINE="whisper_cpp",
+        TTS_ENGINE="piper",
+    )
+    def test_request_grounding_does_not_mutate_settings(self, mock_get_engine):
+        engine = MagicMock()
+        engine.generate.return_value = AIEngineResult(
+            text="Grounded response.",
+            engine="local",
+            latency_ms=1,
+        )
+        mock_get_engine.return_value = engine
+        configured_engines = (
+            settings.AI_ENGINE,
+            settings.STT_ENGINE,
+            settings.TTS_ENGINE,
+        )
+
+        AssistantService.process_message("What can you do?")
+
+        self.assertEqual(
+            (settings.AI_ENGINE, settings.STT_ENGINE, settings.TTS_ENGINE),
+            configured_engines,
+        )
+
+    @patch("assistant.services.get_engine")
+    def test_mock_capability_summary_does_not_claim_unavailable_features(
+        self,
+        mock_get_engine,
+    ):
+        engine = MockAIEngine()
+        engine.SIMULATED_DELAY_S = 0
+        mock_get_engine.return_value = engine
+
+        _conversation, text, _metadata, error = AssistantService.process_message(
+            "What can you do?"
+        )
+
+        self.assertIsNone(error)
+        self.assertIn("answer general questions", text)
+        self.assertIn("can't yet", text)
+        self.assertNotIn("I can control", text)
+
+    @patch("assistant.services.get_engine")
+    def test_information_questions_reach_llm_instead_of_action_refusal(
+        self,
+        mock_get_engine,
+    ):
+        engine = MagicMock()
+        engine.generate.return_value = AIEngineResult(
+            text="An informational explanation.",
+            engine="local",
+            latency_ms=1,
+        )
+        mock_get_engine.return_value = engine
+
+        for query in (
+            "How can I control lights using an ESP32?",
+            "How do reminders work?",
+        ):
+            with self.subTest(query=query):
+                plan = AssistantResponsePolicy.plan_voice_response(query)
+                _conversation, text, _metadata, error = (
+                    AssistantService.process_message(query, response_plan=plan)
+                )
+
+                self.assertEqual(plan.mode, ResponseMode.NORMAL)
+                self.assertIsNone(plan.direct_response)
+                self.assertIsNone(error)
+                self.assertEqual(text, "An informational explanation.")
+
+        self.assertEqual(engine.generate.call_count, 2)
+
+    @patch("assistant.services.get_engine")
+    def test_monitoring_request_uses_grounded_direct_response(self, mock_get_engine):
+        query = "Keep an eye on the room."
+        plan = AssistantResponsePolicy.plan_voice_response(query)
+
+        _conversation, text, metadata, error = AssistantService.process_message(
+            query,
+            response_plan=plan,
+        )
+
+        self.assertEqual(plan.mode, ResponseMode.ACTION)
+        self.assertEqual(plan.required_capability, Capability.CAMERA_VISION)
+        self.assertIsNone(error)
+        self.assertEqual(text, plan.direct_response)
+        self.assertEqual(metadata["engine"], "policy")
+        self.assertIn("can't inspect", text.lower())
+        mock_get_engine.assert_not_called()
+
+    @patch("assistant.services.get_engine")
+    def test_device_control_question_uses_grounded_direct_response(
+        self,
+        mock_get_engine,
+    ):
+        query = "Can you control my lights?"
+        plan = AssistantResponsePolicy.plan_voice_response(query)
+
+        _conversation, text, metadata, error = AssistantService.process_message(
+            query,
+            response_plan=plan,
+        )
+
+        self.assertEqual(plan.mode, ResponseMode.ACTION)
+        self.assertEqual(plan.required_capability, Capability.DEVICE_CONTROL)
+        self.assertIsNone(error)
+        self.assertEqual(text, plan.direct_response)
+        self.assertEqual(metadata["engine"], "policy")
+        self.assertIn("can't control", text.lower())
+        mock_get_engine.assert_not_called()
