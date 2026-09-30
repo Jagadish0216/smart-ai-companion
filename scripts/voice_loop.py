@@ -9,6 +9,7 @@ import os
 import re
 import struct
 from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 import subprocess
@@ -514,6 +515,15 @@ def prepare_speech_chunks(
     return chunk_text_for_speech(limited, chunk_chars)
 
 
+def is_no_speech_transcription(text: str) -> bool:
+    """Return whether an STT result is a known placeholder rather than speech."""
+    normalized = text.strip().lower()
+    normalized = re.sub(r"[\[\](){}<>]", " ", normalized)
+    normalized = re.sub(r"[_-]+", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized in {"blank audio", "no speech", "silence", "inaudible"}
+
+
 def _timed_call(timings: dict[str, float], stage: str, operation, *args, **kwargs):
     started = time.perf_counter()
     try:
@@ -550,6 +560,70 @@ def play_audio(audio_path: Path) -> None:
             f"Playback failed (paplay exit {result.returncode})"
             + (f": {detail}" if detail else ".")
         )
+
+
+def speak_speech_chunks(
+    speech_chunks: list[str],
+    tts_provider,
+    temp_path: Path,
+    leading_silence_seconds: float,
+    timings: dict[str, float],
+) -> None:
+    """Pipeline one future synthesis while playing the current chunk."""
+    chunk_count = len(speech_chunks)
+
+    def synthesize(chunk_number: int) -> bytes:
+        try:
+            return _timed_call(
+                timings,
+                "tts",
+                tts_provider.synthesize,
+                speech_chunks[chunk_number - 1],
+            )
+        except Exception as exc:
+            raise VoiceLoopError(
+                f"TTS failed on chunk {chunk_number}/{chunk_count}: {exc}"
+            ) from exc
+
+    current_speech = synthesize(1)
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="voice-tts")
+    next_synthesis: Future | None = None
+    try:
+        for chunk_number in range(1, chunk_count + 1):
+            if chunk_number < chunk_count:
+                next_synthesis = executor.submit(synthesize, chunk_number + 1)
+            else:
+                next_synthesis = None
+
+            playback_audio = (
+                prepend_leading_silence(
+                    current_speech,
+                    leading_silence_seconds,
+                )
+                if chunk_number == 1
+                else current_speech
+            )
+            playback_path = temp_path / f"playback-{chunk_number:03d}.wav"
+            try:
+                playback_path.write_bytes(playback_audio)
+            except OSError as exc:
+                raise VoiceLoopError(
+                    f"TTS failed on chunk {chunk_number}/{chunk_count}: "
+                    f"could not save playback WAV ({exc})."
+                ) from exc
+            try:
+                _timed_call(timings, "playback", play_audio, playback_path)
+            except Exception as exc:
+                raise VoiceLoopError(
+                    f"Playback failed on chunk {chunk_number}/{chunk_count}: {exc}"
+                ) from exc
+
+            if next_synthesis is not None:
+                current_speech = next_synthesis.result()
+    finally:
+        if next_synthesis is not None:
+            next_synthesis.cancel()
+        executor.shutdown(wait=True, cancel_futures=True)
 
 
 def run_voice_cycle(
@@ -612,7 +686,7 @@ def run_voice_cycle(
             ).strip()
         except Exception as exc:
             raise VoiceLoopError(f"Transcription failed: {exc}") from exc
-        if not transcript:
+        if not transcript or is_no_speech_transcription(transcript):
             raise VoiceLoopError("Transcription failed: no speech was recognized.")
         print(f"You: {transcript}")
         response_plan = AssistantResponsePolicy.plan_voice_response(transcript)
@@ -642,39 +716,13 @@ def run_voice_cycle(
         if not speech_chunks:
             raise VoiceLoopError("TTS failed: AI response contained no speakable text.")
         print(f"TTS chunks: {len(speech_chunks)}")
-        tts_provider = get_tts_provider()
-        for chunk_number, speech_text in enumerate(speech_chunks, start=1):
-            try:
-                speech = _timed_call(
-                    timings,
-                    "tts",
-                    tts_provider.synthesize,
-                    speech_text,
-                )
-            except Exception as exc:
-                raise VoiceLoopError(
-                    f"TTS failed on chunk {chunk_number}/{len(speech_chunks)}: {exc}"
-                ) from exc
-
-            playback_audio = (
-                prepend_leading_silence(speech, config.leading_silence_seconds)
-                if chunk_number == 1
-                else speech
-            )
-            playback_path = temp_path / f"playback-{chunk_number:03d}.wav"
-            try:
-                playback_path.write_bytes(playback_audio)
-            except OSError as exc:
-                raise VoiceLoopError(
-                    f"TTS failed on chunk {chunk_number}/{len(speech_chunks)}: "
-                    f"could not save playback WAV ({exc})."
-                ) from exc
-            try:
-                _timed_call(timings, "playback", play_audio, playback_path)
-            except Exception as exc:
-                raise VoiceLoopError(
-                    f"Playback failed on chunk {chunk_number}/{len(speech_chunks)}: {exc}"
-                ) from exc
+        speak_speech_chunks(
+            speech_chunks,
+            get_tts_provider(),
+            temp_path,
+            config.leading_silence_seconds,
+            timings,
+        )
 
         next_conversation_id = (
             conversation.id if conversation is not None else conversation_id

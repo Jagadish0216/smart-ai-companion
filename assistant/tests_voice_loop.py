@@ -2,6 +2,7 @@ import io
 from pathlib import Path
 import subprocess
 import tempfile
+from threading import Event
 from types import SimpleNamespace
 from unittest.mock import call, MagicMock, patch
 import wave
@@ -14,6 +15,7 @@ from scripts.voice_loop import (
     VoiceLoopError,
     _timed_call,
     chunk_text_for_speech,
+    is_no_speech_transcription,
     limit_text_for_speech,
     normalize_audio,
     play_audio,
@@ -23,6 +25,7 @@ from scripts.voice_loop import (
     record_audio_with_capture_vad,
     run_voice_cycle,
     sanitize_text_for_speech,
+    speak_speech_chunks,
 )
 
 
@@ -415,6 +418,127 @@ class VoiceLoopTests(SimpleTestCase):
 
         with self.assertRaisesRegex(VoiceLoopError, "Playback failed"):
             play_audio(Path("playback.wav"))
+
+    @patch("scripts.voice_loop.prepend_leading_silence")
+    @patch("scripts.voice_loop.play_audio")
+    def test_multi_chunk_tts_synthesizes_ahead_without_playback_overlap(
+        self,
+        mock_play,
+        mock_prepend,
+    ):
+        second_synthesis_started = Event()
+        allow_second_synthesis = Event()
+        playback_active = False
+        played_audio = []
+        provider = MagicMock()
+
+        def synthesize(text):
+            if text == "Second chunk.":
+                second_synthesis_started.set()
+                if not allow_second_synthesis.wait(timeout=1):
+                    raise RuntimeError("test synchronization timed out")
+            return text.encode()
+
+        def play(path):
+            nonlocal playback_active
+            self.assertFalse(playback_active)
+            playback_active = True
+            try:
+                if not played_audio:
+                    self.assertTrue(second_synthesis_started.wait(timeout=1))
+                    allow_second_synthesis.set()
+                played_audio.append(path.read_bytes())
+            finally:
+                playback_active = False
+
+        provider.synthesize.side_effect = synthesize
+        mock_prepend.return_value = b"first-with-leading-silence"
+        mock_play.side_effect = play
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            speak_speech_chunks(
+                ["First chunk.", "Second chunk."],
+                provider,
+                Path(temp_dir),
+                0.7,
+                {},
+            )
+
+        self.assertEqual(
+            provider.synthesize.call_args_list,
+            [call("First chunk."), call("Second chunk.")],
+        )
+        self.assertEqual(
+            played_audio,
+            [b"first-with-leading-silence", b"Second chunk."],
+        )
+        mock_prepend.assert_called_once_with(b"First chunk.", 0.7)
+        self.assertEqual(mock_play.call_count, 2)
+
+    @patch("scripts.voice_loop.prepend_leading_silence", return_value=b"first")
+    @patch("scripts.voice_loop.play_audio")
+    def test_tts_pipeline_waits_for_worker_cleanup_on_playback_failure(
+        self,
+        mock_play,
+        _mock_prepend,
+    ):
+        worker_finished = Event()
+        provider = MagicMock()
+
+        def synthesize(text):
+            if text == "Second chunk.":
+                worker_finished.set()
+            return text.encode()
+
+        provider.synthesize.side_effect = synthesize
+        mock_play.side_effect = VoiceLoopError("sink failed")
+
+        with tempfile.TemporaryDirectory() as temp_dir, self.assertRaisesRegex(
+            VoiceLoopError,
+            "Playback failed on chunk 1/2",
+        ):
+            speak_speech_chunks(
+                ["First chunk.", "Second chunk."],
+                provider,
+                Path(temp_dir),
+                0.7,
+                {},
+            )
+
+        self.assertTrue(worker_finished.is_set())
+
+    def test_no_speech_placeholders_are_normalized_and_rejected(self):
+        for transcript in (
+            "[BLANK_AUDIO]",
+            "(blank_audio)",
+            " blank   audio ",
+            "[blank audio]",
+            "[NO_SPEECH]",
+            "[silence]",
+        ):
+            with self.subTest(transcript=transcript):
+                self.assertTrue(is_no_speech_transcription(transcript))
+
+        self.assertFalse(is_no_speech_transcription("Explain blank audio detection."))
+        self.assertFalse(is_no_speech_transcription("Hello, can you hear me?"))
+
+    @patch("scripts.voice_loop.AssistantService.process_message")
+    @patch("scripts.voice_loop.get_stt_provider")
+    @patch("scripts.voice_loop.normalize_audio")
+    @patch("scripts.voice_loop.record_audio")
+    def test_blank_audio_placeholder_does_not_invoke_or_persist_through_service(
+        self,
+        _mock_record,
+        _mock_normalize,
+        mock_get_stt,
+        mock_process_message,
+    ):
+        mock_get_stt.return_value.transcribe.return_value = "[BLANK_AUDIO]"
+
+        with self.assertRaisesRegex(VoiceLoopError, "no speech was recognized"):
+            run_voice_cycle(VoiceLoopConfig("source"))
+
+        mock_process_message.assert_not_called()
 
     @patch("scripts.voice_loop.play_audio")
     @patch("scripts.voice_loop.prepend_leading_silence", return_value=b"final wav")

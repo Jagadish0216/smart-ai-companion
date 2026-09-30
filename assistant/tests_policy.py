@@ -53,6 +53,13 @@ class AssistantResponsePolicyTests(TestCase):
             ("How do I control an ESP32 from a Raspberry Pi?", ResponseMode.NORMAL),
             ("How does a temperature sensor work?", ResponseMode.NORMAL),
             ("Tell me about temperature sensors.", ResponseMode.NORMAL),
+            (
+                "Explain how to measure room temperature with an ESP32.",
+                ResponseMode.NORMAL,
+            ),
+            ("How can I control a light using an ESP32?", ResponseMode.NORMAL),
+            ("Explain relay control.", ResponseMode.NORMAL),
+            ("Tell me about smart lighting.", ResponseMode.NORMAL),
             ("How do reminders work?", ResponseMode.NORMAL),
             ("How can I build a reminder system in Python?", ResponseMode.NORMAL),
             ("Explain camera vision in detail.", ResponseMode.DETAILED),
@@ -67,8 +74,18 @@ class AssistantResponsePolicyTests(TestCase):
     def test_explicit_capability_execution_is_classified_as_action(self):
         cases = (
             ("Turn on the light.", Capability.DEVICE_CONTROL),
+            ("Turn on the lights.", Capability.DEVICE_CONTROL),
+            ("Switch on the light.", Capability.DEVICE_CONTROL),
+            ("Switch the lights off.", Capability.DEVICE_CONTROL),
+            ("Turn the fan on.", Capability.DEVICE_CONTROL),
+            ("Switch off the fan.", Capability.DEVICE_CONTROL),
             ("Switch the fan off.", Capability.DEVICE_CONTROL),
             ("Check the room temperature.", Capability.ENVIRONMENT_SENSING),
+            ("Take the room temperature.", Capability.ENVIRONMENT_SENSING),
+            ("Measure the room temperature.", Capability.ENVIRONMENT_SENSING),
+            ("What's the room temperature?", Capability.ENVIRONMENT_SENSING),
+            ("Check the humidity.", Capability.ENVIRONMENT_SENSING),
+            ("Measure the humidity.", Capability.ENVIRONMENT_SENSING),
             ("Read the humidity.", Capability.ENVIRONMENT_SENSING),
             ("Remind me at 6 PM.", Capability.REMINDERS),
             ("Set an alarm for 7.", Capability.REMINDERS),
@@ -89,6 +106,20 @@ class AssistantResponsePolicyTests(TestCase):
             ResponseMode.ACTION,
             Capability.DEVICE_CONTROL,
         )
+
+    def test_voice_instruction_requests_natural_spoken_delivery(self):
+        normal = AssistantResponsePolicy.plan_voice_response("What is edge computing?")
+        detailed = AssistantResponsePolicy.plan_voice_response(
+            "Explain edge computing in detail."
+        )
+
+        self.assertIn("spoken personal-assistant response", normal.system_instruction)
+        self.assertIn("Answer the user's actual request immediately", normal.system_instruction)
+        self.assertIn("natural, connected spoken sentences", normal.system_instruction)
+        self.assertIn("Don't repeat the question", normal.system_instruction)
+        self.assertIn("Avoid article-style prose", normal.system_instruction)
+        self.assertIn("do not impose a short response limit", detailed.system_instruction)
+        self.assertEqual(detailed.mode, ResponseMode.DETAILED)
 
     @override_settings(
         VOICE_LLM_BRIEF_NUM_PREDICT="91",

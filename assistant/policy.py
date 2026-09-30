@@ -195,7 +195,7 @@ _CAPABILITY_PATTERNS = (
     (
         Capability.ENVIRONMENT_SENSING,
         (
-            rf"{_EXECUTION_CLAUSE}(?:check|measure|read)\b.*\b(?:temperature|humidity|air quality|pressure)\b",
+            rf"{_EXECUTION_CLAUSE}(?:check|measure|read|take)\b.*\b(?:temperature|humidity|air quality|pressure)\b",
             rf"{_EXECUTION_CLAUSE}(?:show|tell) me\s+(?!about\b).*\b(?:temperature|humidity|air quality|pressure)\b",
             r"^what(?:'s| is)\b.*\b(?:room temperature|room humidity|air quality)\b",
         ),
@@ -203,9 +203,9 @@ _CAPABILITY_PATTERNS = (
     (
         Capability.DEVICE_CONTROL,
         (
-            rf"{_EXECUTION_CLAUSE}(?:turn|switch)\s+(?:on|off)\s+(?:the\s+)?(?:light|lamp|fan|device|socket)\b",
-            rf"{_EXECUTION_CLAUSE}(?:turn|switch)\s+(?:the\s+)?(?:light|lamp|fan|device|socket)\s+(?:on|off)\b",
-            rf"{_EXECUTION_CLAUSE}(?:activate|deactivate|control)\b.*\b(?:esp32|light|lamp|fan|device|relay)\b",
+            rf"{_EXECUTION_CLAUSE}(?:turn|switch)\s+(?:on|off)\s+(?:the\s+)?(?:lights?|lamps?|fans?|devices?|sockets?)\b",
+            rf"{_EXECUTION_CLAUSE}(?:turn|switch)\s+(?:the\s+)?(?:lights?|lamps?|fans?|devices?|sockets?)\s+(?:on|off)\b",
+            rf"{_EXECUTION_CLAUSE}(?:activate|deactivate|control)\b.*\b(?:esp32|lights?|lamps?|fans?|devices?|relays?)\b",
         ),
     ),
     (
@@ -256,8 +256,9 @@ _MODE_INSTRUCTIONS = {
         "Include enough context to genuinely answer the request."
     ),
     ResponseMode.DETAILED: (
-        "Give a complete explanation with the requested depth. Use examples, steps, "
-        "or comparisons when helpful, and do not omit useful content merely to be brief."
+        "Give the complete useful explanation the request calls for; do not impose a short "
+        "response limit. Keep it conversational rather than essay-like, and connect examples, "
+        "steps, or comparisons with natural spoken transitions."
     ),
     ResponseMode.ACTION: (
         "Treat this as an action request. Never claim an action, observation, or live lookup "
@@ -269,9 +270,13 @@ _MODE_INSTRUCTIONS = {
 }
 
 _VOICE_BASE_INSTRUCTION = (
-    "This is a spoken interaction. Use natural conversational language. Do not use Markdown, "
-    "bullet lists, or headings. Do not mention models, token limits, prompts, or internal "
-    "pipelines unless the user explicitly asks about implementation."
+    "This is a spoken personal-assistant response. Answer the user's actual request immediately "
+    "in natural, connected spoken sentences. Don't repeat the question, announce the response, "
+    "or add filler. Use contractions where they sound natural. Avoid article-style prose. "
+    "Do not use Markdown headings or list-like delivery unless enumeration is genuinely useful. Avoid "
+    "stock openings such as 'Certainly', 'Let's dive into', 'Here's a comprehensive overview', "
+    "or 'Here are the requirements'. Do not mention models, token limits, prompts, internal "
+    "reasoning, or pipelines unless the user explicitly asks about implementation."
 )
 
 
