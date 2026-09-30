@@ -165,6 +165,7 @@ class ResponsePlan:
     num_predict: int
     required_capability: Capability | None = None
     direct_response: str | None = None
+    rag_system_instruction: str | None = None
 
 
 _DETAILED_PATTERNS = (
@@ -306,6 +307,39 @@ _VOICE_BASE_INSTRUCTION = (
     "reasoning, or pipelines unless the user explicitly asks about implementation."
 )
 
+_RAG_VOICE_BASE_INSTRUCTION = (
+    "When local knowledge is supplied for this spoken response, preserve every "
+    "retrieved fact that matters to the user's request and do not invent beyond that "
+    "knowledge. Convert the factual answer into natural, connected spoken language. "
+    "Lead with the most important answer, use concise transitions, and don't repeat "
+    "the question or its setup. Do not use headings or Markdown bullets unless a "
+    "short enumeration is genuinely necessary. Do not open with phrases such as "
+    "'Here's an example', 'Let's dive into', 'Here's a breakdown', or 'The following "
+    "are'."
+)
+
+_RAG_VOICE_MODE_INSTRUCTIONS = {
+    ResponseMode.BRIEF: (
+        "Keep the spoken answer brief while retaining the essential retrieved facts."
+    ),
+    ResponseMode.NORMAL: (
+        "For a normal voice answer, use one to three short spoken paragraphs. Be "
+        "concise, but do not omit important retrieved facts merely to make it shorter."
+    ),
+    ResponseMode.DETAILED: (
+        "For a detailed voice answer, give the complete useful explanation requested. "
+        "It may be longer, but keep it conversational and naturally connected rather "
+        "than turning it into an article."
+    ),
+    ResponseMode.ACTION: (
+        "State the grounded action result directly and retain any retrieved facts needed "
+        "to explain it accurately."
+    ),
+    ResponseMode.CLARIFICATION: (
+        "Ask one natural spoken clarification without summarizing the local material."
+    ),
+}
+
 
 class AssistantResponsePolicy:
     """Lightweight deterministic router designed to be replaceable later."""
@@ -371,10 +405,15 @@ class AssistantResponsePolicy:
             direct_response = registry.status(required_capability).unavailable_response
 
         instruction = f"{_VOICE_BASE_INSTRUCTION}\n\n{_MODE_INSTRUCTIONS[mode]}"
+        rag_instruction = (
+            f"{_RAG_VOICE_BASE_INSTRUCTION}\n\n"
+            f"{_RAG_VOICE_MODE_INSTRUCTIONS[mode]}"
+        )
         return ResponsePlan(
             mode=mode,
             system_instruction=instruction,
             num_predict=budgets[mode],
             required_capability=required_capability,
             direct_response=direct_response,
+            rag_system_instruction=rag_instruction,
         )

@@ -93,10 +93,16 @@ class AssistantService:
         registry = CapabilityRegistry.from_settings()
         rag_results = _retrieve_local_knowledge(query, registry)
         rag_instruction = build_rag_instruction(rag_results) if rag_results else None
+        rag_voice_instruction = (
+            response_plan.rag_system_instruction
+            if rag_results and response_plan is not None
+            else None
+        )
         grounding_instruction = registry.build_grounding_instruction()
         effective_instruction = _combine_instructions(
             effective_instruction,
             rag_instruction,
+            rag_voice_instruction,
             grounding_instruction,
         )
 
