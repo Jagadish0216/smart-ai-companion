@@ -21,7 +21,8 @@ EDGE_KNOWLEDGE = (
 )
 RELAY_KNOWLEDGE = (
     "An ESP32 can control a relay through a suitable transistor driver. The relay "
-    "module and ESP32 should share a common ground, with protection for inductive loads."
+    "module and ESP32 should share a common ground, with electrical isolation and "
+    "protection for inductive loads."
 )
 
 
@@ -118,6 +119,12 @@ class QueryRouterTests(RouterTestCase):
         for query in queries:
             with self.subTest(query=query):
                 self.assertEqual(self.decide(query).route, QueryRoute.LOCAL)
+
+    def test_single_relay_term_does_not_force_rag_for_two_term_query(self):
+        decision = self.decide("What is electrical current?")
+
+        self.assertEqual(decision.route, QueryRoute.LOCAL)
+        self.assertEqual(decision.rag_results, ())
 
     def test_action_and_clarification_routes_preserve_policy(self):
         self.assertEqual(

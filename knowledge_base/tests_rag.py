@@ -149,6 +149,35 @@ class LexicalRetrievalTests(TemporaryMediaTestCase):
 
         self.assertEqual(results, [])
 
+    def test_two_term_query_rejects_single_coincidental_match(self):
+        document = Document.objects.create(
+            file=SimpleUploadedFile("relay.txt", b"relay"),
+            file_type="text/plain",
+            source_identifier="test:relay-safety",
+            status="INDEXED",
+        )
+        KnowledgeChunk.objects.create(
+            document=document,
+            chunk_index=0,
+            content=(
+                "Use electrical isolation and a flyback diode when driving an ESP32 "
+                "relay from a transistor."
+            ),
+        )
+
+        results = LexicalRetriever().retrieve("What is electrical current?")
+
+        self.assertEqual(results, [])
+
+    def test_legitimate_single_term_query_remains_retrievable(self):
+        self.ingest_edge_knowledge()
+
+        results = LexicalRetriever().retrieve("latency")
+
+        self.assertTrue(results)
+        self.assertEqual(results[0].score, 1.0)
+        self.assertIn("latency", results[0].content.lower())
+
     def test_top_k_and_equal_score_ordering_are_deterministic(self):
         document = Document.objects.create(
             file=SimpleUploadedFile("equal.txt", b"equal"),

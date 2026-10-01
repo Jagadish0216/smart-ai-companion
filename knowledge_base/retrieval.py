@@ -95,7 +95,10 @@ class LexicalRetriever(KnowledgeRetriever):
 
         best: list[tuple[float, int, int, int, RetrievedChunk]] = []
         for chunk in candidates.iterator(chunk_size=200):
-            score = _term_coverage(query_counts, Counter(_tokenize(chunk.content)))
+            content_counts = Counter(_tokenize(chunk.content))
+            if not _has_sufficient_distinct_matches(query_counts, content_counts):
+                continue
+            score = _term_coverage(query_counts, content_counts)
             if score < min_relevance:
                 continue
             result = RetrievedChunk(
@@ -147,3 +150,17 @@ def _term_coverage(query_counts: Counter, content_counts: Counter) -> float:
         for term, count in query_counts.items()
     )
     return matched / query_term_count
+
+
+def _has_sufficient_distinct_matches(
+    query_counts: Counter,
+    content_counts: Counter,
+) -> bool:
+    """Reject multi-concept queries supported by only one coincidental term."""
+    required_matches = 1 if len(query_counts) == 1 else 2
+    matched_terms = sum(
+        1
+        for term in query_counts
+        if content_counts.get(term, 0) > 0
+    )
+    return matched_terms >= required_matches
