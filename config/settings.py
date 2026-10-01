@@ -168,6 +168,16 @@ ONLINE_MAX_RESULTS = int(os.environ.get('ONLINE_MAX_RESULTS', '4'))
 ONLINE_MAX_CONTEXT_CHARS = int(os.environ.get('ONLINE_MAX_CONTEXT_CHARS', '6000'))
 SEARXNG_BASE_URL = os.environ.get('SEARXNG_BASE_URL', 'http://127.0.0.1:8888')
 
+# Optional ESP32 action/sensor integration over a local MQTT broker.
+DEVICE_CONTROL_ENABLED = os.environ.get('DEVICE_CONTROL_ENABLED', 'false').lower() in ('1', 'true', 'yes', 'on')
+DEVICE_TRANSPORT = os.environ.get('DEVICE_TRANSPORT', 'mqtt')
+MQTT_HOST = os.environ.get('MQTT_HOST', '127.0.0.1')
+MQTT_PORT = int(os.environ.get('MQTT_PORT', '1883'))
+MQTT_KEEPALIVE = int(os.environ.get('MQTT_KEEPALIVE', '30'))
+MQTT_COMMAND_TIMEOUT_SECONDS = float(os.environ.get('MQTT_COMMAND_TIMEOUT_SECONDS', '5'))
+MQTT_TOPIC_PREFIX = os.environ.get('MQTT_TOPIC_PREFIX', 'smart-companion')
+ESP32_DEVICE_ID = os.environ.get('ESP32_DEVICE_ID', '')
+
 # Voice Engine Configuration
 STT_ENGINE = os.environ.get('STT_ENGINE', 'mock')
 STT_WHISPER_BIN = os.environ.get('STT_WHISPER_BIN', '/opt/whisper.cpp/main')

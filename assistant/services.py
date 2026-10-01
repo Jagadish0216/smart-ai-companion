@@ -7,6 +7,7 @@ AI engines directly.
 """
 
 import logging
+import math
 import time
 
 from django.conf import settings
@@ -15,6 +16,15 @@ from django.utils import timezone as django_timezone
 from conversations.models import Conversation, Message
 from knowledge_base.services import build_rag_instruction
 from .ai_engine import get_engine, EngineUnavailableError
+from .devices.base import (
+    DeviceCommandTimeoutError,
+    DeviceControllerError,
+    DevicePublishError,
+    DeviceUnavailableError,
+)
+from .devices.factory import get_device_controller
+from .devices.intents import map_device_command
+from .devices.types import DeviceAction, DeviceCommand, SensorReading
 from .online.base import OnlineRetrievalError, OnlineRetrievalResult
 from .online.factory import get_online_retriever
 from .online.grounding import build_online_grounding_instruction
@@ -100,9 +110,42 @@ class AssistantService:
             ),
         )
         if direct_response:
+            metadata_updates = None
+            if (
+                route_decision.route == QueryRoute.ACTION
+                and route_decision.required_capability in (
+                    Capability.DEVICE_CONTROL,
+                    Capability.ENVIRONMENT_SENSING,
+                )
+            ):
+                command = map_device_command(
+                    query,
+                    route_decision.required_capability,
+                )
+                metadata_updates = _device_metadata(
+                    command=command,
+                    device_id=getattr(settings, "ESP32_DEVICE_ID", "") or None,
+                    success=False,
+                    latency_ms=0,
+                    used=False,
+                )
             return _persist_direct_response(
                 conversation,
                 direct_response,
+                route_decision,
+                metadata_updates=metadata_updates,
+            )
+
+        if (
+            route_decision.route == QueryRoute.ACTION
+            and route_decision.required_capability in (
+                Capability.DEVICE_CONTROL,
+                Capability.ENVIRONMENT_SENSING,
+            )
+        ):
+            return _execute_device_action(
+                conversation,
+                query,
                 route_decision,
             )
 
@@ -264,6 +307,7 @@ def _persist_direct_response(
     engine: str = "policy",
     latency_ms: int = 0,
     online_latency_ms: int = 0,
+    metadata_updates: dict | None = None,
 ) -> tuple:
     Message.objects.create(
         conversation=conversation,
@@ -286,7 +330,144 @@ def _persist_direct_response(
         "online_results": 0,
         "online_latency_ms": online_latency_ms,
     }
+    if metadata_updates:
+        metadata.update(metadata_updates)
     return conversation, response_text, metadata, None
+
+
+def _execute_device_action(
+    conversation: Conversation,
+    query: str,
+    decision: QueryRouteDecision,
+) -> tuple:
+    command = map_device_command(query, decision.required_capability)
+    configured_device_id = getattr(settings, "ESP32_DEVICE_ID", "") or None
+    if command is None:
+        response_text = (
+            "I can only control the configured LED right now."
+            if decision.required_capability == Capability.DEVICE_CONTROL
+            else "I can only read the configured temperature sensor right now."
+        )
+        return _persist_direct_response(
+            conversation,
+            response_text,
+            decision,
+            metadata_updates=_device_metadata(
+                command=None,
+                device_id=configured_device_id,
+                success=False,
+                latency_ms=0,
+            ),
+        )
+
+    started = time.perf_counter()
+    device_id = configured_device_id
+    try:
+        controller = get_device_controller()
+        device_id = controller.device_id
+        result = controller.execute(command)
+        if result.action != command.action or result.device_id != controller.device_id:
+            raise DeviceControllerError("Device result did not match the command.")
+        if result.success:
+            if command.action == DeviceAction.SET_LED:
+                led_state = result.result.get("state")
+                if (
+                    type(led_state) is not bool
+                    or led_state is not command.params.get("state")
+                ):
+                    raise DeviceControllerError("LED acknowledgment was invalid.")
+                response_text = f"The LED is {'on' if led_state else 'off'}."
+                sensor = None
+            else:
+                raw_value = result.result.get("temperature_c")
+                if (
+                    isinstance(raw_value, bool)
+                    or not isinstance(raw_value, (int, float))
+                    or not math.isfinite(float(raw_value))
+                    or not -40.0 <= float(raw_value) <= 80.0
+                ):
+                    raise DeviceControllerError("Temperature reading was invalid.")
+                value = float(raw_value)
+                sensor = SensorReading("temperature", value, "°C")
+                response_text = f"The current temperature is {value:.1f} °C."
+        else:
+            sensor = None
+            response_text = _device_failure_response(command, rejected=True)
+        return _persist_direct_response(
+            conversation,
+            response_text,
+            decision,
+            engine="device",
+            latency_ms=result.latency_ms,
+            metadata_updates=_device_metadata(
+                command=command,
+                device_id=result.device_id,
+                success=result.success,
+                latency_ms=result.latency_ms,
+                sensor=sensor,
+            ),
+        )
+    except DeviceCommandTimeoutError:
+        latency_ms = round((time.perf_counter() - started) * 1000)
+        response_text = _device_failure_response(command, timed_out=True)
+    except (DeviceUnavailableError, DevicePublishError, DeviceControllerError):
+        latency_ms = round((time.perf_counter() - started) * 1000)
+        response_text = _device_failure_response(command)
+    except Exception:
+        latency_ms = round((time.perf_counter() - started) * 1000)
+        logger.exception("Unexpected device action failure")
+        response_text = _device_failure_response(command)
+
+    return _persist_direct_response(
+        conversation,
+        response_text,
+        decision,
+        engine="device",
+        latency_ms=latency_ms,
+        metadata_updates=_device_metadata(
+            command=command,
+            device_id=device_id,
+            success=False,
+            latency_ms=latency_ms,
+        ),
+    )
+
+
+def _device_failure_response(
+    command: DeviceCommand,
+    *,
+    timed_out: bool = False,
+    rejected: bool = False,
+) -> str:
+    if command.action == DeviceAction.READ_TEMPERATURE:
+        return "I couldn't read the temperature right now."
+    if timed_out:
+        return "I sent the command, but the ESP32 didn't confirm it."
+    if rejected:
+        return "The ESP32 couldn't complete the LED command."
+    return "I couldn't reach the ESP32 right now."
+
+
+def _device_metadata(
+    *,
+    command: DeviceCommand | None,
+    device_id: str | None,
+    success: bool,
+    latency_ms: int,
+    sensor: SensorReading | None = None,
+    used: bool | None = None,
+) -> dict:
+    return {
+        "action_used": command is not None if used is None else used,
+        "action_name": command.action.value if command is not None else None,
+        "device_id": device_id,
+        "action_success": success,
+        "action_latency_ms": latency_ms,
+        "sensor_used": sensor is not None,
+        "sensor_type": sensor.sensor_type if sensor is not None else None,
+        "sensor_value": sensor.value if sensor is not None else None,
+        "sensor_unit": sensor.unit if sensor is not None else None,
+    }
 
 
 def _combine_instructions(*instructions: str | None) -> str:

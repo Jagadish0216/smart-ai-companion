@@ -48,6 +48,10 @@ class CapabilityRegistry:
     def from_settings(cls) -> "CapabilityRegistry":
         from django.conf import settings
         from knowledge_base.services import is_rag_available
+        from .devices.factory import (
+            is_device_control_available,
+            is_environment_sensing_available,
+        )
         from .online.factory import is_online_retrieval_available
 
         return cls([
@@ -90,8 +94,8 @@ class CapabilityRegistry:
             ),
             CapabilityStatus(
                 Capability.ENVIRONMENT_SENSING,
-                False,
-                "Room and environmental sensor readings",
+                is_environment_sensing_available(),
+                "ESP32 DHT22 temperature readings",
                 "I can't check the room conditions yet because an environmental sensor isn't connected.",
             ),
             CapabilityStatus(
@@ -102,8 +106,8 @@ class CapabilityRegistry:
             ),
             CapabilityStatus(
                 Capability.DEVICE_CONTROL,
-                False,
-                "ESP32 and local device control",
+                is_device_control_available(),
+                "ESP32 LED control over MQTT",
                 "I can't control that device yet because device control isn't connected.",
             ),
             CapabilityStatus(
@@ -226,13 +230,14 @@ _CAPABILITY_PATTERNS = (
             rf"{_EXECUTION_CLAUSE}(?:check|measure|read|take)\b.*\b(?:temperature|humidity|air quality|pressure)\b",
             rf"{_EXECUTION_CLAUSE}(?:show|tell) me\s+(?!about\b).*\b(?:temperature|humidity|air quality|pressure)\b",
             r"^what(?:'s| is)\b.*\b(?:room temperature|room humidity|air quality)\b",
+            r"^what(?:'s| is)\s+the\s+temperature\b",
         ),
     ),
     (
         Capability.DEVICE_CONTROL,
         (
-            rf"{_EXECUTION_CLAUSE}(?:turn|switch)\s+(?:on|off)\s+(?:the\s+)?(?:lights?|lamps?|fans?|devices?|sockets?)\b",
-            rf"{_EXECUTION_CLAUSE}(?:turn|switch)\s+(?:the\s+)?(?:lights?|lamps?|fans?|devices?|sockets?)\s+(?:on|off)\b",
+            rf"{_EXECUTION_CLAUSE}(?:turn|switch)\s+(?:on|off)\s+(?:the\s+)?(?:led|lights?|lamps?|fans?|devices?|sockets?)\b",
+            rf"{_EXECUTION_CLAUSE}(?:turn|switch)\s+(?:the\s+)?(?:led|lights?|lamps?|fans?|devices?|sockets?)\s+(?:on|off)\b",
             rf"{_EXECUTION_CLAUSE}(?:activate|deactivate|control)\b.*\b(?:esp32|lights?|lamps?|fans?|devices?|relays?)\b",
         ),
     ),

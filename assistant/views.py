@@ -24,6 +24,15 @@ def _public_assistant_metadata(metadata):
             "online_used",
             "online_results",
             "online_latency_ms",
+            "action_used",
+            "action_name",
+            "device_id",
+            "action_success",
+            "action_latency_ms",
+            "sensor_used",
+            "sensor_type",
+            "sensor_value",
+            "sensor_unit",
         )
         if key in metadata
     }

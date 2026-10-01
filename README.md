@@ -60,13 +60,14 @@ API: {conversation_id, response, engine, model, mode}
 - [`assistant/ai_engine/__init__.py`](assistant/ai_engine/__init__.py) — `get_engine()` factory
 - [`assistant/policy.py`](assistant/policy.py) — response modes, deterministic intent policy, and capability registry
 - [`assistant/online/`](assistant/online/) — replaceable online retriever interface, SearXNG provider, and bounded grounding
+- [`assistant/devices/`](assistant/devices/) — transport-independent device commands plus the MQTT controller
 - [`assistant/services.py`](assistant/services.py) — `AssistantService` orchestration
 
 ### Assistant Response Policy
 
 The reusable policy layer classifies requests as `BRIEF`, `NORMAL`, `DETAILED`, `ACTION`, or `CLARIFICATION`. The standalone voice loop uses this classification to select response depth and a request-scoped Ollama generation budget without changing the global `OLLAMA_NUM_PREDICT=128` fallback. Browser and service calls retain the same public behavior while all LLM requests receive request-scoped capability grounding.
 
-The capability registry reflects configured, implemented components such as conversation persistence, local generation, whisper.cpp STT, Piper TTS, local retrieval, and optional online retrieval. `LOCAL_RAG` is available only when RAG is enabled, its configuration is valid, and at least one chunk belongs to an indexed document. `ONLINE_RETRIEVAL` is available only when online retrieval is enabled, the local Ollama engine is selected, the provider is supported, credentials are present, and limits are valid. Sensors, camera understanding, ESP32/device control, movement, and reminders remain unavailable. Recognized requests for unavailable actions receive a natural grounded response; the assistant must not claim that an action or observation occurred.
+The capability registry reflects configured, implemented components such as conversation persistence, local generation, whisper.cpp STT, Piper TTS, local retrieval, optional online retrieval, and optional ESP32 MQTT control. `LOCAL_RAG` is available only when RAG is enabled, its configuration is valid, and at least one chunk belongs to an indexed document. `ONLINE_RETRIEVAL` is available only when online retrieval is enabled, the local Ollama engine is selected, the provider URL is valid, and limits are valid. `DEVICE_CONTROL` and `ENVIRONMENT_SENSING` are available only when the MQTT transport, broker settings, and ESP32 device ID are explicitly configured. Camera understanding, movement, and reminders remain unavailable. Recognized requests for unavailable actions receive a natural grounded response; the assistant must not claim that an action or observation occurred.
 
 ### Local Knowledge / RAG
 
@@ -121,6 +122,51 @@ Public SearXNG instances can be useful during development, but they are not reco
 Retrieved snippets are treated as untrusted reference data. The request-scoped instruction tells the model to ignore embedded instructions, never execute retrieved commands, protect prompts and secrets, avoid unsupported current claims, and express uncertainty when sources conflict. Only allowlisted attribution fields are exposed through API metadata; voice output is told not to read URLs or metadata aloud. Search-result snippets are a fast, low-bandwidth v1 grounding source, but they can be incomplete and do not replace full-page research or source verification.
 
 Online latency and local generation latency are separate: `online_latency_ms` measures the provider request, while `latency_ms` remains the local generation measurement. Total perceived latency is approximately their sum plus application overhead. On a Pi, network response time varies independently from Ollama CPU inference time; the provider uses one explicit timeout and no indefinite retries.
+
+### ESP32 MQTT Actions and Temperature
+
+The first physical-device milestone uses a local Mosquitto broker and a small versioned JSON request/response protocol. The `ACTION` route maps only explicit LED commands and temperature reads to a transport-independent `DeviceController`; the MQTT implementation is kept out of `AssistantService`. Successful acknowledgments produce deterministic replies such as “The LED is on.” or “The current temperature is 28.4 °C.” without invoking the LLM. A timeout, broker failure, malformed/mismatched response, or ESP32 rejection never produces a success claim.
+
+Install Mosquitto on the Raspberry Pi, keep it bound only to localhost or the trusted LAN, and enable the integration in `.env`:
+
+```env
+DEVICE_CONTROL_ENABLED=true
+DEVICE_TRANSPORT=mqtt
+MQTT_HOST=127.0.0.1
+MQTT_PORT=1883
+MQTT_KEEPALIVE=30
+MQTT_COMMAND_TIMEOUT_SECONDS=5
+MQTT_TOPIC_PREFIX=smart-companion
+ESP32_DEVICE_ID=companion-esp32-01
+```
+
+Version 1 uses these device-specific topics, constructed centrally from the validated device ID:
+
+```text
+smart-companion/{device_id}/command
+smart-companion/{device_id}/response
+smart-companion/{device_id}/telemetry
+```
+
+An LED command and its correlated acknowledgment look like:
+
+```json
+{"version":1,"request_id":"<uuid>","action":"set_led","params":{"state":true}}
+{"version":1,"request_id":"<uuid>","ok":true,"action":"set_led","result":{"state":true}}
+```
+
+A temperature request uses `"action":"read_temperature"` with empty parameters and returns `result.temperature_c`. The backend subscribes before publishing, waits only for `MQTT_COMMAND_TIMEOUT_SECONDS`, and accepts a response only when its version, request ID, action, result types, LED state, and DHT22 temperature range are valid. Raw MQTT payloads and internal topics are never persisted or exposed through API metadata.
+
+The Arduino example is in [`firmware/esp32_mqtt_companion/`](firmware/esp32_mqtt_companion/). Install the ESP32 board support plus the `PubSubClient`, `ArduinoJson`, and `DHT sensor library` Arduino libraries. Copy `secrets.example.h` to the Git-ignored `secrets.h`, then set Wi-Fi, broker, and device-ID values. The sketch reconnects after Wi-Fi or broker loss and uses configurable pins near its top.
+
+Recommended low-voltage wiring:
+
+- External LED: configured `LED_PIN` → 220–330 Ω resistor → LED anode; LED cathode → GND. Adjust `LED_ACTIVE_HIGH` if the board circuit is active-low. Do not assume GPIO 2 is available.
+- DHT22: VCC → 3.3 V, GND → GND, DATA → configured `DHT_PIN`. Add a 4.7–10 kΩ pull-up from DATA to 3.3 V when using a bare sensor or a module without one.
+
+After flashing the firmware, use `mosquitto_sub -v -t 'smart-companion/#'` on the trusted Pi/LAN to inspect the protocol, then ask “Turn the LED on”, “Turn the LED off”, and “What is the temperature?” through the assistant. Automated backend tests use fakes and require no broker or hardware.
+
+Safety: this milestone is for a low-voltage LED and DHT22 only. Do not connect mains voltage, relays, motors, or other high-current loads. The v1 broker assumes a trusted isolated localhost/LAN deployment; do not expose Mosquitto to the public internet. Broker authentication/TLS can be added in a later security milestone.
 
 ## Setup Instructions
 
@@ -237,6 +283,14 @@ Mock mode requires no external services and is useful for frontend development.
 | `ONLINE_MAX_RESULTS` | `4` | Maximum useful search-result snippets retained per request (1–20) |
 | `ONLINE_MAX_CONTEXT_CHARS` | `6000` | Maximum retrieved-context characters sent to the local model |
 | `SEARXNG_BASE_URL` | `http://127.0.0.1:8888` | Valid HTTP(S) base URL for the self-hosted SearXNG instance |
+| `DEVICE_CONTROL_ENABLED` | `false` | Enable ESP32 LED control and DHT22 reads |
+| `DEVICE_TRANSPORT` | `mqtt` | Device transport; v1 supports `mqtt` |
+| `MQTT_HOST` | `127.0.0.1` | Local/LAN Mosquitto hostname or IP address |
+| `MQTT_PORT` | `1883` | Mosquitto TCP port |
+| `MQTT_KEEPALIVE` | `30` | MQTT keepalive interval in seconds |
+| `MQTT_COMMAND_TIMEOUT_SECONDS` | `5` | Total bounded command/acknowledgment timeout |
+| `MQTT_TOPIC_PREFIX` | `smart-companion` | Valid configurable namespace prepended to device topics |
+| `ESP32_DEVICE_ID` | _(empty)_ | Required safe identifier used to construct device topics |
 | `STT_ENGINE` | `mock` | Speech-to-Text: `mock` or `whisper_cpp` |
 | `STT_WHISPER_BIN` | `/opt/whisper.cpp/main` | Path to whisper.cpp binary |
 | `STT_WHISPER_MODEL` | `/opt/whisper.cpp/models/ggml-base.en.bin` | Path to whisper.cpp model |
@@ -372,7 +426,9 @@ python manage.py test knowledge_base.tests knowledge_base.tests_rag
 | Voice Input (STT - whisper.cpp) | ✅ Implemented (API & Browser Mic) |
 | Voice Output (TTS - Piper) | ✅ Implemented (API & Browser Playback) |
 | Online Retrieval | ✅ Optional SearXNG snippets + local Ollama generation |
-| Real Hardware Sensors/Mics | ⬜ Not implemented |
+| ESP32 LED Control | ✅ Optional MQTT request/acknowledgment integration |
+| DHT22 Temperature | ✅ Optional MQTT request/response integration |
+| Other Hardware Sensors/Mics | ⬜ Not implemented |
 | Raspberry Pi Deployment | ✅ Deployed (Django + local LLM) |
 
 ### Important Notes
@@ -391,3 +447,4 @@ python manage.py test knowledge_base.tests knowledge_base.tests_rag
 4. **Physical Hardware I/O** ← add Pi-connected microphone and speaker
 5. **Local LLM + lexical RAG** ✅
 6. **Local LLM + RAG + Online Retrieval** ✅ (deterministic router + optional SearXNG snippets)
+7. **ESP32 MQTT LED + DHT22** ✅ (safe low-voltage action milestone)
