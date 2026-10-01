@@ -24,8 +24,8 @@ from .types import DeviceAction, DeviceActionResult, DeviceCommand
 
 PROTOCOL_VERSION = 1
 MAX_MQTT_PAYLOAD_BYTES = 4096
-MIN_TEMPERATURE_C = -40.0
-MAX_TEMPERATURE_C = 80.0
+MIN_TEMPERATURE_C = 0.0
+MAX_TEMPERATURE_C = 50.0
 _REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 

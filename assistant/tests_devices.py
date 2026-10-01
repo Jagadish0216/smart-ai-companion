@@ -174,14 +174,33 @@ class MQTTProtocolTests(SimpleTestCase):
         client = _FakeMQTTClient(
             lambda command: _response_for(
                 command,
-                result={"temperature_c": 28.4},
+                result={"temperature_c": 28.0},
             )
         )
 
         result = _controller(client).execute(DeviceCommand.read_temperature())
 
         self.assertTrue(result.success)
-        self.assertEqual(result.result, {"temperature_c": 28.4})
+        self.assertEqual(result.result, {"temperature_c": 28.0})
+
+    def test_dht11_temperature_range_boundaries_are_accepted(self):
+        command = DeviceCommand.read_temperature()
+        for value in (0.0, 50.0):
+            with self.subTest(value=value):
+                payload = json.dumps({
+                    "version": 1,
+                    "request_id": "request-123",
+                    "ok": True,
+                    "action": "read_temperature",
+                    "result": {"temperature_c": value},
+                }).encode()
+                response = validate_response_payload(
+                    payload,
+                    expected_request_id="request-123",
+                    command=command,
+                )
+                self.assertIsNotNone(response)
+                self.assertEqual(response.result, {"temperature_c": value})
 
     def test_broker_unavailable_is_typed_failure_and_client_is_reaped(self):
         client = _FakeMQTTClient(connect_error=OSError("broker unavailable"))
@@ -245,7 +264,7 @@ class MQTTProtocolTests(SimpleTestCase):
         self.assertEqual(result.error, "LED hardware unavailable")
 
     def test_invalid_temperature_types_and_ranges_are_rejected(self):
-        invalid_values = (True, "28.4", float("nan"), -40.1, 80.1)
+        invalid_values = (True, "28.0", float("nan"), -0.1, 50.1)
         command = DeviceCommand.read_temperature()
         for value in invalid_values:
             with self.subTest(value=value):

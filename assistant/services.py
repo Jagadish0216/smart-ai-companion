@@ -384,7 +384,7 @@ def _execute_device_action(
                     isinstance(raw_value, bool)
                     or not isinstance(raw_value, (int, float))
                     or not math.isfinite(float(raw_value))
-                    or not -40.0 <= float(raw_value) <= 80.0
+                    or not 0.0 <= float(raw_value) <= 50.0
                 ):
                     raise DeviceControllerError("Temperature reading was invalid.")
                 value = float(raw_value)

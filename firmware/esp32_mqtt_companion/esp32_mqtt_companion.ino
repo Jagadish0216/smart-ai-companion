@@ -12,13 +12,13 @@
 constexpr uint8_t LED_PIN = 5;
 constexpr bool LED_ACTIVE_HIGH = true;
 constexpr uint8_t DHT_PIN = 4;
-constexpr uint8_t DHT_TYPE = DHT22;
+constexpr uint8_t DHT_TYPE = DHT11;
 
 constexpr int PROTOCOL_VERSION = 1;
 constexpr size_t MAX_COMMAND_BYTES = 512;
 constexpr unsigned long RECONNECT_INTERVAL_MS = 3000;
-constexpr float MIN_TEMPERATURE_C = -40.0F;
-constexpr float MAX_TEMPERATURE_C = 80.0F;
+constexpr float MIN_TEMPERATURE_C = 0.0F;
+constexpr float MAX_TEMPERATURE_C = 50.0F;
 
 WiFiClient networkClient;
 PubSubClient mqttClient(networkClient);

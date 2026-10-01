@@ -155,18 +155,18 @@ An LED command and its correlated acknowledgment look like:
 {"version":1,"request_id":"<uuid>","ok":true,"action":"set_led","result":{"state":true}}
 ```
 
-A temperature request uses `"action":"read_temperature"` with empty parameters and returns `result.temperature_c`. The backend subscribes before publishing, waits only for `MQTT_COMMAND_TIMEOUT_SECONDS`, and accepts a response only when its version, request ID, action, result types, LED state, and DHT22 temperature range are valid. Raw MQTT payloads and internal topics are never persisted or exposed through API metadata.
+A temperature request uses `"action":"read_temperature"` with empty parameters and returns `result.temperature_c`. The backend subscribes before publishing, waits only for `MQTT_COMMAND_TIMEOUT_SECONDS`, and accepts a response only when its version, request ID, action, result types, LED state, and DHT11 temperature range of 0–50 °C are valid. Raw MQTT payloads and internal topics are never persisted or exposed through API metadata.
 
 The Arduino example is in [`firmware/esp32_mqtt_companion/`](firmware/esp32_mqtt_companion/). Install the ESP32 board support plus the `PubSubClient`, `ArduinoJson`, and `DHT sensor library` Arduino libraries. Copy `secrets.example.h` to the Git-ignored `secrets.h`, then set Wi-Fi, broker, and device-ID values. The sketch reconnects after Wi-Fi or broker loss and uses configurable pins near its top.
 
 Recommended low-voltage wiring:
 
 - External LED: configured `LED_PIN` → 220–330 Ω resistor → LED anode; LED cathode → GND. Adjust `LED_ACTIVE_HIGH` if the board circuit is active-low. Do not assume GPIO 2 is available.
-- DHT22: VCC → 3.3 V, GND → GND, DATA → configured `DHT_PIN`. Add a 4.7–10 kΩ pull-up from DATA to 3.3 V when using a bare sensor or a module without one.
+- DHT11: VCC → ESP32 3.3 V, GND → ESP32 GND, DATA → GPIO 4 by default (the configured `DHT_PIN`). A common 3-pin DHT11 module normally includes the required pull-up. A bare 4-pin DHT11 sensor may require an external pull-up resistor of approximately 4.7–10 kΩ between DATA and 3.3 V; check the specific sensor or module rather than assuming its form factor.
 
 After flashing the firmware, use `mosquitto_sub -v -t 'smart-companion/#'` on the trusted Pi/LAN to inspect the protocol, then ask “Turn the LED on”, “Turn the LED off”, and “What is the temperature?” through the assistant. Automated backend tests use fakes and require no broker or hardware.
 
-Safety: this milestone is for a low-voltage LED and DHT22 only. Do not connect mains voltage, relays, motors, or other high-current loads. The v1 broker assumes a trusted isolated localhost/LAN deployment; do not expose Mosquitto to the public internet. Broker authentication/TLS can be added in a later security milestone.
+Safety: this milestone is for a low-voltage LED and DHT11 only. Do not connect mains voltage, relays, motors, or other high-current loads. The v1 broker assumes a trusted isolated localhost/LAN deployment; do not expose Mosquitto to the public internet. Broker authentication/TLS can be added in a later security milestone.
 
 ## Setup Instructions
 
@@ -283,7 +283,7 @@ Mock mode requires no external services and is useful for frontend development.
 | `ONLINE_MAX_RESULTS` | `4` | Maximum useful search-result snippets retained per request (1–20) |
 | `ONLINE_MAX_CONTEXT_CHARS` | `6000` | Maximum retrieved-context characters sent to the local model |
 | `SEARXNG_BASE_URL` | `http://127.0.0.1:8888` | Valid HTTP(S) base URL for the self-hosted SearXNG instance |
-| `DEVICE_CONTROL_ENABLED` | `false` | Enable ESP32 LED control and DHT22 reads |
+| `DEVICE_CONTROL_ENABLED` | `false` | Enable ESP32 LED control and DHT11 reads |
 | `DEVICE_TRANSPORT` | `mqtt` | Device transport; v1 supports `mqtt` |
 | `MQTT_HOST` | `127.0.0.1` | Local/LAN Mosquitto hostname or IP address |
 | `MQTT_PORT` | `1883` | Mosquitto TCP port |
@@ -427,7 +427,7 @@ python manage.py test knowledge_base.tests knowledge_base.tests_rag
 | Voice Output (TTS - Piper) | ✅ Implemented (API & Browser Playback) |
 | Online Retrieval | ✅ Optional SearXNG snippets + local Ollama generation |
 | ESP32 LED Control | ✅ Optional MQTT request/acknowledgment integration |
-| DHT22 Temperature | ✅ Optional MQTT request/response integration |
+| DHT11 Temperature | ✅ Optional MQTT request/response integration |
 | Other Hardware Sensors/Mics | ⬜ Not implemented |
 | Raspberry Pi Deployment | ✅ Deployed (Django + local LLM) |
 
@@ -447,4 +447,4 @@ python manage.py test knowledge_base.tests knowledge_base.tests_rag
 4. **Physical Hardware I/O** ← add Pi-connected microphone and speaker
 5. **Local LLM + lexical RAG** ✅
 6. **Local LLM + RAG + Online Retrieval** ✅ (deterministic router + optional SearXNG snippets)
-7. **ESP32 MQTT LED + DHT22** ✅ (safe low-voltage action milestone)
+7. **ESP32 MQTT LED + DHT11** ✅ (safe low-voltage action milestone)

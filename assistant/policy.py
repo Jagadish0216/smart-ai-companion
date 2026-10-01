@@ -95,7 +95,7 @@ class CapabilityRegistry:
             CapabilityStatus(
                 Capability.ENVIRONMENT_SENSING,
                 is_environment_sensing_available(),
-                "ESP32 DHT22 temperature readings",
+                "ESP32 DHT11 temperature readings",
                 "I can't check the room conditions yet because an environmental sensor isn't connected.",
             ),
             CapabilityStatus(
