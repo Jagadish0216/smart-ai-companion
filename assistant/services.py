@@ -9,9 +9,10 @@ AI engines directly.
 import logging
 
 from conversations.models import Conversation, Message
-from knowledge_base.services import build_rag_instruction, get_retriever
+from knowledge_base.services import build_rag_instruction
 from .ai_engine import get_engine, EngineUnavailableError
 from .policy import Capability, CapabilityRegistry, ResponsePlan
+from .routing import QueryRoute, QueryRouteDecision, QueryRouter
 
 logger = logging.getLogger(__name__)
 
@@ -70,28 +71,35 @@ class AssistantService:
             if effective_num_predict is None:
                 effective_num_predict = response_plan.num_predict
 
-            if response_plan.direct_response:
-                response_text = response_plan.direct_response
-                Message.objects.create(
-                    conversation=conversation,
-                    sender='AI',
-                    text=response_text,
-                    processing_time_ms=0,
-                )
-                conversation.save(update_fields=['updated_at'])
-                metadata = {
-                    "engine": "policy",
-                    "model": None,
-                    "mode": "offline",
-                    "latency_ms": 0,
-                    "rag_used": False,
-                    "rag_sources": [],
-                    "rag_chunks": 0,
-                }
-                return conversation, response_text, metadata, None
-
         registry = CapabilityRegistry.from_settings()
-        rag_results = _retrieve_local_knowledge(query, registry)
+        route_decision = QueryRouter().decide(
+            query,
+            registry=registry,
+            response_mode=response_plan.mode if response_plan is not None else None,
+            required_capability=(
+                response_plan.required_capability
+                if response_plan is not None
+                else None
+            ),
+        )
+
+        direct_response = _direct_response_for_route(
+            route_decision,
+            registry,
+            planned_response=(
+                response_plan.direct_response
+                if response_plan is not None
+                else None
+            ),
+        )
+        if direct_response:
+            return _persist_direct_response(
+                conversation,
+                direct_response,
+                route_decision,
+            )
+
+        rag_results = list(route_decision.rag_results)
         rag_instruction = build_rag_instruction(rag_results) if rag_results else None
         rag_voice_instruction = (
             response_plan.rag_system_instruction
@@ -141,6 +149,8 @@ class AssistantService:
                     for retrieved in rag_results
                 ],
                 "rag_chunks": len(rag_results),
+                "route": route_decision.route.value,
+                "online_used": False,
             }
 
             return conversation, result.text, metadata, None
@@ -156,14 +166,49 @@ class AssistantService:
             return conversation, None, None, "Failed to process query."
 
 
-def _retrieve_local_knowledge(query: str, registry: CapabilityRegistry) -> list:
-    if not registry.is_available(Capability.LOCAL_RAG):
-        return []
-    try:
-        return get_retriever().retrieve(query)
-    except Exception:
-        logger.exception("Local knowledge retrieval failed; continuing without RAG")
-        return []
+def _direct_response_for_route(
+    decision: QueryRouteDecision,
+    registry: CapabilityRegistry,
+    *,
+    planned_response: str | None,
+) -> str | None:
+    if planned_response:
+        return planned_response
+    if decision.route == QueryRoute.CLARIFICATION:
+        return "What would you like me to do?"
+    if (
+        decision.required_capability is not None
+        and decision.route in (QueryRoute.ACTION, QueryRoute.ONLINE)
+        and not registry.is_available(decision.required_capability)
+    ):
+        return registry.status(decision.required_capability).unavailable_response
+    return None
+
+
+def _persist_direct_response(
+    conversation: Conversation,
+    response_text: str,
+    decision: QueryRouteDecision,
+) -> tuple:
+    Message.objects.create(
+        conversation=conversation,
+        sender="AI",
+        text=response_text,
+        processing_time_ms=0,
+    )
+    conversation.save(update_fields=["updated_at"])
+    metadata = {
+        "engine": "policy",
+        "model": None,
+        "mode": "offline",
+        "latency_ms": 0,
+        "rag_used": False,
+        "rag_sources": [],
+        "rag_chunks": 0,
+        "route": decision.route.value,
+        "online_used": False,
+    }
+    return conversation, response_text, metadata, None
 
 
 def _combine_instructions(*instructions: str | None) -> str:

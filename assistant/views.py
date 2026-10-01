@@ -5,6 +5,34 @@ from .serializers import ChatQuerySerializer
 from .services import AssistantService
 from conversations.models import Conversation
 
+
+def _public_assistant_metadata(metadata):
+    if not metadata:
+        return {}
+    payload = {
+        key: metadata.get(key)
+        for key in (
+            "engine",
+            "model",
+            "mode",
+            "route",
+            "rag_used",
+            "rag_chunks",
+            "online_used",
+        )
+        if key in metadata
+    }
+    if "rag_sources" in metadata:
+        payload["rag_sources"] = [
+            {
+                key: value
+                for key, value in source.items()
+                if key != "source_identifier"
+            }
+            for source in metadata.get("rag_sources", [])
+        ]
+    return payload
+
 class ChatAPIView(APIView):
     def get(self, request):
         conversation_id = request.query_params.get('conversation_id')
@@ -60,11 +88,8 @@ class ChatAPIView(APIView):
             "response": ai_text,
         }
 
-        # Include engine metadata (backwards-compatible addition)
-        if metadata:
-            response_data["engine"] = metadata.get("engine")
-            response_data["model"] = metadata.get("model")
-            response_data["mode"] = metadata.get("mode")
+        # Additive request metadata preserves the original response contract.
+        response_data.update(_public_assistant_metadata(metadata))
 
         return Response(response_data, status=status.HTTP_200_OK)
 
@@ -225,7 +250,7 @@ class VoiceAPIView(APIView):
                     "conversation_id": conversation.id,
                     "audio_base64": None,
                     "tts_error": "The response was generated, but speech playback failed.",
-                    **({"engine": metadata.get("engine"), "model": metadata.get("model"), "mode": metadata.get("mode")} if metadata else {}),
+                    **_public_assistant_metadata(metadata),
                 }, status=status.HTTP_200_OK)
 
             # Base64 encode audio
@@ -237,10 +262,7 @@ class VoiceAPIView(APIView):
                 "conversation_id": conversation.id,
                 "audio_base64": audio_b64,
             }
-            if metadata:
-                response_data["engine"] = metadata.get("engine")
-                response_data["model"] = metadata.get("model")
-                response_data["mode"] = metadata.get("mode")
+            response_data.update(_public_assistant_metadata(metadata))
 
             return Response(response_data, status=status.HTTP_200_OK)
 
