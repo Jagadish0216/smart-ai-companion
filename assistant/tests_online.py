@@ -1,7 +1,7 @@
 import json
 import socket
 from datetime import datetime, timezone
-from urllib import error
+from urllib import error, parse
 from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase, TestCase, override_settings
@@ -10,7 +10,6 @@ from rest_framework.test import APIClient
 
 from assistant.ai_engine.base import AIEngineResult
 from assistant.online import (
-    OnlineRetrievalAuthenticationError,
     OnlineRetrievalConfigurationError,
     OnlineRetrievalProviderError,
     OnlineRetrievalResponseError,
@@ -18,12 +17,15 @@ from assistant.online import (
     OnlineRetrievalTimeoutError,
     OnlineRetriever,
 )
-from assistant.online.brave import BraveSearchRetriever
 from assistant.online.factory import (
     get_online_retriever,
     is_online_retrieval_available,
 )
 from assistant.online.grounding import build_online_grounding_instruction
+from assistant.online.searxng import (
+    SearXNGOnlineRetriever,
+    normalize_searxng_base_url,
+)
 from assistant.policy import AssistantResponsePolicy, Capability, CapabilityRegistry
 from assistant.routing import QueryRoute, QueryRouteDecision
 from assistant.services import AssistantService
@@ -54,15 +56,15 @@ def _online_result(
         title="Current release",
         url=url,
         content=content,
-        provider="brave",
+        provider="searxng",
         retrieved_at=datetime(2026, 10, 1, 8, 30, tzinfo=timezone.utc),
     )
 
 
 class OnlineProviderTests(SimpleTestCase):
     def make_retriever(self):
-        return BraveSearchRetriever(
-            api_key="test-api-key",
+        return SearXNGOnlineRetriever(
+            base_url="http://127.0.0.1:8888/",
             timeout_seconds=3,
             max_results=2,
         )
@@ -70,76 +72,142 @@ class OnlineProviderTests(SimpleTestCase):
     def test_provider_implements_replaceable_interface(self):
         self.assertIsInstance(self.make_retriever(), OnlineRetriever)
 
-    @patch("assistant.online.brave.request.urlopen")
+    @patch("assistant.online.searxng.request.urlopen")
     def test_successful_retrieval_returns_bounded_sanitized_results(self, urlopen):
         payload = {
-            "web": {
-                "results": [
-                    {
-                        "title": "<strong>Latest</strong> release",
-                        "url": "https://example.com/releases#section",
-                        "description": "Version <b>3.14</b> is current.",
-                    },
-                    {
-                        "title": "Unsafe",
-                        "url": "javascript:alert(1)",
-                        "description": "Do not include this.",
-                    },
-                ]
-            }
+            "query": "latest Python release",
+            "results": [
+                {
+                    "title": "<strong>Latest</strong> release",
+                    "url": "https://example.com/releases#section",
+                    "content": "Version <b>3.14</b> is current.",
+                },
+                {
+                    "title": "Second result",
+                    "url": "https://example.org/python",
+                    "content": "Another useful result.",
+                },
+                {
+                    "title": "Beyond configured maximum",
+                    "url": "https://example.net/python",
+                    "content": "This result is not retained.",
+                },
+            ],
         }
         urlopen.return_value = _FakeHTTPResponse(json.dumps(payload).encode())
 
         results = self.make_retriever().retrieve("latest Python release")
 
-        self.assertEqual(len(results), 1)
+        self.assertEqual(len(results), 2)
         self.assertEqual(results[0].title, "Latest release")
         self.assertEqual(results[0].content, "Version 3.14 is current.")
         self.assertEqual(results[0].url, "https://example.com/releases")
+        self.assertEqual(results[0].provider, "searxng")
         called_request = urlopen.call_args.args[0]
-        self.assertEqual(called_request.get_header("X-subscription-token"), "test-api-key")
+        parsed_request = parse.urlsplit(called_request.full_url)
+        request_query = parse.parse_qs(parsed_request.query)
+        self.assertEqual(parsed_request.path, "/search")
+        self.assertEqual(request_query, {
+            "q": ["latest Python release"],
+            "format": ["json"],
+        })
         self.assertEqual(urlopen.call_args.kwargs["timeout"], 3)
-        self.assertNotIn("test-api-key", called_request.full_url)
 
-    @patch("assistant.online.brave.request.urlopen", side_effect=socket.timeout())
+    @patch("assistant.online.searxng.request.urlopen", side_effect=socket.timeout())
     def test_timeout_is_reported_as_typed_failure(self, _urlopen):
         with self.assertRaises(OnlineRetrievalTimeoutError):
             self.make_retriever().retrieve("latest news")
 
-    @patch("assistant.online.brave.request.urlopen")
-    def test_invalid_credentials_are_reported_as_typed_failure(self, urlopen):
+    @patch("assistant.online.searxng.request.urlopen")
+    def test_http_error_is_reported_as_provider_failure(self, urlopen):
         urlopen.side_effect = error.HTTPError(
             "https://example.invalid",
-            401,
-            "Unauthorized",
+            403,
+            "JSON disabled",
             None,
             None,
         )
-        with self.assertRaises(OnlineRetrievalAuthenticationError):
+        with self.assertRaises(OnlineRetrievalProviderError):
             self.make_retriever().retrieve("latest news")
 
-    @patch("assistant.online.brave.request.urlopen")
+    @patch("assistant.online.searxng.request.urlopen")
     def test_connection_failure_is_reported_as_provider_error(self, urlopen):
         urlopen.side_effect = error.URLError("offline")
         with self.assertRaises(OnlineRetrievalProviderError):
             self.make_retriever().retrieve("latest news")
 
-    @patch("assistant.online.brave.request.urlopen")
+    @patch("assistant.online.searxng.request.urlopen")
     def test_malformed_response_is_rejected(self, urlopen):
         urlopen.return_value = _FakeHTTPResponse(b"not-json")
         with self.assertRaises(OnlineRetrievalResponseError):
             self.make_retriever().retrieve("latest news")
 
-    @patch("assistant.online.brave.request.urlopen")
+    @patch("assistant.online.searxng.request.urlopen")
     def test_zero_useful_results_returns_empty_list(self, urlopen):
         urlopen.return_value = _FakeHTTPResponse(
-            json.dumps({"web": {"results": []}}).encode()
+            json.dumps({"results": []}).encode()
         )
         self.assertEqual(self.make_retriever().retrieve("latest news"), [])
 
-    def test_missing_credentials_are_rejected_without_network_access(self):
-        with self.assertRaises(OnlineRetrievalConfigurationError):
-            BraveSearchRetriever(api_key="", timeout_seconds=3, max_results=2)
+    @patch("assistant.online.searxng.request.urlopen")
+    def test_malformed_result_entries_are_ignored_safely(self, urlopen):
+        urlopen.return_value = _FakeHTTPResponse(json.dumps({
+            "results": [
+                None,
+                "not-a-mapping",
+                {"title": "Missing content", "url": "https://example.com"},
+                {
+                    "title": "Unsafe scheme",
+                    "url": "javascript:alert(1)",
+                    "content": "Unsafe",
+                },
+                {
+                    "title": "Credential URL",
+                    "url": "https://user:secret@example.com/private",
+                    "content": "Unsafe",
+                },
+                {
+                    "title": "Valid result",
+                    "url": "http://example.org/result#fragment",
+                    "content": "Useful content.",
+                },
+            ]
+        }).encode())
+
+        results = self.make_retriever().retrieve("latest news")
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].title, "Valid result")
+        self.assertEqual(results[0].url, "http://example.org/result")
+
+    def test_base_url_is_normalized_and_supports_local_http(self):
+        self.assertEqual(
+            normalize_searxng_base_url(" HTTP://127.0.0.1:8888/searx/ "),
+            "http://127.0.0.1:8888/searx",
+        )
+        self.assertEqual(
+            normalize_searxng_base_url("HTTPS://Searx.Example.org/"),
+            "https://searx.example.org",
+        )
+
+    def test_malformed_base_urls_are_rejected(self):
+        invalid_urls = (
+            "",
+            "127.0.0.1:8888",
+            "ftp://127.0.0.1:8888",
+            "http://",
+            "http://user:secret@127.0.0.1:8888",
+            "http://127.0.0.1:99999",
+            "http://127.0.0.1:8888?token=secret",
+            "http://127.0.0.1:8888/#fragment",
+            "http://127.0.0.1:8888/ bad",
+            "http://-/",
+            "http://999.999.999.999",
+        )
+        for base_url in invalid_urls:
+            with self.subTest(base_url=base_url):
+                with self.assertRaises(OnlineRetrievalConfigurationError):
+                    normalize_searxng_base_url(base_url)
 
 
 class OnlineGroundingTests(SimpleTestCase):
@@ -163,11 +231,11 @@ class OnlineAvailabilityTests(SimpleTestCase):
     @override_settings(
         AI_ENGINE="local",
         ONLINE_RETRIEVAL_ENABLED=True,
-        ONLINE_PROVIDER="brave",
+        ONLINE_PROVIDER="searxng",
         ONLINE_TIMEOUT_SECONDS=8,
         ONLINE_MAX_RESULTS=4,
         ONLINE_MAX_CONTEXT_CHARS=6000,
-        BRAVE_SEARCH_API_KEY="configured-key",
+        SEARXNG_BASE_URL="http://127.0.0.1:8888",
     )
     def test_online_capability_available_only_with_usable_configuration(self):
         self.assertTrue(is_online_retrieval_available())
@@ -176,12 +244,12 @@ class OnlineAvailabilityTests(SimpleTestCase):
                 Capability.ONLINE_RETRIEVAL
             )
         )
-        self.assertIsInstance(get_online_retriever(), BraveSearchRetriever)
+        self.assertIsInstance(get_online_retriever(), SearXNGOnlineRetriever)
 
     @override_settings(
         AI_ENGINE="local",
         ONLINE_RETRIEVAL_ENABLED=False,
-        BRAVE_SEARCH_API_KEY="configured-key",
+        SEARXNG_BASE_URL="http://127.0.0.1:8888",
     )
     def test_disabled_provider_is_unavailable(self):
         self.assertFalse(is_online_retrieval_available())
@@ -191,10 +259,10 @@ class OnlineAvailabilityTests(SimpleTestCase):
     @override_settings(
         AI_ENGINE="local",
         ONLINE_RETRIEVAL_ENABLED=True,
-        ONLINE_PROVIDER="brave",
-        BRAVE_SEARCH_API_KEY="",
+        ONLINE_PROVIDER="searxng",
+        SEARXNG_BASE_URL="not-a-url",
     )
-    def test_missing_credentials_make_capability_unavailable(self):
+    def test_invalid_base_url_makes_capability_unavailable(self):
         self.assertFalse(is_online_retrieval_available())
         self.assertFalse(
             CapabilityRegistry.from_settings().is_available(
@@ -205,22 +273,44 @@ class OnlineAvailabilityTests(SimpleTestCase):
     @override_settings(
         AI_ENGINE="mock",
         ONLINE_RETRIEVAL_ENABLED=True,
-        ONLINE_PROVIDER="brave",
-        BRAVE_SEARCH_API_KEY="configured-key",
+        ONLINE_PROVIDER="searxng",
+        SEARXNG_BASE_URL="http://127.0.0.1:8888",
     )
     def test_online_pipeline_requires_local_generation(self):
         self.assertFalse(is_online_retrieval_available())
+
+    def test_unsupported_provider_and_invalid_limits_are_unavailable(self):
+        cases = (
+            {"ONLINE_PROVIDER": "unsupported"},
+            {"ONLINE_TIMEOUT_SECONDS": 0},
+            {"ONLINE_MAX_RESULTS": 0},
+            {"ONLINE_MAX_RESULTS": 21},
+            {"ONLINE_MAX_CONTEXT_CHARS": 499},
+        )
+        common = {
+            "AI_ENGINE": "local",
+            "ONLINE_RETRIEVAL_ENABLED": True,
+            "ONLINE_PROVIDER": "searxng",
+            "ONLINE_TIMEOUT_SECONDS": 8,
+            "ONLINE_MAX_RESULTS": 4,
+            "ONLINE_MAX_CONTEXT_CHARS": 6000,
+            "SEARXNG_BASE_URL": "http://127.0.0.1:8888",
+        }
+        for overrides in cases:
+            with self.subTest(overrides=overrides):
+                with self.settings(**(common | overrides)):
+                    self.assertFalse(is_online_retrieval_available())
 
 
 @override_settings(
     AI_ENGINE="local",
     RAG_ENABLED=False,
     ONLINE_RETRIEVAL_ENABLED=True,
-    ONLINE_PROVIDER="brave",
+    ONLINE_PROVIDER="searxng",
     ONLINE_TIMEOUT_SECONDS=8,
     ONLINE_MAX_RESULTS=4,
     ONLINE_MAX_CONTEXT_CHARS=6000,
-    BRAVE_SEARCH_API_KEY="configured-key",
+    SEARXNG_BASE_URL="http://127.0.0.1:8888",
 )
 class OnlineServiceTests(TestCase):
     def make_engine(self, text="Python 3.14 is the current release."):
@@ -262,7 +352,7 @@ class OnlineServiceTests(TestCase):
         self.assertEqual(metadata["route"], "online")
         self.assertTrue(metadata["online_used"])
         self.assertEqual(metadata["online_results"], 1)
-        self.assertEqual(metadata["online_sources"][0]["provider"], "brave")
+        self.assertEqual(metadata["online_sources"][0]["provider"], "searxng")
         self.assertFalse(metadata["rag_used"])
         self.assertEqual(metadata["rag_chunks"], 0)
         self.assertGreaterEqual(metadata["online_latency_ms"], 0)
@@ -448,7 +538,7 @@ class PublicOnlineMetadataTests(SimpleTestCase):
             "online_sources": [{
                 "title": "Source",
                 "url": "https://user:secret@example.com/private",
-                "provider": "brave",
+                "provider": "searxng",
                 "retrieved_at": "2026-10-01T08:30:00+00:00",
                 "content": "untrusted copied content",
                 "api_key": "must-not-leak",

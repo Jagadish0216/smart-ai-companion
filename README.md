@@ -59,7 +59,7 @@ API: {conversation_id, response, engine, model, mode}
 - [`assistant/ai_engine/local.py`](assistant/ai_engine/local.py) — `LocalLLMEngine` (Ollama + Llama 3.2)
 - [`assistant/ai_engine/__init__.py`](assistant/ai_engine/__init__.py) — `get_engine()` factory
 - [`assistant/policy.py`](assistant/policy.py) — response modes, deterministic intent policy, and capability registry
-- [`assistant/online/`](assistant/online/) — replaceable online retriever interface, Brave Search provider, and bounded grounding
+- [`assistant/online/`](assistant/online/) — replaceable online retriever interface, SearXNG provider, and bounded grounding
 - [`assistant/services.py`](assistant/services.py) — `AssistantService` orchestration
 
 ### Assistant Response Policy
@@ -102,19 +102,21 @@ The lexical baseline works best when the question and source share important ter
 
 Online retrieval is disabled by default, so ordinary `LOCAL` and `LOCAL_RAG` requests remain offline. When the deterministic router selects `ONLINE` and the feature is usable, `AssistantService` asks the configured retriever for a small number of search-result snippets, adds a bounded request-only grounding instruction, and sends the original query to the existing local Ollama model. It does not run local RAG for an online route, download full webpages, use a cloud LLM, or persist retrieved material in conversation history.
 
-The first provider is the Brave Search API because it supplies structured titles, URLs, and snippets over one lightweight HTTP request and needs no browser runtime or new Python dependency. Create an API key in Brave Search, keep it only in `.env`, and enable the provider:
+The v1 provider is the open-source, self-hostable SearXNG Search API. It supplies structured titles, URLs, and snippets through one lightweight HTTP request and needs no browser runtime, API key, commercial search account, or additional Python dependency. Run SearXNG locally or on the LAN, enable JSON in its `search.formats` configuration, and configure the assistant with its base URL:
 
 ```env
 AI_ENGINE=local
 ONLINE_RETRIEVAL_ENABLED=true
-ONLINE_PROVIDER=brave
+ONLINE_PROVIDER=searxng
 ONLINE_TIMEOUT_SECONDS=8
 ONLINE_MAX_RESULTS=4
 ONLINE_MAX_CONTEXT_CHARS=6000
-BRAVE_SEARCH_API_KEY=your-key-here
+SEARXNG_BASE_URL=http://127.0.0.1:8888
 ```
 
-The capability remains unavailable when the feature is disabled, `AI_ENGINE` is not `local`, the provider is unsupported, the key is absent, or the configured limits are invalid. In that state, current-information requests keep the existing direct limitation response and do not invoke the LLM. Timeouts, authentication errors, connection/provider failures, malformed responses, and zero useful results return “I couldn't retrieve current information right now.” without asking the local model to guess.
+The capability remains unavailable when the feature is disabled, `AI_ENGINE` is not `local`, the provider is unsupported, the SearXNG base URL is invalid, or the configured limits are invalid. It does not perform a network health probe while building the capability registry. In the unavailable state, current-information requests keep the existing direct limitation response and do not invoke the LLM. Timeouts, connection failures, HTTP errors, malformed responses, and zero useful results return “I couldn't retrieve current information right now.” without asking the local model to guess.
+
+Public SearXNG instances can be useful during development, but they are not recommended as a production dependency: JSON output is often disabled, instances may rate-limit requests, and instance behavior or availability can change without notice. A controlled local or LAN instance is the recommended Raspberry Pi deployment. Both HTTP and HTTPS base URLs are supported so a local instance such as `http://127.0.0.1:8888` works without TLS; credentials, query strings, fragments, unsupported schemes, malformed hosts, and invalid ports are rejected.
 
 Retrieved snippets are treated as untrusted reference data. The request-scoped instruction tells the model to ignore embedded instructions, never execute retrieved commands, protect prompts and secrets, avoid unsupported current claims, and express uncertainty when sources conflict. Only allowlisted attribution fields are exposed through API metadata; voice output is told not to read URLs or metadata aloud. Search-result snippets are a fast, low-bandwidth v1 grounding source, but they can be incomplete and do not replace full-page research or source verification.
 
@@ -230,11 +232,11 @@ Mock mode requires no external services and is useful for frontend development.
 | `RAG_TOP_K` | `4` | Maximum relevant chunks supplied to one request |
 | `RAG_MIN_RELEVANCE` | `0.5` | Minimum lexical query-term coverage score from 0 to 1 |
 | `ONLINE_RETRIEVAL_ENABLED` | `false` | Enable online snippets only for requests routed to `ONLINE` |
-| `ONLINE_PROVIDER` | `brave` | Online retriever implementation; v1 supports `brave` |
+| `ONLINE_PROVIDER` | `searxng` | Online retriever implementation; v1 supports `searxng` |
 | `ONLINE_TIMEOUT_SECONDS` | `8` | Timeout for the single provider HTTP request |
 | `ONLINE_MAX_RESULTS` | `4` | Maximum useful search-result snippets retained per request (1–20) |
 | `ONLINE_MAX_CONTEXT_CHARS` | `6000` | Maximum retrieved-context characters sent to the local model |
-| `BRAVE_SEARCH_API_KEY` | _(empty)_ | Brave Search API credential; required when the provider is enabled |
+| `SEARXNG_BASE_URL` | `http://127.0.0.1:8888` | Valid HTTP(S) base URL for the self-hosted SearXNG instance |
 | `STT_ENGINE` | `mock` | Speech-to-Text: `mock` or `whisper_cpp` |
 | `STT_WHISPER_BIN` | `/opt/whisper.cpp/main` | Path to whisper.cpp binary |
 | `STT_WHISPER_MODEL` | `/opt/whisper.cpp/models/ggml-base.en.bin` | Path to whisper.cpp model |
@@ -369,7 +371,7 @@ python manage.py test knowledge_base.tests knowledge_base.tests_rag
 | Local RAG Pipeline | ✅ Implemented (text/Markdown + lexical retrieval) |
 | Voice Input (STT - whisper.cpp) | ✅ Implemented (API & Browser Mic) |
 | Voice Output (TTS - Piper) | ✅ Implemented (API & Browser Playback) |
-| Online Retrieval | ✅ Optional Brave Search snippets + local Ollama generation |
+| Online Retrieval | ✅ Optional SearXNG snippets + local Ollama generation |
 | Real Hardware Sensors/Mics | ⬜ Not implemented |
 | Raspberry Pi Deployment | ✅ Deployed (Django + local LLM) |
 
@@ -388,4 +390,4 @@ python manage.py test knowledge_base.tests knowledge_base.tests_rag
 3. **Voice Pipeline** ✅ (Browser UI -> STT -> LLM -> TTS -> Browser Audio)
 4. **Physical Hardware I/O** ← add Pi-connected microphone and speaker
 5. **Local LLM + lexical RAG** ✅
-6. **Local LLM + RAG + Online Retrieval** ✅ (deterministic router + optional Brave Search snippets)
+6. **Local LLM + RAG + Online Retrieval** ✅ (deterministic router + optional SearXNG snippets)

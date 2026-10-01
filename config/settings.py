@@ -162,11 +162,11 @@ RAG_MIN_RELEVANCE = float(os.environ.get('RAG_MIN_RELEVANCE', '0.5'))
 
 # Optional online retrieval. Generation remains on the configured local LLM.
 ONLINE_RETRIEVAL_ENABLED = os.environ.get('ONLINE_RETRIEVAL_ENABLED', 'false').lower() in ('1', 'true', 'yes', 'on')
-ONLINE_PROVIDER = os.environ.get('ONLINE_PROVIDER', 'brave')
+ONLINE_PROVIDER = os.environ.get('ONLINE_PROVIDER', 'searxng')
 ONLINE_TIMEOUT_SECONDS = float(os.environ.get('ONLINE_TIMEOUT_SECONDS', '8'))
 ONLINE_MAX_RESULTS = int(os.environ.get('ONLINE_MAX_RESULTS', '4'))
 ONLINE_MAX_CONTEXT_CHARS = int(os.environ.get('ONLINE_MAX_CONTEXT_CHARS', '6000'))
-BRAVE_SEARCH_API_KEY = os.environ.get('BRAVE_SEARCH_API_KEY', '')
+SEARXNG_BASE_URL = os.environ.get('SEARXNG_BASE_URL', 'http://127.0.0.1:8888')
 
 # Voice Engine Configuration
 STT_ENGINE = os.environ.get('STT_ENGINE', 'mock')
