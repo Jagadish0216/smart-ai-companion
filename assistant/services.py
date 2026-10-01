@@ -10,6 +10,7 @@ import logging
 import time
 
 from django.conf import settings
+from django.utils import timezone as django_timezone
 
 from conversations.models import Conversation, Message
 from knowledge_base.services import build_rag_instruction
@@ -109,6 +110,7 @@ class AssistantService:
         online_instruction = None
         online_latency_ms = 0
         if route_decision.route == QueryRoute.ONLINE:
+            online_request_time = django_timezone.localtime(django_timezone.now())
             retrieval_started = time.perf_counter()
             try:
                 retrieved_results = get_online_retriever().retrieve(query)
@@ -123,6 +125,8 @@ class AssistantService:
                             "ONLINE_MAX_CONTEXT_CHARS",
                             6000,
                         ),
+                        query=query,
+                        request_time=online_request_time,
                     )
                 )
                 if not online_results:

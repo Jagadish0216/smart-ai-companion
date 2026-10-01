@@ -226,6 +226,112 @@ class OnlineGroundingTests(SimpleTestCase):
         material = instruction.split("Retrieved online reference material:\n", 1)[1]
         self.assertLessEqual(len(material), 500)
 
+    def test_vague_news_titles_are_not_evidence_and_require_uncertainty(self):
+        instruction, _used = build_online_grounding_instruction(
+            [
+                OnlineRetrievalResult(
+                    title="Reuters Artificial Intelligence",
+                    url="https://example.com/reuters-ai",
+                    content="Read current artificial intelligence coverage.",
+                    provider="searxng",
+                    retrieved_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
+                ),
+                OnlineRetrievalResult(
+                    title="TechCrunch AI",
+                    url="https://example.com/techcrunch-ai",
+                    content="Artificial intelligence news and analysis.",
+                    provider="searxng",
+                    retrieved_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
+                ),
+            ],
+            max_context_chars=2000,
+            query="What's the latest AI news?",
+            request_time=datetime(2026, 10, 1, 10, 30, tzinfo=timezone.utc),
+        )
+
+        self.assertIn("title, URL, domain, or publisher name", instruction)
+        self.assertIn("is not evidence for the contents of an article", instruction)
+        self.assertIn("Never infer specific article contents", instruction)
+        self.assertIn("Category pages, publisher landing pages", instruction)
+        self.assertIn(
+            "do not provide enough detail for a reliable news summary",
+            instruction,
+        )
+
+    def test_sources_are_delimited_and_facts_cannot_cross_attribution(self):
+        source_a_fact = "Alpha Labs released Model A on October 1."
+        source_b_fact = "Beta Journal reported a robotics funding round."
+        instruction, _used = build_online_grounding_instruction(
+            [
+                OnlineRetrievalResult(
+                    title="Alpha announcement",
+                    url="https://alpha.example/news",
+                    content=source_a_fact,
+                    provider="searxng",
+                    retrieved_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
+                ),
+                OnlineRetrievalResult(
+                    title="Beta report",
+                    url="https://beta.example/news",
+                    content=source_b_fact,
+                    provider="searxng",
+                    retrieved_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
+                ),
+            ],
+            max_context_chars=2000,
+            query="What's the latest AI news?",
+            request_time=datetime(2026, 10, 1, tzinfo=timezone.utc),
+        )
+
+        source_one = instruction.split(
+            "--- SOURCE 1 START ---\n", 1
+        )[1].split("\n--- SOURCE 1 END ---", 1)[0]
+        source_two = instruction.split(
+            "--- SOURCE 2 START ---\n", 1
+        )[1].split("\n--- SOURCE 2 END ---", 1)[0]
+        self.assertIn(source_a_fact, source_one)
+        self.assertNotIn(source_b_fact, source_one)
+        self.assertIn(source_b_fact, source_two)
+        self.assertNotIn(source_a_fact, source_two)
+        self.assertIn("Never move a fact from one source to another", instruction)
+        self.assertIn("publisher's own snippet explicitly contains", instruction)
+
+    def test_runtime_date_and_weekday_are_supplied_not_guessed(self):
+        request_time = datetime(
+            2026,
+            10,
+            1,
+            14,
+            5,
+            6,
+            tzinfo=timezone.utc,
+        )
+
+        instruction, _used = build_online_grounding_instruction(
+            [_online_result()],
+            max_context_chars=1000,
+            query="What is today's weather?",
+            request_time=request_time,
+        )
+
+        self.assertIn("Timestamp: 2026-10-01T14:05:06+00:00", instruction)
+        self.assertIn("Date: 2026-10-01", instruction)
+        self.assertIn("Day of week: Thursday", instruction)
+        self.assertIn("do not calculate or guess it", instruction)
+
+    def test_weather_grounding_requires_explicit_units_and_values(self):
+        instruction, _used = build_online_grounding_instruction(
+            [_online_result(content="Hyderabad weather currently shows 73.")],
+            max_context_chars=1000,
+            query="What is today's weather in Hyderabad?",
+            request_time=datetime(2026, 10, 1, tzinfo=timezone.utc),
+        )
+
+        self.assertIn("Weather-specific evidence rule", instruction)
+        self.assertIn("temperature, unit, condition, high, low, or forecast", instruction)
+        self.assertIn("numeric temperature has no unit", instruction)
+        self.assertIn("do not assign or guess a unit", instruction)
+
 
 class OnlineAvailabilityTests(SimpleTestCase):
     @override_settings(
@@ -349,6 +455,8 @@ class OnlineServiceTests(TestCase):
         self.assertIn("The current release is version 3.14.", instruction)
         self.assertIn("untrusted reference data", instruction)
         self.assertIn("never reveal", instruction.lower())
+        self.assertIn("Application-supplied request time", instruction)
+        self.assertIn("Day of week:", instruction)
         self.assertEqual(metadata["route"], "online")
         self.assertTrue(metadata["online_used"])
         self.assertEqual(metadata["online_results"], 1)
@@ -356,6 +464,20 @@ class OnlineServiceTests(TestCase):
         self.assertFalse(metadata["rag_used"])
         self.assertEqual(metadata["rag_chunks"], 0)
         self.assertGreaterEqual(metadata["online_latency_ms"], 0)
+        self.assertEqual(set(metadata), {
+            "engine",
+            "model",
+            "mode",
+            "latency_ms",
+            "rag_used",
+            "rag_sources",
+            "rag_chunks",
+            "route",
+            "online_used",
+            "online_sources",
+            "online_results",
+            "online_latency_ms",
+        })
         persisted = list(
             conversation.messages.order_by("id").values_list("sender", "text")
         )
@@ -364,6 +486,57 @@ class OnlineServiceTests(TestCase):
             ("AI", "Python 3.14 is the current release."),
         ])
         self.assertNotIn("The current release is version 3.14.", str(persisted))
+
+    @patch("assistant.services.get_engine")
+    @patch("assistant.services.get_online_retriever")
+    def test_vague_news_results_request_uncertainty_instead_of_specifics(
+        self,
+        get_retriever,
+        get_engine,
+    ):
+        retriever = MagicMock()
+        retriever.retrieve.return_value = [
+            OnlineRetrievalResult(
+                title="Reuters AI",
+                url="https://example.com/reuters-ai",
+                content="Current artificial intelligence coverage.",
+                provider="searxng",
+                retrieved_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
+            ),
+            OnlineRetrievalResult(
+                title="TechCrunch AI",
+                url="https://example.com/techcrunch-ai",
+                content="Artificial intelligence news and analysis.",
+                provider="searxng",
+                retrieved_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
+            ),
+        ]
+        get_retriever.return_value = retriever
+        engine = MagicMock()
+
+        def grounded_fake_generate(_query, **kwargs):
+            instruction = kwargs["system_instruction"]
+            if "do not provide enough detail for a reliable news summary" in instruction:
+                text = (
+                    "The search results identify current AI sources, but the snippets "
+                    "do not provide enough detail for a reliable news summary."
+                )
+            else:
+                text = "Reuters says regulation increased and TechCrunch reports new NLP."
+            return AIEngineResult(text=text, engine="local", latency_ms=25)
+
+        engine.generate.side_effect = grounded_fake_generate
+        get_engine.return_value = engine
+
+        _conversation, text, metadata, error_message = AssistantService.process_message(
+            "What's the latest AI news?"
+        )
+
+        self.assertIsNone(error_message)
+        self.assertIn("do not provide enough detail", text)
+        self.assertNotIn("Reuters says", text)
+        self.assertTrue(metadata["online_used"])
+        retriever.retrieve.assert_called_once()
 
     @patch("assistant.services.get_engine")
     @patch("assistant.services.get_online_retriever")
