@@ -1,6 +1,9 @@
+from urllib import parse
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+
 from .serializers import ChatQuerySerializer
 from .services import AssistantService
 from conversations.models import Conversation
@@ -19,6 +22,8 @@ def _public_assistant_metadata(metadata):
             "rag_used",
             "rag_chunks",
             "online_used",
+            "online_results",
+            "online_latency_ms",
         )
         if key in metadata
     }
@@ -31,7 +36,39 @@ def _public_assistant_metadata(metadata):
             }
             for source in metadata.get("rag_sources", [])
         ]
+    if "online_sources" in metadata:
+        allowed_source_fields = {"title", "url", "provider", "retrieved_at"}
+        payload["online_sources"] = []
+        for source in metadata.get("online_sources", []):
+            if not isinstance(source, dict):
+                continue
+            public_source = {
+                key: value
+                for key, value in source.items()
+                if key in allowed_source_fields and key != "url"
+            }
+            safe_url = _safe_public_source_url(source.get("url"))
+            if safe_url:
+                public_source["url"] = safe_url
+            payload["online_sources"].append(public_source)
     return payload
+
+
+def _safe_public_source_url(value):
+    if not isinstance(value, str):
+        return ""
+    try:
+        parsed = parse.urlsplit(value)
+        if (
+            parsed.scheme.lower() not in ("http", "https")
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            return ""
+        return value
+    except (ValueError, UnicodeError):
+        return ""
 
 class ChatAPIView(APIView):
     def get(self, request):

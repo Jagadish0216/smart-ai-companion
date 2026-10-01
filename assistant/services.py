@@ -7,10 +7,16 @@ AI engines directly.
 """
 
 import logging
+import time
+
+from django.conf import settings
 
 from conversations.models import Conversation, Message
 from knowledge_base.services import build_rag_instruction
 from .ai_engine import get_engine, EngineUnavailableError
+from .online.base import OnlineRetrievalError, OnlineRetrievalResult
+from .online.factory import get_online_retriever
+from .online.grounding import build_online_grounding_instruction
 from .policy import Capability, CapabilityRegistry, ResponsePlan
 from .routing import QueryRoute, QueryRouteDecision, QueryRouter
 
@@ -99,6 +105,60 @@ class AssistantService:
                 route_decision,
             )
 
+        online_results: list[OnlineRetrievalResult] = []
+        online_instruction = None
+        online_latency_ms = 0
+        if route_decision.route == QueryRoute.ONLINE:
+            retrieval_started = time.perf_counter()
+            try:
+                retrieved_results = get_online_retriever().retrieve(query)
+                online_latency_ms = round(
+                    (time.perf_counter() - retrieval_started) * 1000
+                )
+                online_instruction, online_results = (
+                    build_online_grounding_instruction(
+                        retrieved_results,
+                        max_context_chars=getattr(
+                            settings,
+                            "ONLINE_MAX_CONTEXT_CHARS",
+                            6000,
+                        ),
+                    )
+                )
+                if not online_results:
+                    raise OnlineRetrievalError(
+                        "The online provider returned no useful results."
+                    )
+            except OnlineRetrievalError as exc:
+                online_latency_ms = round(
+                    (time.perf_counter() - retrieval_started) * 1000
+                )
+                logger.warning(
+                    "Online retrieval failed: %s",
+                    exc.__class__.__name__,
+                )
+                return _persist_direct_response(
+                    conversation,
+                    "I couldn't retrieve current information right now.",
+                    route_decision,
+                    engine="online",
+                    latency_ms=online_latency_ms,
+                    online_latency_ms=online_latency_ms,
+                )
+            except Exception:
+                online_latency_ms = round(
+                    (time.perf_counter() - retrieval_started) * 1000
+                )
+                logger.exception("Unexpected online retrieval failure")
+                return _persist_direct_response(
+                    conversation,
+                    "I couldn't retrieve current information right now.",
+                    route_decision,
+                    engine="online",
+                    latency_ms=online_latency_ms,
+                    online_latency_ms=online_latency_ms,
+                )
+
         rag_results = list(route_decision.rag_results)
         rag_instruction = build_rag_instruction(rag_results) if rag_results else None
         rag_voice_instruction = (
@@ -111,6 +171,7 @@ class AssistantService:
             effective_instruction,
             rag_instruction,
             rag_voice_instruction,
+            online_instruction,
             grounding_instruction,
         )
 
@@ -150,7 +211,13 @@ class AssistantService:
                 ],
                 "rag_chunks": len(rag_results),
                 "route": route_decision.route.value,
-                "online_used": False,
+                "online_used": bool(online_results),
+                "online_sources": [
+                    retrieved.source_metadata()
+                    for retrieved in online_results
+                ],
+                "online_results": len(online_results),
+                "online_latency_ms": online_latency_ms,
             }
 
             return conversation, result.text, metadata, None
@@ -189,24 +256,31 @@ def _persist_direct_response(
     conversation: Conversation,
     response_text: str,
     decision: QueryRouteDecision,
+    *,
+    engine: str = "policy",
+    latency_ms: int = 0,
+    online_latency_ms: int = 0,
 ) -> tuple:
     Message.objects.create(
         conversation=conversation,
         sender="AI",
         text=response_text,
-        processing_time_ms=0,
+        processing_time_ms=latency_ms,
     )
     conversation.save(update_fields=["updated_at"])
     metadata = {
-        "engine": "policy",
+        "engine": engine,
         "model": None,
         "mode": "offline",
-        "latency_ms": 0,
+        "latency_ms": latency_ms,
         "rag_used": False,
         "rag_sources": [],
         "rag_chunks": 0,
         "route": decision.route.value,
         "online_used": False,
+        "online_sources": [],
+        "online_results": 0,
+        "online_latency_ms": online_latency_ms,
     }
     return conversation, response_text, metadata, None
 

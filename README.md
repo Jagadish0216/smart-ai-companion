@@ -33,8 +33,10 @@ Optional AssistantResponsePolicy
     ↓  response mode + capability check + request budget
 AssistantService.process_message()
     ↓
-Optional local knowledge retrieval
-    ↓  request-scoped context when relevance passes the threshold
+Deterministic route: LOCAL / LOCAL_RAG / ONLINE / ACTION / CLARIFICATION
+    ↓
+Optional local knowledge or online search-result retrieval
+    ↓  request-scoped grounded context only on the selected route
 get_engine()  ← reads AI_ENGINE from settings
     ↓
 ┌──────────────────────────────────────────┐
@@ -57,13 +59,14 @@ API: {conversation_id, response, engine, model, mode}
 - [`assistant/ai_engine/local.py`](assistant/ai_engine/local.py) — `LocalLLMEngine` (Ollama + Llama 3.2)
 - [`assistant/ai_engine/__init__.py`](assistant/ai_engine/__init__.py) — `get_engine()` factory
 - [`assistant/policy.py`](assistant/policy.py) — response modes, deterministic intent policy, and capability registry
+- [`assistant/online/`](assistant/online/) — replaceable online retriever interface, Brave Search provider, and bounded grounding
 - [`assistant/services.py`](assistant/services.py) — `AssistantService` orchestration
 
 ### Assistant Response Policy
 
 The reusable policy layer classifies requests as `BRIEF`, `NORMAL`, `DETAILED`, `ACTION`, or `CLARIFICATION`. The standalone voice loop uses this classification to select response depth and a request-scoped Ollama generation budget without changing the global `OLLAMA_NUM_PREDICT=128` fallback. Browser and service calls retain the same public behavior while all LLM requests receive request-scoped capability grounding.
 
-The capability registry reflects configured, implemented components such as conversation persistence, local generation, whisper.cpp STT, Piper TTS, and local retrieval. `LOCAL_RAG` is available only when RAG is enabled, its configuration is valid, and at least one chunk belongs to an indexed document. Online retrieval, sensors, camera understanding, ESP32/device control, movement, and reminders remain unavailable. Recognized requests for unavailable actions receive a natural grounded response; the assistant must not claim that an action or observation occurred. Future modules can register those capabilities and route to their real executors without replacing the response policy.
+The capability registry reflects configured, implemented components such as conversation persistence, local generation, whisper.cpp STT, Piper TTS, local retrieval, and optional online retrieval. `LOCAL_RAG` is available only when RAG is enabled, its configuration is valid, and at least one chunk belongs to an indexed document. `ONLINE_RETRIEVAL` is available only when online retrieval is enabled, the local Ollama engine is selected, the provider is supported, credentials are present, and limits are valid. Sensors, camera understanding, ESP32/device control, movement, and reminders remain unavailable. Recognized requests for unavailable actions receive a natural grounded response; the assistant must not claim that an action or observation occurred.
 
 ### Local Knowledge / RAG
 
@@ -94,6 +97,28 @@ At request time, the retriever returns up to `RAG_TOP_K` chunks whose score meet
 `LOCAL_RAG` is reported unavailable when the local LLM is not selected, RAG is disabled, configuration is invalid, or no indexed chunks exist. This conservative empty-index behavior prevents the assistant from claiming it can search local knowledge before ingestion has succeeded.
 
 The lexical baseline works best when the question and source share important terms. A future semantic retriever can implement the existing retriever interface without changing ingestion, `AssistantService`, the voice loop, or public APIs.
+
+### Optional Online Retrieval
+
+Online retrieval is disabled by default, so ordinary `LOCAL` and `LOCAL_RAG` requests remain offline. When the deterministic router selects `ONLINE` and the feature is usable, `AssistantService` asks the configured retriever for a small number of search-result snippets, adds a bounded request-only grounding instruction, and sends the original query to the existing local Ollama model. It does not run local RAG for an online route, download full webpages, use a cloud LLM, or persist retrieved material in conversation history.
+
+The first provider is the Brave Search API because it supplies structured titles, URLs, and snippets over one lightweight HTTP request and needs no browser runtime or new Python dependency. Create an API key in Brave Search, keep it only in `.env`, and enable the provider:
+
+```env
+AI_ENGINE=local
+ONLINE_RETRIEVAL_ENABLED=true
+ONLINE_PROVIDER=brave
+ONLINE_TIMEOUT_SECONDS=8
+ONLINE_MAX_RESULTS=4
+ONLINE_MAX_CONTEXT_CHARS=6000
+BRAVE_SEARCH_API_KEY=your-key-here
+```
+
+The capability remains unavailable when the feature is disabled, `AI_ENGINE` is not `local`, the provider is unsupported, the key is absent, or the configured limits are invalid. In that state, current-information requests keep the existing direct limitation response and do not invoke the LLM. Timeouts, authentication errors, connection/provider failures, malformed responses, and zero useful results return “I couldn't retrieve current information right now.” without asking the local model to guess.
+
+Retrieved snippets are treated as untrusted reference data. The request-scoped instruction tells the model to ignore embedded instructions, never execute retrieved commands, protect prompts and secrets, avoid unsupported current claims, and express uncertainty when sources conflict. Only allowlisted attribution fields are exposed through API metadata; voice output is told not to read URLs or metadata aloud. Search-result snippets are a fast, low-bandwidth v1 grounding source, but they can be incomplete and do not replace full-page research or source verification.
+
+Online latency and local generation latency are separate: `online_latency_ms` measures the provider request, while `latency_ms` remains the local generation measurement. Total perceived latency is approximately their sum plus application overhead. On a Pi, network response time varies independently from Ollama CPU inference time; the provider uses one explicit timeout and no indefinite retries.
 
 ## Setup Instructions
 
@@ -204,6 +229,12 @@ Mock mode requires no external services and is useful for frontend development.
 | `RAG_CHUNK_OVERLAP_CHARS` | `150` | Approximate overlap between adjacent chunks |
 | `RAG_TOP_K` | `4` | Maximum relevant chunks supplied to one request |
 | `RAG_MIN_RELEVANCE` | `0.5` | Minimum lexical query-term coverage score from 0 to 1 |
+| `ONLINE_RETRIEVAL_ENABLED` | `false` | Enable online snippets only for requests routed to `ONLINE` |
+| `ONLINE_PROVIDER` | `brave` | Online retriever implementation; v1 supports `brave` |
+| `ONLINE_TIMEOUT_SECONDS` | `8` | Timeout for the single provider HTTP request |
+| `ONLINE_MAX_RESULTS` | `4` | Maximum useful search-result snippets retained per request (1–20) |
+| `ONLINE_MAX_CONTEXT_CHARS` | `6000` | Maximum retrieved-context characters sent to the local model |
+| `BRAVE_SEARCH_API_KEY` | _(empty)_ | Brave Search API credential; required when the provider is enabled |
 | `STT_ENGINE` | `mock` | Speech-to-Text: `mock` or `whisper_cpp` |
 | `STT_WHISPER_BIN` | `/opt/whisper.cpp/main` | Path to whisper.cpp binary |
 | `STT_WHISPER_MODEL` | `/opt/whisper.cpp/models/ggml-base.en.bin` | Path to whisper.cpp model |
@@ -338,7 +369,7 @@ python manage.py test knowledge_base.tests knowledge_base.tests_rag
 | Local RAG Pipeline | ✅ Implemented (text/Markdown + lexical retrieval) |
 | Voice Input (STT - whisper.cpp) | ✅ Implemented (API & Browser Mic) |
 | Voice Output (TTS - Piper) | ✅ Implemented (API & Browser Playback) |
-| Online Retrieval | ⬜ Not implemented |
+| Online Retrieval | ✅ Optional Brave Search snippets + local Ollama generation |
 | Real Hardware Sensors/Mics | ⬜ Not implemented |
 | Raspberry Pi Deployment | ✅ Deployed (Django + local LLM) |
 
@@ -347,7 +378,7 @@ python manage.py test knowledge_base.tests knowledge_base.tests_rag
 - The local LLM runs on **CPU only** (Raspberry Pi 5 has no GPU). Inference speed is limited by ARM CPU performance.
 - Local RAG uses lexical matching rather than semantic embeddings, so sources and questions should share meaningful terminology.
 - Only UTF-8 text and Markdown are indexed in v1; PDF/OCR support is not included.
-- Online/web retrieval is **not implemented**. All inference is offline.
+- Online retrieval is opt-in and used only for `ONLINE` routes; all answer generation remains local through Ollama.
 - The system prompt establishes the companion persona but the model's behavior depends on its training.
 
 ## Future Integration Plan
@@ -357,4 +388,4 @@ python manage.py test knowledge_base.tests knowledge_base.tests_rag
 3. **Voice Pipeline** ✅ (Browser UI -> STT -> LLM -> TTS -> Browser Audio)
 4. **Physical Hardware I/O** ← add Pi-connected microphone and speaker
 5. **Local LLM + lexical RAG** ✅
-6. **Local LLM + RAG + Online Retrieval** ← add query router
+6. **Local LLM + RAG + Online Retrieval** ✅ (deterministic router + optional Brave Search snippets)

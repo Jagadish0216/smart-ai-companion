@@ -160,6 +160,14 @@ RAG_CHUNK_OVERLAP_CHARS = int(os.environ.get('RAG_CHUNK_OVERLAP_CHARS', '150'))
 RAG_TOP_K = int(os.environ.get('RAG_TOP_K', '4'))
 RAG_MIN_RELEVANCE = float(os.environ.get('RAG_MIN_RELEVANCE', '0.5'))
 
+# Optional online retrieval. Generation remains on the configured local LLM.
+ONLINE_RETRIEVAL_ENABLED = os.environ.get('ONLINE_RETRIEVAL_ENABLED', 'false').lower() in ('1', 'true', 'yes', 'on')
+ONLINE_PROVIDER = os.environ.get('ONLINE_PROVIDER', 'brave')
+ONLINE_TIMEOUT_SECONDS = float(os.environ.get('ONLINE_TIMEOUT_SECONDS', '8'))
+ONLINE_MAX_RESULTS = int(os.environ.get('ONLINE_MAX_RESULTS', '4'))
+ONLINE_MAX_CONTEXT_CHARS = int(os.environ.get('ONLINE_MAX_CONTEXT_CHARS', '6000'))
+BRAVE_SEARCH_API_KEY = os.environ.get('BRAVE_SEARCH_API_KEY', '')
+
 # Voice Engine Configuration
 STT_ENGINE = os.environ.get('STT_ENGINE', 'mock')
 STT_WHISPER_BIN = os.environ.get('STT_WHISPER_BIN', '/opt/whisper.cpp/main')

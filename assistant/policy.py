@@ -48,6 +48,7 @@ class CapabilityRegistry:
     def from_settings(cls) -> "CapabilityRegistry":
         from django.conf import settings
         from knowledge_base.services import is_rag_available
+        from .online.factory import is_online_retrieval_available
 
         return cls([
             CapabilityStatus(
@@ -83,7 +84,7 @@ class CapabilityRegistry:
             ),
             CapabilityStatus(
                 Capability.ONLINE_RETRIEVAL,
-                False,
+                is_online_retrieval_available(),
                 "Live online search and retrieval",
                 "I can't retrieve live online information yet because online retrieval isn't available.",
             ),
