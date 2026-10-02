@@ -1,7 +1,14 @@
+from rest_framework.authentication import SessionAuthentication
+from rest_framework.permissions import IsAdminUser
+from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from .control_plane.health import get_service_health
-from .control_plane.network import get_network_status
+from .control_plane.network import (
+    connect_wifi,
+    get_network_status,
+    scan_wifi_networks,
+)
 from .services import get_device_metrics
 from .models import SystemLog
 
@@ -14,6 +21,51 @@ class DeviceMetricsAPIView(APIView):
 class NetworkStatusAPIView(APIView):
     def get(self, request):
         return Response(get_network_status())
+
+
+class WifiScanAPIView(APIView):
+    def get(self, request):
+        try:
+            return Response(scan_wifi_networks())
+        except Exception:
+            return Response({
+                "supported": False,
+                "interface": None,
+                "networks": [],
+                "message": "Available networks could not be loaded.",
+            })
+
+
+class WifiConnectAPIView(APIView):
+    authentication_classes = [SessionAuthentication]
+    permission_classes = [IsAdminUser]
+
+    def post(self, request):
+        if not isinstance(request.data, dict):
+            result = {
+                "success": False,
+                "state": "INVALID",
+                "message": "The connection request is invalid.",
+            }
+        else:
+            try:
+                result = connect_wifi(
+                    request.data.get("ssid"),
+                    request.data.get("password"),
+                )
+            except Exception:
+                result = {
+                    "success": False,
+                    "state": "UNKNOWN",
+                    "message": "The connection result could not be determined.",
+                }
+        response_status = {
+            "INVALID": status.HTTP_400_BAD_REQUEST,
+            "CONNECTING": status.HTTP_202_ACCEPTED,
+            "NOT_AVAILABLE": status.HTTP_503_SERVICE_UNAVAILABLE,
+            "UNKNOWN": status.HTTP_503_SERVICE_UNAVAILABLE,
+        }.get(result["state"], status.HTTP_200_OK)
+        return Response(result, status=response_status)
 
 
 class ServiceHealthAPIView(APIView):
@@ -34,7 +86,6 @@ class SystemLogAPIView(APIView):
             })
         return Response(data)
 
-from rest_framework import status
 from .device_controller import device
 
 class CompanionControlAPIView(APIView):

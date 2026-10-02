@@ -14,7 +14,7 @@
 
     {% load static %}
 
-    <link rel="stylesheet" href="{% static 'css/style.css' %}?v=4">
+    <link rel="stylesheet" href="{% static 'css/style.css' %}?v=5">
 
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 
@@ -237,6 +237,18 @@
                 <i data-lucide="cpu"></i>
 
                 Device
+
+            </a>
+
+        </li>
+
+        <li>
+
+            <a href="{% url 'network' %}" class="nav-item {% if request.path == '/network/' %}active{% endif %}">
+
+                <i data-lucide="wifi"></i>
+
+                Network
 
             </a>
 

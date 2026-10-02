@@ -1,0 +1,126 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block page_title %}Network{% endblock %}
+{% block page_heading %}Network{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-header-title">Network</div>
+    <div class="page-header-desc">View connectivity and manage the Companion's Wi-Fi connection.</div>
+</div>
+
+<div class="grid grid-3 mb-5" id="network-status">
+    <div class="card">
+        <div class="card-title mb-3">Wi-Fi</div>
+        <div class="info-row">
+            <span class="info-row-label">Status</span>
+            <span class="badge badge-neutral" id="network-wifi-state">Loading</span>
+        </div>
+        <div class="info-row">
+            <span class="info-row-label">Network</span>
+            <span class="info-row-value" id="network-wifi-ssid">—</span>
+        </div>
+        <div class="info-row">
+            <span class="info-row-label">Signal</span>
+            <span class="info-row-value" id="network-wifi-signal">—</span>
+        </div>
+        <div class="info-row">
+            <span class="info-row-label">IP address</span>
+            <span class="info-row-value" id="network-wifi-ip">—</span>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title mb-3">Ethernet</div>
+        <div class="info-row">
+            <span class="info-row-label">Status</span>
+            <span class="badge badge-neutral" id="network-ethernet-state">Loading</span>
+        </div>
+        <div class="info-row">
+            <span class="info-row-label">Interface</span>
+            <span class="info-row-value" id="network-ethernet-interface">—</span>
+        </div>
+        <div class="info-row">
+            <span class="info-row-label">IP address</span>
+            <span class="info-row-value" id="network-ethernet-ip">—</span>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title mb-3">Internet</div>
+        <div class="info-row">
+            <span class="info-row-label">Connectivity</span>
+            <span class="badge badge-neutral" id="network-internet-state">Loading</span>
+        </div>
+        <div class="info-row">
+            <span class="info-row-label">Hostname</span>
+            <span class="info-row-value" id="network-hostname">—</span>
+        </div>
+    </div>
+</div>
+
+<div class="card mb-5">
+    <div class="card-header">
+        <div>
+            <div class="card-title">Available networks</div>
+            <div class="text-sm text-secondary mt-2">Nearby Wi-Fi networks reported by the Companion.</div>
+        </div>
+        <button class="btn btn-primary btn-sm" type="button" id="network-refresh">
+            <i data-lucide="refresh-cw"></i>
+            Refresh Networks
+        </button>
+    </div>
+    <div id="network-scan-message" class="network-message hidden" role="status"></div>
+    <div id="network-list" class="network-list" aria-live="polite">
+        <div class="empty-state">
+            <i data-lucide="wifi"></i>
+            <div class="empty-state-title">Loading available networks</div>
+            <div class="empty-state-desc">The scan may take a few seconds.</div>
+        </div>
+    </div>
+</div>
+
+{% if request.user.is_staff %}
+<div class="card network-connect-panel hidden" id="network-connect-panel">
+    <div class="card-title mb-3">Connect to <span id="network-selected-ssid"></span></div>
+    <form id="network-connect-form" autocomplete="off">
+        {% csrf_token %}
+        <label class="network-field-label" for="network-password">Wi-Fi password</label>
+        <input
+            class="input w-full"
+            id="network-password"
+            type="password"
+            maxlength="64"
+            autocomplete="off"
+            placeholder="Leave blank for an open or previously saved network"
+        >
+        <div class="network-warning mt-3">
+            <i data-lucide="alert-triangle"></i>
+            <span>Changing Wi-Fi may temporarily disconnect this dashboard. Your phone or computer may need to join the same target network before the Companion is reachable again.</span>
+        </div>
+        <div class="flex gap-2 mt-4">
+            <button class="btn btn-primary" type="submit" id="network-connect-submit">Connect</button>
+            <button class="btn" type="button" id="network-connect-cancel">Cancel</button>
+        </div>
+    </form>
+</div>
+{% else %}
+<div class="card network-auth-notice">
+    <div class="flex items-center gap-3">
+        <i data-lucide="lock"></i>
+        <div>
+            <div class="card-title">Administrator access required</div>
+            <div class="text-sm text-secondary mt-2">Network status and scanning are available, but changing Wi-Fi requires an administrator session.</div>
+            <a class="btn btn-primary btn-sm mt-3" href="{% url 'admin:login' %}?next={% url 'network' %}">Administrator sign in</a>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div id="network-page-config" data-can-connect="{{ request.user.is_staff|yesno:'true,false' }}"></div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/network.js' %}?v=1"></script>
+{% endblock %}

@@ -7,29 +7,58 @@ import os
 import shutil
 import socket
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 
 COMMAND_TIMEOUT_SECONDS = 1.5
+WIFI_SCAN_TIMEOUT_SECONDS = 8.0
+WIFI_CONNECT_WAIT_SECONDS = 8
+WIFI_CONNECT_TIMEOUT_SECONDS = 10.0
 VIRTUAL_ETHERNET_PREFIXES = ("veth", "docker", "br-", "virbr")
 PREFERRED_ETHERNET_PREFIXES = ("eth", "en")
+MAX_SSID_BYTES = 32
+MAX_WIFI_PASSWORD_BYTES = 64
 
 
-def _run(command: list[str]) -> str | None:
+@dataclass(frozen=True)
+class _CommandOutcome:
+    returncode: int | None
+    stdout: str = ""
+    stderr: str = ""
+    timed_out: bool = False
+    unavailable: bool = False
+
+
+def _execute(command: list[str], timeout: float) -> _CommandOutcome:
+    """Execute one allowlisted nmcli operation without exposing its arguments."""
     try:
         completed = subprocess.run(
             command,
             capture_output=True,
             text=True,
-            timeout=COMMAND_TIMEOUT_SECONDS,
+            timeout=timeout,
             check=False,
+            shell=False,
+            env={**os.environ, "LANG": "C", "LC_ALL": "C"},
         )
+    except subprocess.TimeoutExpired:
+        return _CommandOutcome(returncode=None, timed_out=True)
     except (OSError, subprocess.SubprocessError):
+        return _CommandOutcome(returncode=None, unavailable=True)
+    return _CommandOutcome(
+        returncode=completed.returncode,
+        stdout=completed.stdout or "",
+        stderr=completed.stderr or "",
+    )
+
+
+def _run(command: list[str]) -> str | None:
+    outcome = _execute(command, COMMAND_TIMEOUT_SECONDS)
+    if outcome.returncode != 0:
         return None
-    if completed.returncode != 0:
-        return None
-    return completed.stdout.strip()
+    return outcome.stdout.strip()
 
 
 def _split_terse(line: str) -> list[str]:
@@ -123,6 +152,263 @@ def _connectivity(executable: str) -> dict[str, bool | str | None]:
     }
     state, available = mapping.get(raw, ("UNKNOWN", None))
     return {"state": state, "available": available}
+
+
+def _wifi_interface(executable: str) -> tuple[str | None, str]:
+    outcome = _execute(
+        [executable, "-t", "-f", "DEVICE,TYPE,STATE", "device", "status"],
+        COMMAND_TIMEOUT_SECONDS,
+    )
+    if outcome.timed_out:
+        return None, "TIMEOUT"
+    if outcome.unavailable or outcome.returncode != 0:
+        return None, "ERROR"
+    wifi_devices: list[tuple[str, bool]] = []
+    for line in outcome.stdout.splitlines():
+        fields = _split_terse(line)
+        if len(fields) < 3 or fields[1].lower() != "wifi":
+            continue
+        name = fields[0]
+        if name:
+            wifi_devices.append(
+                (name, fields[2].lower() in {"connected", "activated"})
+            )
+    if not wifi_devices:
+        return None, "NOT_FOUND"
+    connected = next((name for name, active in wifi_devices if active), None)
+    return connected or wifi_devices[0][0], "OK"
+
+
+def _normalize_security(value: str) -> str:
+    normalized = " ".join(value.strip().split())
+    if not normalized or normalized == "--":
+        return "OPEN"
+    return normalized.upper()
+
+
+def _parse_wifi_networks(output: str) -> list[dict[str, Any]]:
+    """Parse escaped terse nmcli rows and retain the strongest row per SSID."""
+    networks: dict[str, dict[str, Any]] = {}
+    for line in output.splitlines():
+        fields = _split_terse(line)
+        if len(fields) < 4:
+            continue
+        in_use, ssid, raw_signal, security = fields[:4]
+        if not ssid or not ssid.strip():
+            continue
+        try:
+            signal = max(0, min(100, int(raw_signal)))
+        except ValueError:
+            signal = None
+        candidate = {
+            "ssid": ssid,
+            "signal_percent": signal,
+            "security": _normalize_security(security),
+            "connected": in_use == "*",
+        }
+        existing = networks.get(ssid)
+        if existing is None:
+            networks[ssid] = candidate
+            continue
+        was_connected = existing["connected"] or candidate["connected"]
+        existing_signal = existing["signal_percent"]
+        if signal is not None and (
+            existing_signal is None or signal > existing_signal
+        ):
+            networks[ssid] = candidate
+        networks[ssid]["connected"] = was_connected
+    return sorted(
+        networks.values(),
+        key=lambda network: (
+            not network["connected"],
+            -(network["signal_percent"] if network["signal_percent"] is not None else -1),
+            network["ssid"].casefold(),
+        ),
+    )
+
+
+def scan_wifi_networks() -> dict[str, Any]:
+    """Return nearby Wi-Fi networks without changing saved connections."""
+    executable = shutil.which("nmcli")
+    if not executable:
+        return {
+            "supported": False,
+            "interface": None,
+            "networks": [],
+            "message": "Wi-Fi scanning is not available on this device.",
+        }
+    interface, interface_state = _wifi_interface(executable)
+    if not interface:
+        message = (
+            "No Wi-Fi adapter was found."
+            if interface_state == "NOT_FOUND"
+            else "Wi-Fi adapter status could not be determined."
+        )
+        return {
+            "supported": False,
+            "interface": None,
+            "networks": [],
+            "message": message,
+        }
+    outcome = _execute(
+        [
+            executable,
+            "-t",
+            "--escape",
+            "yes",
+            "-f",
+            "IN-USE,SSID,SIGNAL,SECURITY",
+            "device",
+            "wifi",
+            "list",
+            "ifname",
+            interface,
+            "--rescan",
+            "yes",
+        ],
+        WIFI_SCAN_TIMEOUT_SECONDS,
+    )
+    if outcome.timed_out:
+        message = "Wi-Fi scanning timed out. Please try again."
+    elif outcome.unavailable or outcome.returncode != 0:
+        message = "Available networks could not be loaded."
+    else:
+        return {
+            "supported": True,
+            "interface": interface,
+            "networks": _parse_wifi_networks(outcome.stdout),
+        }
+    return {
+        "supported": True,
+        "interface": interface,
+        "networks": [],
+        "message": message,
+    }
+
+
+def _validation_error(ssid: object, password: object) -> str | None:
+    if not isinstance(ssid, str) or not ssid or not ssid.strip():
+        return "A Wi-Fi network name is required."
+    try:
+        ssid_bytes = ssid.encode("utf-8")
+    except UnicodeError:
+        return "The Wi-Fi network name is invalid."
+    if len(ssid_bytes) > MAX_SSID_BYTES:
+        return "The Wi-Fi network name is too long."
+    if ssid.startswith("-") or any(ord(character) < 32 for character in ssid):
+        return "The Wi-Fi network name contains unsupported characters."
+    if password is None:
+        return None
+    if not isinstance(password, str):
+        return "The Wi-Fi password must be text."
+    try:
+        password_bytes = password.encode("utf-8")
+    except UnicodeError:
+        return "The Wi-Fi password is invalid."
+    if len(password_bytes) > MAX_WIFI_PASSWORD_BYTES:
+        return "The Wi-Fi password is too long."
+    if any(ord(character) < 32 for character in password):
+        return "The Wi-Fi password contains unsupported characters."
+    return None
+
+
+def _safe_connection_failure(stderr: str) -> str:
+    normalized = stderr.casefold()
+    if any(marker in normalized for marker in ("secret", "password", "authentication")):
+        return "Could not authenticate with the selected network."
+    if any(marker in normalized for marker in ("not found", "no network")):
+        return "The selected network is no longer available."
+    return "Could not connect to the selected network."
+
+
+def connect_wifi(ssid: object, password: object = None) -> dict[str, Any]:
+    """Attempt a bounded NetworkManager Wi-Fi connection."""
+    validation_error = _validation_error(ssid, password)
+    if validation_error:
+        return {
+            "success": False,
+            "state": "INVALID",
+            "message": validation_error,
+        }
+
+    safe_ssid = str(ssid)
+    safe_password = "" if password is None else str(password)
+    executable = shutil.which("nmcli")
+    if not executable:
+        return {
+            "success": False,
+            "ssid": safe_ssid,
+            "state": "NOT_AVAILABLE",
+            "message": "Wi-Fi management is not available on this device.",
+        }
+    interface, interface_state = _wifi_interface(executable)
+    if not interface:
+        message = (
+            "No Wi-Fi adapter was found."
+            if interface_state == "NOT_FOUND"
+            else "Wi-Fi adapter status could not be determined."
+        )
+        return {
+            "success": False,
+            "ssid": safe_ssid,
+            "state": "NOT_AVAILABLE",
+            "message": message,
+        }
+
+    command = [
+        executable,
+        "--wait",
+        str(WIFI_CONNECT_WAIT_SECONDS),
+        "device",
+        "wifi",
+        "connect",
+        safe_ssid,
+        "ifname",
+        interface,
+    ]
+    if safe_password:
+        command.extend(["password", safe_password])
+    outcome = _execute(command, WIFI_CONNECT_TIMEOUT_SECONDS)
+    if outcome.timed_out:
+        return {
+            "success": False,
+            "ssid": safe_ssid,
+            "state": "UNKNOWN",
+            "message": (
+                "The connection request timed out and its result is unknown. "
+                "The Companion may be temporarily unreachable."
+            ),
+        }
+    if outcome.unavailable:
+        return {
+            "success": False,
+            "ssid": safe_ssid,
+            "state": "UNKNOWN",
+            "message": "The connection result could not be determined.",
+        }
+    if outcome.returncode == 0:
+        return {
+            "success": True,
+            "ssid": safe_ssid,
+            "state": "CONNECTED",
+            "message": "Connected successfully.",
+        }
+    if outcome.returncode == 3:
+        return {
+            "success": False,
+            "ssid": safe_ssid,
+            "state": "CONNECTING",
+            "message": (
+                "The connection is still being applied. The Companion may be "
+                "temporarily unreachable."
+            ),
+        }
+    return {
+        "success": False,
+        "ssid": safe_ssid,
+        "state": "FAILED",
+        "message": _safe_connection_failure(outcome.stderr),
+    }
 
 
 def _primary_ethernet(

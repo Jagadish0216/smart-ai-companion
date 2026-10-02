@@ -1,6 +1,8 @@
 import inspect
+import subprocess
 from unittest.mock import MagicMock, patch
 
+from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, TestCase, override_settings
 from rest_framework.test import APIClient
 from rest_framework import status
@@ -15,6 +17,8 @@ class SystemAPITests(TestCase):
         self.state_url = '/api/system/companion/state/'
         self.metrics_url = '/api/system/metrics/'
         self.network_url = '/api/system/network/'
+        self.wifi_scan_url = '/api/system/network/wifi/scan/'
+        self.wifi_connect_url = '/api/system/network/wifi/connect/'
         self.services_url = '/api/system/services/'
 
     def test_valid_companion_command(self):
@@ -104,6 +108,101 @@ class SystemAPITests(TestCase):
         self.assertEqual(response.data['django']['status'], 'READY')
         self.assertEqual(response.data['ollama']['status'], 'UNAVAILABLE')
 
+    @patch('system.views.scan_wifi_networks')
+    def test_wifi_scan_endpoint_returns_normalized_response(self, scan):
+        scan.return_value = {
+            'supported': True,
+            'interface': 'wlan0',
+            'networks': [{
+                'ssid': 'Home WiFi',
+                'signal_percent': 82,
+                'security': 'WPA2',
+                'connected': False,
+            }],
+        }
+
+        response = self.client.get(self.wifi_scan_url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['interface'], 'wlan0')
+        self.assertEqual(response.data['networks'][0]['ssid'], 'Home WiFi')
+
+    @patch('system.views.connect_wifi')
+    def test_anonymous_user_cannot_connect_wifi(self, connect):
+        response = self.client.post(
+            self.wifi_connect_url,
+            {'ssid': 'Home WiFi', 'password': 'private-password'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        connect.assert_not_called()
+
+    @patch('system.views.connect_wifi')
+    def test_staff_user_reaches_wifi_service_without_password_response(self, connect):
+        user = get_user_model().objects.create_user(
+            username='network-admin',
+            password='login-password',
+            is_staff=True,
+        )
+        self.client.force_authenticate(user=user)
+        connect.return_value = {
+            'success': True,
+            'ssid': 'Home WiFi',
+            'state': 'CONNECTED',
+            'message': 'Connected successfully.',
+        }
+
+        response = self.client.post(
+            self.wifi_connect_url,
+            {'ssid': 'Home WiFi', 'password': 'private-password'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        connect.assert_called_once_with('Home WiFi', 'private-password')
+        self.assertNotIn('private-password', str(response.data))
+
+    def test_connect_request_validation_rejects_malformed_input(self):
+        user = get_user_model().objects.create_user(
+            username='validation-admin',
+            password='login-password',
+            is_staff=True,
+        )
+        self.client.force_authenticate(user=user)
+
+        response = self.client.post(
+            self.wifi_connect_url,
+            {'ssid': '', 'password': {'not': 'text'}},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data['state'], 'INVALID')
+
+    @patch('system.views.connect_wifi')
+    def test_connection_exception_never_leaks_password_or_raw_error(self, connect):
+        user = get_user_model().objects.create_user(
+            username='error-admin',
+            password='login-password',
+            is_staff=True,
+        )
+        self.client.force_authenticate(user=user)
+        connect.side_effect = RuntimeError(
+            'nmcli failed with private-password and return code 10'
+        )
+
+        response = self.client.post(
+            self.wifi_connect_url,
+            {'ssid': 'Home WiFi', 'password': 'private-password'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        payload = str(response.data).lower()
+        self.assertNotIn('private-password', payload)
+        self.assertNotIn('return code', payload)
+
 
 class ResourceTelemetryTests(SimpleTestCase):
     def test_no_random_telemetry_implementation_remains(self):
@@ -179,6 +278,152 @@ class NetworkTelemetryTests(SimpleTestCase):
         self.assertFalse(result['ethernet']['connected'])
         self.assertIsNone(result['ethernet']['interface'])
         self.assertEqual(result['interfaces'][0]['interface'], 'veth3474c7f')
+
+
+class WifiNetworkControlTests(SimpleTestCase):
+    @patch('system.control_plane.network.shutil.which', return_value=None)
+    def test_scan_without_nmcli_is_unsupported(self, _which):
+        result = network.scan_wifi_networks()
+
+        self.assertFalse(result['supported'])
+        self.assertIsNone(result['interface'])
+        self.assertEqual(result['networks'], [])
+
+    def test_scan_deduplicates_by_strongest_signal_and_preserves_connected(self):
+        output = (
+            '*:Home WiFi:42:WPA2\n'
+            ':Home WiFi:88:WPA3\n'
+            ':Cafe\\:Main:67:WPA1 WPA2\n'
+            r':Lab\\Net:54:--' '\n'
+            ':   :90:WPA2'
+        )
+
+        result = network._parse_wifi_networks(output)
+
+        by_ssid = {item['ssid']: item for item in result}
+        self.assertEqual(len(result), 3)
+        self.assertEqual(by_ssid['Home WiFi']['signal_percent'], 88)
+        self.assertEqual(by_ssid['Home WiFi']['security'], 'WPA3')
+        self.assertTrue(by_ssid['Home WiFi']['connected'])
+        self.assertEqual(by_ssid['Cafe:Main']['security'], 'WPA1 WPA2')
+        self.assertEqual(by_ssid[r'Lab\Net']['security'], 'OPEN')
+
+    @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
+    @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
+    @patch('system.control_plane.network.subprocess.run')
+    def test_scan_uses_bounded_argument_array(self, run, _which, _interface):
+        run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout='*:Home WiFi:75:WPA2\n',
+            stderr='',
+        )
+
+        result = network.scan_wifi_networks()
+
+        self.assertTrue(result['supported'])
+        self.assertEqual(result['networks'][0]['ssid'], 'Home WiFi')
+        command = run.call_args.args[0]
+        self.assertIsInstance(command, list)
+        self.assertEqual(command[0], '/usr/bin/nmcli')
+        self.assertIn('--rescan', command)
+        self.assertFalse(run.call_args.kwargs['shell'])
+        self.assertEqual(
+            run.call_args.kwargs['timeout'],
+            network.WIFI_SCAN_TIMEOUT_SECONDS,
+        )
+
+    def test_connection_validation_rejects_unsafe_values(self):
+        cases = (
+            (None, None),
+            ('', None),
+            ('-' + 'option', None),
+            ('x' * 33, None),
+            ('Home WiFi', {'not': 'text'}),
+            ('Home WiFi', 'x' * 65),
+            ('Home\nWiFi', 'valid-password'),
+        )
+        for ssid, password in cases:
+            with self.subTest(ssid=ssid, password_type=type(password).__name__):
+                result = network.connect_wifi(ssid, password)
+                self.assertEqual(result['state'], 'INVALID')
+                self.assertFalse(result['success'])
+
+    @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
+    @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
+    @patch('system.control_plane.network.subprocess.run')
+    def test_connect_uses_bounded_argument_array(self, run, _which, _interface):
+        run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout='success', stderr=''
+        )
+
+        result = network.connect_wifi('Home WiFi', 'private-password')
+
+        self.assertTrue(result['success'])
+        self.assertEqual(result['state'], 'CONNECTED')
+        self.assertNotIn('private-password', str(result))
+        command = run.call_args.args[0]
+        self.assertIsInstance(command, list)
+        self.assertEqual(command[-2:], ['password', 'private-password'])
+        self.assertFalse(run.call_args.kwargs['shell'])
+        self.assertEqual(
+            run.call_args.kwargs['timeout'],
+            network.WIFI_CONNECT_TIMEOUT_SECONDS,
+        )
+
+    @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
+    @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
+    @patch('system.control_plane.network.subprocess.run')
+    def test_subprocess_timeout_returns_safe_unknown_state(
+        self, run, _which, _interface
+    ):
+        run.side_effect = subprocess.TimeoutExpired('nmcli', 10)
+
+        result = network.connect_wifi('Home WiFi', 'private-password')
+
+        self.assertFalse(result['success'])
+        self.assertEqual(result['state'], 'UNKNOWN')
+        self.assertNotIn('private-password', str(result))
+
+    @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
+    @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
+    @patch('system.control_plane.network.subprocess.run')
+    def test_nmcli_wait_timeout_returns_connecting_state(
+        self, run, _which, _interface
+    ):
+        run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=3, stdout='', stderr='operation timed out'
+        )
+
+        result = network.connect_wifi('Home WiFi', 'private-password')
+
+        self.assertFalse(result['success'])
+        self.assertEqual(result['state'], 'CONNECTING')
+        self.assertNotIn('private-password', str(result))
+
+    @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
+    @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
+    @patch('system.control_plane.network.subprocess.run')
+    def test_connect_failure_maps_raw_error_to_safe_message(
+        self, run, _which, _interface
+    ):
+        run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=10,
+            stdout='',
+            stderr='Error: private-password was rejected; secrets were required.',
+        )
+
+        result = network.connect_wifi('Home WiFi', 'private-password')
+
+        self.assertFalse(result['success'])
+        self.assertEqual(result['state'], 'FAILED')
+        self.assertEqual(
+            result['message'],
+            'Could not authenticate with the selected network.',
+        )
+        self.assertNotIn('private-password', str(result))
+        self.assertNotIn('secrets were required', str(result))
 
 
 class ServiceHealthTests(SimpleTestCase):
