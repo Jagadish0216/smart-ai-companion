@@ -4,7 +4,10 @@ from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.test import Client, TestCase, override_settings
+
+from .context_processors import HEADER_INTERNET_CACHE_KEY
 
 
 class AssistantChatTimeoutTests(TestCase):
@@ -17,6 +20,74 @@ class AssistantChatTimeoutTests(TestCase):
         self.assertContains(response, 'new AbortController()')
         self.assertContains(response, 'signal: controller.signal')
         self.assertContains(response, 'AI request timed out. Please try again.')
+
+
+class GlobalHeaderStateTests(TestCase):
+    def setUp(self):
+        cache.delete(HEADER_INTERNET_CACHE_KEY)
+
+    def tearDown(self):
+        cache.delete(HEADER_INTERNET_CACHE_KEY)
+
+    @override_settings(AI_ENGINE='local', OLLAMA_MODEL='llama3.2:3b-test')
+    @patch('dashboard.context_processors.get_internet_status')
+    def test_header_uses_configured_engine_and_model_on_all_headers(
+        self, internet_status
+    ):
+        internet_status.return_value = {'state': 'FULL', 'available': True}
+
+        for url in ('/', '/assistant/', '/network/'):
+            with self.subTest(url=url):
+                response = self.client.get(url)
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(
+                    response,
+                    'id="global-ai-engine">LOCAL AI</span>',
+                )
+                self.assertContains(
+                    response,
+                    'id="global-ai-model">llama3.2:3b-test</span>',
+                )
+                self.assertNotContains(response, 'llama3.2:1b')
+
+        self.assertEqual(internet_status.call_count, 1)
+
+    @override_settings(AI_ENGINE='local', OLLAMA_MODEL='configured-model')
+    @patch('dashboard.context_processors.get_internet_status')
+    def test_header_maps_internet_state_without_conflating_local_ai(
+        self, internet_status
+    ):
+        cases = (
+            ('FULL', 'ONLINE', 'online'),
+            ('NONE', 'OFFLINE', 'offline'),
+            ('UNKNOWN', 'UNKNOWN', 'unknown'),
+        )
+
+        for state, label, css_class in cases:
+            with self.subTest(state=state):
+                cache.delete(HEADER_INTERNET_CACHE_KEY)
+                internet_status.return_value = {'state': state, 'available': None}
+
+                response = self.client.get('/network/')
+
+                self.assertContains(
+                    response,
+                    f'class="status-pill {css_class}" id="global-internet-status"',
+                )
+                self.assertContains(
+                    response,
+                    f'data-network-state="{state}"',
+                )
+                self.assertContains(
+                    response,
+                    f'id="global-internet-label">{label}</span>',
+                )
+                self.assertContains(
+                    response,
+                    'id="global-ai-engine">LOCAL AI</span>',
+                )
+
+        self.assertEqual(internet_status.call_count, len(cases))
 
 
 class NetworkDashboardTests(TestCase):

@@ -273,6 +273,72 @@ class NetworkTelemetryTests(SimpleTestCase):
             ['*', 'Office:Lab', '78'],
         )
 
+    @patch('system.control_plane.network._wifi_scan_outcome')
+    @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
+    @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
+    @patch('system.control_plane.network._run')
+    def test_status_and_scan_agree_on_active_unicode_wifi(
+        self, run, _which, _interface, scan_outcome
+    ):
+        scan_output = '*:Sravani\u2019s iPhone:90:WPA2\n:Other:50:WPA2\n'
+        commands = []
+
+        def command_result(command):
+            commands.append(command)
+            fields = command[command.index('-f') + 1]
+            if fields == 'DEVICE,TYPE,STATE,CONNECTION':
+                return 'wlan0:wifi:connected:Sravani\u2019s iPhone'
+            if fields == 'IP4.ADDRESS':
+                return 'IP4.ADDRESS[1]:172.20.10.3/28'
+            if fields == 'IN-USE,SSID,SIGNAL,SECURITY':
+                return scan_output
+            if fields == 'IP4.GATEWAY':
+                return 'IP4.GATEWAY:172.20.10.1'
+            if fields == 'CONNECTIVITY':
+                return 'full'
+            return None
+
+        run.side_effect = command_result
+        scan_outcome.return_value = network._CommandOutcome(
+            returncode=0,
+            stdout=scan_output,
+        )
+
+        status_result = network.get_network_status()
+        scan_result = network.scan_wifi_networks()
+
+        active_scan_network = next(
+            item for item in scan_result['networks'] if item['connected']
+        )
+        self.assertTrue(status_result['wifi']['connected'])
+        self.assertEqual(status_result['wifi']['ssid'], 'Sravani\u2019s iPhone')
+        self.assertEqual(status_result['wifi']['signal_percent'], 90)
+        self.assertEqual(status_result['wifi']['ip_address'], '172.20.10.3')
+        self.assertEqual(active_scan_network['ssid'], status_result['wifi']['ssid'])
+        wifi_details_command = next(
+            command
+            for command in commands
+            if 'IN-USE,SSID,SIGNAL,SECURITY' in command
+        )
+        self.assertEqual(wifi_details_command[-2:], ['--rescan', 'no'])
+        self.assertIn('--escape', wifi_details_command)
+
+    @patch('system.control_plane.network._run')
+    def test_active_wifi_missing_signal_remains_unknown(self, run):
+        run.return_value = '*:Home WiFi:not-reported:WPA2'
+
+        ssid, signal = network._nmcli_wifi_details('/usr/bin/nmcli', 'wlan0')
+
+        self.assertEqual(ssid, 'Home WiFi')
+        self.assertIsNone(signal)
+
+    @patch('system.control_plane.network.shutil.which', return_value=None)
+    def test_internet_status_without_nmcli_is_unknown(self, _which):
+        self.assertEqual(
+            network.get_internet_status(),
+            {'state': 'UNKNOWN', 'available': None},
+        )
+
     @patch('system.control_plane.network._run')
     def test_primary_ethernet_prefers_physical_interface(self, run):
         def command_result(command):

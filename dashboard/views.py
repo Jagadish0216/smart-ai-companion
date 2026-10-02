@@ -1,6 +1,7 @@
 from django.views.generic import TemplateView
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import ensure_csrf_cookie
+from django.conf import settings
 
 from django.db.models import Count
 
@@ -32,12 +33,6 @@ class DashboardView(TemplateView):
 
 
 
-from assistant.ai_engine import get_engine
-
-from django.conf import settings
-
-
-
 class AssistantView(TemplateView):
 
     template_name = 'dashboard/assistant.html'
@@ -47,23 +42,6 @@ class AssistantView(TemplateView):
     def get_context_data(self, **kwargs):
 
         context = super().get_context_data(**kwargs)
-
-        try:
-
-            engine = get_engine()
-
-            context['ai_engine'] = engine.engine_name.upper()
-
-        except Exception:
-
-            context['ai_engine'] = settings.AI_ENGINE.upper()
-
-
-
-        context['ai_model'] = getattr(settings, 'OLLAMA_MODEL', 'Unknown') if context['ai_engine'] == 'LOCAL' else 'Mocked'
-
-        context['ai_mode'] = 'Offline'
-
         context['chat_request_timeout_ms'] = settings.CHAT_REQUEST_TIMEOUT_SECONDS * 1000
 
 

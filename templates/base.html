@@ -328,13 +328,13 @@
 
                 <span class="status-dot"></span>
 
-                <span>MOCK AI</span>
+                <span id="global-ai-engine">MOCK AI</span>
 
             </div>
 
             <div class="status-pill" style="background:var(--bg-surface-elevated); border:1px solid var(--border);">
 
-                <span>DEVELOPMENT</span>
+                <span id="global-ai-model">{{ global_ai_model }}</span>
 
             </div>
 
@@ -344,25 +344,25 @@
 
                 <span class="status-dot"></span>
 
-                <span>LOCAL AI</span>
+                <span id="global-ai-engine">LOCAL AI</span>
 
             </div>
 
             <div class="status-pill" style="background:var(--bg-surface-elevated); border:1px solid var(--border);">
 
-                <span>llama3.2:1b</span>
-
-            </div>
-
-            <div class="status-pill offline">
-
-                <span class="status-dot"></span>
-
-                <span>OFFLINE</span>
+                <span id="global-ai-model">{{ global_ai_model }}</span>
 
             </div>
 
             {% endif %}
+
+            <div class="status-pill {{ global_internet_class }}" id="global-internet-status" data-network-state="{{ global_internet_state }}">
+
+                <span class="status-dot"></span>
+
+                <span id="global-internet-label">{{ global_internet_label }}</span>
+
+            </div>
 
         </div>
 

@@ -132,24 +132,22 @@ def _nmcli_wifi_details(executable: str, interface: str) -> tuple[str | None, in
         [
             executable,
             "-t",
+            "--escape",
+            "yes",
             "-f",
-            "IN-USE,SSID,SIGNAL",
+            "IN-USE,SSID,SIGNAL,SECURITY",
             "device",
             "wifi",
             "list",
             "ifname",
             interface,
+            "--rescan",
+            "no",
         ]
     )
-    for line in (output or "").splitlines():
-        fields = _split_terse(line)
-        if len(fields) < 3 or fields[0] != "*":
-            continue
-        try:
-            signal = max(0, min(100, int(fields[-1])))
-        except ValueError:
-            signal = None
-        return fields[1] or None, signal
+    for wifi_network in _parse_wifi_networks(output or ""):
+        if wifi_network["connected"]:
+            return wifi_network["ssid"], wifi_network["signal_percent"]
     return None, None
 
 
@@ -164,6 +162,14 @@ def _connectivity(executable: str) -> dict[str, bool | str | None]:
     }
     state, available = mapping.get(raw, ("UNKNOWN", None))
     return {"state": state, "available": available}
+
+
+def get_internet_status() -> dict[str, bool | str | None]:
+    """Return the lightweight NetworkManager WAN-connectivity state."""
+    executable = shutil.which("nmcli")
+    if not executable:
+        return {"state": "UNKNOWN", "available": None}
+    return _connectivity(executable)
 
 
 def _wifi_interface(executable: str) -> tuple[str | None, str]:
