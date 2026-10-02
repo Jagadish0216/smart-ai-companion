@@ -14,6 +14,8 @@ from typing import Any
 
 COMMAND_TIMEOUT_SECONDS = 1.5
 WIFI_SCAN_TIMEOUT_SECONDS = 8.0
+# A forced `nmcli wifi list` can wait up to 15 seconds for scan results.
+WIFI_RETRY_SCAN_TIMEOUT_SECONDS = 17.0
 WIFI_CONNECT_WAIT_SECONDS = 8
 WIFI_CONNECT_TIMEOUT_SECONDS = 10.0
 VIRTUAL_ETHERNET_PREFIXES = ("veth", "docker", "br-", "virbr")
@@ -227,6 +229,31 @@ def _parse_wifi_networks(output: str) -> list[dict[str, Any]]:
     )
 
 
+def _wifi_scan_outcome(
+    executable: str,
+    interface: str,
+    timeout: float = WIFI_SCAN_TIMEOUT_SECONDS,
+) -> _CommandOutcome:
+    return _execute(
+        [
+            executable,
+            "-t",
+            "--escape",
+            "yes",
+            "-f",
+            "IN-USE,SSID,SIGNAL,SECURITY",
+            "device",
+            "wifi",
+            "list",
+            "ifname",
+            interface,
+            "--rescan",
+            "yes",
+        ],
+        timeout,
+    )
+
+
 def scan_wifi_networks() -> dict[str, Any]:
     """Return nearby Wi-Fi networks without changing saved connections."""
     executable = shutil.which("nmcli")
@@ -250,24 +277,7 @@ def scan_wifi_networks() -> dict[str, Any]:
             "networks": [],
             "message": message,
         }
-    outcome = _execute(
-        [
-            executable,
-            "-t",
-            "--escape",
-            "yes",
-            "-f",
-            "IN-USE,SSID,SIGNAL,SECURITY",
-            "device",
-            "wifi",
-            "list",
-            "ifname",
-            interface,
-            "--rescan",
-            "yes",
-        ],
-        WIFI_SCAN_TIMEOUT_SECONDS,
-    )
+    outcome = _wifi_scan_outcome(executable, interface)
     if outcome.timed_out:
         message = "Wi-Fi scanning timed out. Please try again."
     elif outcome.unavailable or outcome.returncode != 0:
@@ -312,11 +322,22 @@ def _validation_error(ssid: object, password: object) -> str | None:
     return None
 
 
+def _network_not_found(stderr: str) -> bool:
+    normalized = stderr.casefold()
+    return any(
+        marker in normalized
+        for marker in (
+            "no network with ssid",
+            "wi-fi network could not be found",
+        )
+    )
+
+
 def _safe_connection_failure(stderr: str) -> str:
     normalized = stderr.casefold()
     if any(marker in normalized for marker in ("secret", "password", "authentication")):
         return "Could not authenticate with the selected network."
-    if any(marker in normalized for marker in ("not found", "no network")):
+    if _network_not_found(stderr):
         return "The selected network is no longer available."
     return "Could not connect to the selected network."
 
@@ -369,6 +390,16 @@ def connect_wifi(ssid: object, password: object = None) -> dict[str, Any]:
     if safe_password:
         command.extend(["password", safe_password])
     outcome = _execute(command, WIFI_CONNECT_TIMEOUT_SECONDS)
+    if outcome.returncode not in {0, 3} and _network_not_found(outcome.stderr):
+        # `nmcli device wifi connect` only checks NetworkManager's current AP
+        # cache. Refresh that cache once and retry the exact original command;
+        # the scan output is deliberately not used as an availability gate.
+        _wifi_scan_outcome(
+            executable,
+            interface,
+            WIFI_RETRY_SCAN_TIMEOUT_SECONDS,
+        )
+        outcome = _execute(command, WIFI_CONNECT_TIMEOUT_SECONDS)
     if outcome.timed_out:
         return {
             "success": False,

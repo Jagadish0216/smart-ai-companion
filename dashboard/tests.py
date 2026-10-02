@@ -1,6 +1,8 @@
 import json
+from pathlib import Path
 from unittest.mock import patch
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.test import Client, TestCase, override_settings
 
@@ -18,6 +20,19 @@ class AssistantChatTimeoutTests(TestCase):
 
 
 class NetworkDashboardTests(TestCase):
+    def test_network_script_submits_selected_ssid_value_without_reencoding(self):
+        script = (
+            Path(settings.BASE_DIR) / 'static' / 'js' / 'network.js'
+        ).read_text(encoding='utf-8')
+
+        self.assertIn('name.textContent = network.ssid;', script)
+        self.assertIn('selectedSsid = network.ssid;', script)
+        self.assertIn('selectedSsidLabel.textContent = network.ssid;', script)
+        self.assertIn(
+            'JSON.stringify({ssid: selectedSsid, password: password})',
+            script,
+        )
+
     def test_network_page_contains_status_scan_and_connection_controls(self):
         user = get_user_model().objects.create_user(
             username='dashboard-admin',
@@ -56,8 +71,9 @@ class NetworkDashboardTests(TestCase):
         client.force_login(user)
         page_response = client.get('/network/')
         csrf_token = page_response.cookies['csrftoken'].value
+        ssid = 'Sravani\u2019s iPhone'
         payload = json.dumps({
-            'ssid': 'Home WiFi',
+            'ssid': ssid,
             'password': 'private-password',
         })
 
@@ -71,7 +87,7 @@ class NetworkDashboardTests(TestCase):
 
         connect.return_value = {
             'success': True,
-            'ssid': 'Home WiFi',
+            'ssid': ssid,
             'state': 'CONNECTED',
             'message': 'Connected successfully.',
         }
@@ -83,4 +99,6 @@ class NetworkDashboardTests(TestCase):
         )
 
         self.assertEqual(accepted.status_code, 200)
+        connect.assert_called_once_with(ssid, 'private-password')
+        self.assertEqual(accepted.json()['ssid'], ssid)
         self.assertNotIn('private-password', accepted.content.decode())

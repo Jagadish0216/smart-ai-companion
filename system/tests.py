@@ -128,6 +128,48 @@ class SystemAPITests(TestCase):
         self.assertEqual(response.data['networks'][0]['ssid'], 'Home WiFi')
 
     @patch('system.views.connect_wifi')
+    @patch('system.views.scan_wifi_networks')
+    def test_unicode_ssid_round_trips_from_scan_response_to_connect_request(
+        self, scan, connect
+    ):
+        ssid = 'Sravani\u2019s iPhone'
+        scan.return_value = {
+            'supported': True,
+            'interface': 'wlan0',
+            'networks': [{
+                'ssid': ssid,
+                'signal_percent': 72,
+                'security': 'WPA2',
+                'connected': False,
+            }],
+        }
+        connect.return_value = {
+            'success': True,
+            'ssid': ssid,
+            'state': 'CONNECTED',
+            'message': 'Connected successfully.',
+        }
+        user = get_user_model().objects.create_user(
+            username='unicode-network-admin',
+            password='login-password',
+            is_staff=True,
+        )
+        self.client.force_authenticate(user=user)
+
+        scan_response = self.client.get(self.wifi_scan_url)
+        selected_ssid = scan_response.data['networks'][0]['ssid']
+        connect_response = self.client.post(
+            self.wifi_connect_url,
+            {'ssid': selected_ssid, 'password': 'private-password'},
+            format='json',
+        )
+
+        self.assertEqual(selected_ssid, ssid)
+        self.assertEqual(connect_response.status_code, status.HTTP_200_OK)
+        connect.assert_called_once_with(ssid, 'private-password')
+        self.assertNotIn('private-password', str(connect_response.data))
+
+    @patch('system.views.connect_wifi')
     def test_anonymous_user_cannot_connect_wifi(self, connect):
         response = self.client.post(
             self.wifi_connect_url,
@@ -293,20 +335,26 @@ class WifiNetworkControlTests(SimpleTestCase):
         output = (
             '*:Home WiFi:42:WPA2\n'
             ':Home WiFi:88:WPA3\n'
+            ':Sravani\u2019s iPhone:72:WPA2\n'
+            ":O'Brien WiFi:64:WPA2\n"
             ':Cafe\\:Main:67:WPA1 WPA2\n'
             r':Lab\\Net:54:--' '\n'
+            ':Caf\u00e9 \u6771\u4eac:51:WPA3\n'
             ':   :90:WPA2'
         )
 
         result = network._parse_wifi_networks(output)
 
         by_ssid = {item['ssid']: item for item in result}
-        self.assertEqual(len(result), 3)
+        self.assertEqual(len(result), 6)
         self.assertEqual(by_ssid['Home WiFi']['signal_percent'], 88)
         self.assertEqual(by_ssid['Home WiFi']['security'], 'WPA3')
         self.assertTrue(by_ssid['Home WiFi']['connected'])
+        self.assertEqual(by_ssid['Sravani\u2019s iPhone']['signal_percent'], 72)
+        self.assertIn("O'Brien WiFi", by_ssid)
         self.assertEqual(by_ssid['Cafe:Main']['security'], 'WPA1 WPA2')
         self.assertEqual(by_ssid[r'Lab\Net']['security'], 'OPEN')
+        self.assertIn('Caf\u00e9 \u6771\u4eac', by_ssid)
 
     @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
     @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
@@ -370,6 +418,110 @@ class WifiNetworkControlTests(SimpleTestCase):
             run.call_args.kwargs['timeout'],
             network.WIFI_CONNECT_TIMEOUT_SECONDS,
         )
+
+    @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
+    @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
+    @patch('system.control_plane.network.subprocess.run')
+    def test_connect_preserves_ssid_characters_exactly(self, run, _which, _interface):
+        run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout='success', stderr=''
+        )
+        ssids = (
+            'Sravani\u2019s iPhone',
+            "Sravani's iPhone",
+            'Home WiFi',
+            r'Cafe:Main\Lab',
+            'Caf\u00e9 \u6771\u4eac',
+        )
+
+        for ssid in ssids:
+            with self.subTest(ssid=ssid):
+                result = network.connect_wifi(ssid, 'private-password')
+                command = run.call_args.args[0]
+
+                self.assertTrue(result['success'])
+                self.assertEqual(result['ssid'], ssid)
+                self.assertIn(ssid, command)
+                self.assertEqual(command[command.index('connect') + 1], ssid)
+                self.assertNotIn('private-password', str(result))
+
+    @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
+    @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
+    @patch('system.control_plane.network.subprocess.run')
+    def test_missing_ap_cache_is_refreshed_once_without_scan_result_gate(
+        self, run, _which, _interface
+    ):
+        ssid = 'Sravani\u2019s iPhone'
+        run.side_effect = (
+            subprocess.CompletedProcess(
+                args=[],
+                returncode=10,
+                stdout='',
+                stderr=f"Error: No network with SSID '{ssid}' found.",
+            ),
+            subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout=':Unrelated Network:45:WPA2\n',
+                stderr='',
+            ),
+            subprocess.CompletedProcess(
+                args=[], returncode=0, stdout='success', stderr=''
+            ),
+        )
+
+        result = network.connect_wifi(ssid, 'private-password')
+
+        self.assertTrue(result['success'])
+        self.assertEqual(result['ssid'], ssid)
+        self.assertEqual(run.call_count, 3)
+        first_command = run.call_args_list[0].args[0]
+        refresh_command = run.call_args_list[1].args[0]
+        retry_command = run.call_args_list[2].args[0]
+        self.assertEqual(first_command, retry_command)
+        self.assertEqual(first_command[first_command.index('connect') + 1], ssid)
+        self.assertIn('--rescan', refresh_command)
+        self.assertIn('yes', refresh_command)
+        self.assertNotIn('private-password', refresh_command)
+        self.assertNotIn('private-password', str(result))
+        self.assertEqual(
+            run.call_args_list[1].kwargs['timeout'],
+            network.WIFI_RETRY_SCAN_TIMEOUT_SECONDS,
+        )
+
+    @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
+    @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
+    @patch('system.control_plane.network.subprocess.run')
+    def test_non_network_not_found_error_is_not_misreported_or_retried(
+        self, run, _which, _interface
+    ):
+        run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=10,
+            stdout='',
+            stderr="Error: Device 'wlan0' not found.",
+        )
+
+        result = network.connect_wifi('Home WiFi', 'private-password')
+
+        self.assertFalse(result['success'])
+        self.assertEqual(result['state'], 'FAILED')
+        self.assertEqual(result['message'], 'Could not connect to the selected network.')
+        self.assertEqual(run.call_count, 1)
+
+    def test_network_not_found_detection_covers_nmcli_failure_variants(self):
+        self.assertTrue(
+            network._network_not_found(
+                "Error: No network with SSID 'Home WiFi' found."
+            )
+        )
+        self.assertTrue(
+            network._network_not_found(
+                'Connection activation failed: (53) '
+                'The Wi-Fi network could not be found.'
+            )
+        )
+        self.assertFalse(network._network_not_found("Device 'wlan0' not found."))
 
     @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
     @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
