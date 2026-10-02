@@ -29,7 +29,10 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-default-key-for-dev')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DEBUG', 'True') == 'True'
 
-ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '127.0.0.1,localhost').split(',')
+ALLOWED_HOSTS = os.environ.get(
+    'ALLOWED_HOSTS',
+    'smart-ai-companion.local,127.0.0.1,localhost',
+).split(',')
 
 
 # Application definition
@@ -60,6 +63,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'system.middleware.SetupModeIsolationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -177,6 +181,13 @@ MQTT_KEEPALIVE = int(os.environ.get('MQTT_KEEPALIVE', '30'))
 MQTT_COMMAND_TIMEOUT_SECONDS = float(os.environ.get('MQTT_COMMAND_TIMEOUT_SECONDS', '5'))
 MQTT_TOPIC_PREFIX = os.environ.get('MQTT_TOPIC_PREFIX', 'smart-companion')
 ESP32_DEVICE_ID = os.environ.get('ESP32_DEVICE_ID', '')
+
+# First-boot Wi-Fi provisioning. A deployment must supply a unique WPA2
+# passphrase; there is intentionally no source-controlled fallback secret.
+SETUP_AP_PASSWORD = os.environ.get('SETUP_AP_PASSWORD', '')
+SETUP_SAVED_PROFILE_ATTEMPTS = int(os.environ.get('SETUP_SAVED_PROFILE_ATTEMPTS', '5'))
+SETUP_CONNECT_COOLDOWN_SECONDS = int(os.environ.get('SETUP_CONNECT_COOLDOWN_SECONDS', '5'))
+COMPANION_CANONICAL_URL = 'http://smart-ai-companion.local:8000/'
 
 # Voice Engine Configuration
 STT_ENGINE = os.environ.get('STT_ENGINE', 'mock')

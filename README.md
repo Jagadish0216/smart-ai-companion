@@ -190,6 +190,12 @@ python manage.py runserver
 
 Navigate to `http://127.0.0.1:8000`. By default, `AI_ENGINE=mock` — no external services needed.
 
+### First-boot Wi-Fi provisioning
+
+The Raspberry Pi appliance can start a secure `SmartCompanion-XXXX` recovery network when no saved Wi-Fi is usable. A dedicated local `/setup/` flow switches the single `wlan0` radio from AP mode to the selected client network, verifies LAN connectivity without requiring Internet access, and restores the AP after failure. The stable product address is always `http://smart-ai-companion.local:8000/`.
+
+See [First-boot Wi-Fi setup](docs/first_boot_setup.md) for the state machine, required `SETUP_AP_PASSWORD`, NetworkManager/Avahi assumptions, boot unit installation, recovery commands, and development safety guidance.
+
 ### 2. Production Deployment (Gunicorn & WhiteNoise)
 
 For deployment on the Raspberry Pi, use Gunicorn instead of the development server. WhiteNoise handles static files automatically.
