@@ -1,12 +1,24 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from .services import get_mock_device_metrics
+from .control_plane.health import get_service_health
+from .control_plane.network import get_network_status
+from .services import get_device_metrics
 from .models import SystemLog
 
 class DeviceMetricsAPIView(APIView):
     def get(self, request):
-        metrics = get_mock_device_metrics()
+        metrics = get_device_metrics()
         return Response(metrics)
+
+
+class NetworkStatusAPIView(APIView):
+    def get(self, request):
+        return Response(get_network_status())
+
+
+class ServiceHealthAPIView(APIView):
+    def get(self, request):
+        return Response(get_service_health())
 
 class SystemLogAPIView(APIView):
     def get(self, request):
