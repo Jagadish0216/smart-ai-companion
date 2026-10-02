@@ -12,6 +12,8 @@ from typing import Any
 
 
 COMMAND_TIMEOUT_SECONDS = 1.5
+VIRTUAL_ETHERNET_PREFIXES = ("veth", "docker", "br-", "virbr")
+PREFERRED_ETHERNET_PREFIXES = ("eth", "en")
 
 
 def _run(command: list[str]) -> str | None:
@@ -123,6 +125,30 @@ def _connectivity(executable: str) -> dict[str, bool | str | None]:
     return {"state": state, "available": available}
 
 
+def _primary_ethernet(
+    ethernet_devices: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Prefer a physical Ethernet adapter and never promote container links."""
+    candidates = []
+    for device in ethernet_devices:
+        name = str(device.get("interface", "")).lower()
+        if not name or name == "lo" or name.startswith(VIRTUAL_ETHERNET_PREFIXES):
+            continue
+        candidates.append(device)
+    if not candidates:
+        return None
+    return min(
+        candidates,
+        key=lambda device: (
+            not str(device["interface"]).lower().startswith(
+                PREFERRED_ETHERNET_PREFIXES
+            ),
+            device.get("state") != "CONNECTED",
+            str(device["interface"]).lower(),
+        ),
+    )
+
+
 def _from_nmcli(executable: str) -> dict[str, Any] | None:
     output = _run(
         [
@@ -160,9 +186,7 @@ def _from_nmcli(executable: str) -> dict[str, Any] | None:
     wifi_active = next(
         (item for item in wifi_devices if item["state"] == "CONNECTED"), None
     )
-    ethernet_active = next(
-        (item for item in ethernet_devices if item["state"] == "CONNECTED"), None
-    )
+    primary_ethernet = _primary_ethernet(ethernet_devices)
     ssid, signal = (
         _nmcli_wifi_details(executable, wifi_active["interface"])
         if wifi_active
@@ -193,18 +217,17 @@ def _from_nmcli(executable: str) -> dict[str, Any] | None:
             ),
         },
         "ethernet": {
-            "supported": bool(ethernet_devices),
-            "connected": bool(ethernet_active),
+            "supported": primary_ethernet is not None,
+            "connected": bool(
+                primary_ethernet
+                and primary_ethernet["state"] == "CONNECTED"
+            ),
             "interface": (
-                ethernet_active["interface"]
-                if ethernet_active
-                else (
-                    ethernet_devices[0]["interface"] if ethernet_devices else None
-                )
+                primary_ethernet["interface"] if primary_ethernet else None
             ),
             "ip_address": (
-                ethernet_active["addresses"][0]
-                if ethernet_active and ethernet_active["addresses"]
+                primary_ethernet["addresses"][0]
+                if primary_ethernet and primary_ethernet["addresses"]
                 else None
             ),
         },
@@ -266,9 +289,7 @@ def _fallback_status() -> dict[str, Any]:
     wifi_active = next(
         (item for item in wifi_devices if item["state"] == "CONNECTED"), None
     )
-    ethernet_active = next(
-        (item for item in ethernet_devices if item["state"] == "CONNECTED"), None
-    )
+    primary_ethernet = _primary_ethernet(ethernet_devices)
     return {
         "wifi": {
             "supported": bool(wifi_devices),
@@ -283,16 +304,19 @@ def _fallback_status() -> dict[str, Any]:
             "ip_address": wifi_active["addresses"][0] if wifi_active else None,
         },
         "ethernet": {
-            "supported": bool(ethernet_devices),
-            "connected": bool(ethernet_active),
-            "interface": (
-                ethernet_active["interface"]
-                if ethernet_active
-                else (
-                    ethernet_devices[0]["interface"] if ethernet_devices else None
-                )
+            "supported": primary_ethernet is not None,
+            "connected": bool(
+                primary_ethernet
+                and primary_ethernet["state"] == "CONNECTED"
             ),
-            "ip_address": ethernet_active["addresses"][0] if ethernet_active else None,
+            "interface": (
+                primary_ethernet["interface"] if primary_ethernet else None
+            ),
+            "ip_address": (
+                primary_ethernet["addresses"][0]
+                if primary_ethernet and primary_ethernet["addresses"]
+                else None
+            ),
         },
         "interfaces": interfaces,
         "default_route": None,

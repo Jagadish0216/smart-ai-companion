@@ -44,6 +44,11 @@ def _pcm_chunk(amplitude=0, frame_count=320):
     return sample * frame_count
 
 
+@override_settings(
+    RAG_ENABLED=False,
+    ONLINE_RETRIEVAL_ENABLED=False,
+    DEVICE_CONTROL_ENABLED=False,
+)
 class VoiceLoopTests(SimpleTestCase):
     @override_settings(
         VOICE_INPUT_SOURCE="bluez_input.realme_buds",

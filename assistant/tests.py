@@ -28,10 +28,20 @@ from assistant.ai_engine.local import LocalLLMEngine, SYSTEM_PROMPT
 
 # ─── Original API Tests (preserved from baseline) ──────────────────
 
+@override_settings(
+    AI_ENGINE="mock",
+    RAG_ENABLED=False,
+    ONLINE_RETRIEVAL_ENABLED=False,
+    DEVICE_CONTROL_ENABLED=False,
+)
 class AssistantAPITests(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.url = '/api/assistant/chat/'
+        reset_engine()
+
+    def tearDown(self):
+        reset_engine()
 
     def test_valid_chat_request(self):
         response = self.client.post(self.url, {'query': 'Hello'}, format='json')
@@ -523,6 +533,11 @@ class LocalLLMEngineMockedTests(TestCase):
 
 # ─── Integration: AssistantService + Engine ────────────────────────
 
+@override_settings(
+    RAG_ENABLED=False,
+    ONLINE_RETRIEVAL_ENABLED=False,
+    DEVICE_CONTROL_ENABLED=False,
+)
 class AssistantServiceEngineIntegrationTests(TestCase):
     def setUp(self):
         reset_engine()
@@ -553,7 +568,7 @@ class AssistantServiceEngineIntegrationTests(TestCase):
         self.assertIsNotNone(ai_msg.processing_time_ms)
         self.assertGreater(ai_msg.processing_time_ms, 0)
 
-    @override_settings(AI_ENGINE="local")
+    @override_settings(AI_ENGINE="local", OLLAMA_MODEL="llama3.2:1b")
     @patch("assistant.ai_engine.local.urllib.request.urlopen")
     def test_unavailable_engine_returns_error(self, mock_urlopen):
         """When local engine is unavailable, service returns clean error."""
@@ -571,7 +586,8 @@ class AssistantServiceEngineIntegrationTests(TestCase):
         # AI message should NOT be saved on failure
         self.assertEqual(conv.messages.filter(sender='AI').count(), 0)
 
-    @override_settings(AI_ENGINE="local")
+    @override_settings(AI_ENGINE="local", OLLAMA_MODEL="llama3.2:1b")
+    @patch.dict("os.environ", {"OLLAMA_MODEL": "llama3.2:1b"})
     @patch("assistant.ai_engine.local.urllib.request.urlopen")
     def test_service_with_mocked_local_engine(self, mock_urlopen):
         """Full service integration with mocked Ollama."""
@@ -679,6 +695,11 @@ class AssistantServiceRequestInstructionTests(TestCase):
 
 # ─── API Response Metadata Tests ────────────────────────────────
 
+@override_settings(
+    RAG_ENABLED=False,
+    ONLINE_RETRIEVAL_ENABLED=False,
+    DEVICE_CONTROL_ENABLED=False,
+)
 class APIResponseMetadataTests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -708,7 +729,7 @@ class APIResponseMetadataTests(TestCase):
         self.assertIsInstance(response.data['response'], str)
         self.assertGreater(len(response.data['response']), 0)
 
-    @override_settings(AI_ENGINE="local")
+    @override_settings(AI_ENGINE="local", OLLAMA_MODEL="llama3.2:1b")
     @patch("assistant.ai_engine.local.urllib.request.urlopen")
     def test_unavailable_engine_returns_500(self, mock_urlopen):
         """When local engine is not reachable, API returns 500 with error."""
@@ -719,7 +740,8 @@ class APIResponseMetadataTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
         self.assertIn('error', response.data)
 
-    @override_settings(AI_ENGINE="local")
+    @override_settings(AI_ENGINE="local", OLLAMA_MODEL="llama3.2:1b")
+    @patch.dict("os.environ", {"OLLAMA_MODEL": "llama3.2:1b"})
     @patch("assistant.ai_engine.local.urllib.request.urlopen")
     def test_local_engine_api_response(self, mock_urlopen):
         """Full API response with mocked local engine."""

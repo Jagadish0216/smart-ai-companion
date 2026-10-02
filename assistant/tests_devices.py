@@ -335,6 +335,8 @@ class DeviceIntentAndCapabilityTests(SimpleTestCase):
                 self.assertIsNone(capability)
 
     @override_settings(
+        RAG_ENABLED=False,
+        ONLINE_RETRIEVAL_ENABLED=False,
         DEVICE_CONTROL_ENABLED=True,
         DEVICE_TRANSPORT="mqtt",
         MQTT_HOST="127.0.0.1",

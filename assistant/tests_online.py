@@ -333,6 +333,7 @@ class OnlineGroundingTests(SimpleTestCase):
         self.assertIn("do not assign or guess a unit", instruction)
 
 
+@override_settings(RAG_ENABLED=False, DEVICE_CONTROL_ENABLED=False)
 class OnlineAvailabilityTests(SimpleTestCase):
     @override_settings(
         AI_ENGINE="local",
@@ -417,6 +418,7 @@ class OnlineAvailabilityTests(SimpleTestCase):
     ONLINE_MAX_RESULTS=4,
     ONLINE_MAX_CONTEXT_CHARS=6000,
     SEARXNG_BASE_URL="http://127.0.0.1:8888",
+    DEVICE_CONTROL_ENABLED=False,
 )
 class OnlineServiceTests(TestCase):
     def make_engine(self, text="Python 3.14 is the current release."):

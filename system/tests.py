@@ -134,6 +134,52 @@ class NetworkTelemetryTests(SimpleTestCase):
             ['*', 'Office:Lab', '78'],
         )
 
+    @patch('system.control_plane.network._run')
+    def test_primary_ethernet_prefers_physical_interface(self, run):
+        def command_result(command):
+            fields = command[command.index('-f') + 1]
+            if fields == 'DEVICE,TYPE,STATE,CONNECTION':
+                return (
+                    'veth3474c7f:ethernet:connected:container\n'
+                    'docker0:ethernet:connected:docker0\n'
+                    'eth0:ethernet:disconnected:--'
+                )
+            if fields == 'IP4.ADDRESS':
+                return 'IP4.ADDRESS[1]:172.17.0.1/16'
+            return None
+
+        run.side_effect = command_result
+
+        result = network._from_nmcli('/usr/bin/nmcli')
+
+        self.assertTrue(result['ethernet']['supported'])
+        self.assertFalse(result['ethernet']['connected'])
+        self.assertEqual(result['ethernet']['interface'], 'eth0')
+        self.assertIsNone(result['ethernet']['ip_address'])
+        self.assertEqual(
+            [item['interface'] for item in result['interfaces']],
+            ['veth3474c7f', 'docker0', 'eth0'],
+        )
+
+    @patch('system.control_plane.network._run')
+    def test_virtual_ethernet_remains_detailed_but_not_primary(self, run):
+        def command_result(command):
+            fields = command[command.index('-f') + 1]
+            if fields == 'DEVICE,TYPE,STATE,CONNECTION':
+                return 'veth3474c7f:ethernet:connected:container'
+            if fields == 'IP4.ADDRESS':
+                return 'IP4.ADDRESS[1]:172.18.0.2/16'
+            return None
+
+        run.side_effect = command_result
+
+        result = network._from_nmcli('/usr/bin/nmcli')
+
+        self.assertFalse(result['ethernet']['supported'])
+        self.assertFalse(result['ethernet']['connected'])
+        self.assertIsNone(result['ethernet']['interface'])
+        self.assertEqual(result['interfaces'][0]['interface'], 'veth3474c7f')
+
 
 class ServiceHealthTests(SimpleTestCase):
     @override_settings(CONTROL_PLANE_HEALTH_TIMEOUT_SECONDS=99)

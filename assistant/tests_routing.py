@@ -34,6 +34,8 @@ class RouterTestCase(TestCase):
             MEDIA_ROOT=self._media_directory.name,
             AI_ENGINE="local",
             RAG_ENABLED=True,
+            ONLINE_RETRIEVAL_ENABLED=False,
+            DEVICE_CONTROL_ENABLED=False,
             RAG_RETRIEVER="lexical",
             RAG_CHUNK_CHARS=500,
             RAG_CHUNK_OVERLAP_CHARS=50,

@@ -15,6 +15,11 @@ from assistant.policy import (
 from assistant.services import AssistantService
 
 
+@override_settings(
+    RAG_ENABLED=False,
+    ONLINE_RETRIEVAL_ENABLED=False,
+    DEVICE_CONTROL_ENABLED=False,
+)
 class AssistantResponsePolicyTests(TestCase):
     def assertClassification(self, query, expected_mode, expected_capability=None):
         mode, capability = AssistantResponsePolicy.classify(query)
@@ -204,6 +209,11 @@ class AssistantResponsePolicyTests(TestCase):
         self.assertNotIn("checking", plan.direct_response.lower())
 
 
+@override_settings(
+    RAG_ENABLED=False,
+    ONLINE_RETRIEVAL_ENABLED=False,
+    DEVICE_CONTROL_ENABLED=False,
+)
 class AssistantPolicyServiceTests(TestCase):
     @patch("assistant.services.get_engine")
     def test_normal_request_receives_capability_grounding(self, mock_get_engine):
