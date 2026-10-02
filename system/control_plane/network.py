@@ -18,6 +18,12 @@ WIFI_SCAN_TIMEOUT_SECONDS = 8.0
 WIFI_RETRY_SCAN_TIMEOUT_SECONDS = 17.0
 WIFI_CONNECT_WAIT_SECONDS = 8
 WIFI_CONNECT_TIMEOUT_SECONDS = 10.0
+WIFI_PROFILE_WAIT_SECONDS = 8
+WIFI_PROFILE_TIMEOUT_SECONDS = 10.0
+SETUP_AP_WAIT_SECONDS = 12
+SETUP_AP_TIMEOUT_SECONDS = 15.0
+SETUP_AP_PROFILE_NAME = "SmartCompanion Setup"
+WIFI_CONNECTION_TYPES = {"802-11-wireless", "wifi"}
 VIRTUAL_ETHERNET_PREFIXES = ("veth", "docker", "br-", "virbr")
 PREFERRED_ETHERNET_PREFIXES = ("eth", "en")
 MAX_SSID_BYTES = 32
@@ -336,6 +342,401 @@ def _validation_error(ssid: object, password: object) -> str | None:
     if any(ord(character) < 32 for character in password):
         return "The Wi-Fi password contains unsupported characters."
     return None
+
+
+def validate_wifi_credentials(ssid: object, password: object = None) -> str | None:
+    """Validate user-supplied Wi-Fi values before changing radio mode."""
+    return _validation_error(ssid, password)
+
+
+def _connection_profiles(
+    executable: str,
+    *,
+    active_only: bool = False,
+) -> tuple[list[dict[str, str]], str]:
+    command = [
+        executable,
+        "-t",
+        "--escape",
+        "yes",
+        "-f",
+        "NAME,TYPE,DEVICE",
+        "connection",
+        "show",
+    ]
+    if active_only:
+        command.append("--active")
+    outcome = _execute(command, COMMAND_TIMEOUT_SECONDS)
+    if outcome.timed_out:
+        return [], "TIMEOUT"
+    if outcome.unavailable or outcome.returncode != 0:
+        return [], "ERROR"
+    profiles = []
+    for line in outcome.stdout.splitlines():
+        fields = _split_terse(line)
+        if len(fields) < 2 or not fields[0]:
+            continue
+        profiles.append({
+            "name": fields[0],
+            "type": fields[1].lower(),
+            "device": fields[2] if len(fields) > 2 else "",
+        })
+    return profiles, "OK"
+
+
+def _wifi_profile_mode(executable: str, profile_name: str) -> str | None:
+    outcome = _execute(
+        [
+            executable,
+            "-g",
+            "802-11-wireless.mode",
+            "connection",
+            "show",
+            "id",
+            profile_name,
+        ],
+        COMMAND_TIMEOUT_SECONDS,
+    )
+    if outcome.returncode != 0:
+        return None
+    return outcome.stdout.strip().lower() or None
+
+
+def get_active_wifi_connection(
+    *,
+    include_setup_ap: bool = False,
+) -> dict[str, Any]:
+    """Return active NetworkManager Wi-Fi profile state without a WAN check."""
+    executable = shutil.which("nmcli")
+    if not executable:
+        return {
+            "supported": False,
+            "connected": False,
+            "interface": None,
+            "profile": None,
+        }
+    profiles, profile_state = _connection_profiles(executable, active_only=True)
+    if profile_state != "OK":
+        return {
+            "supported": False,
+            "connected": False,
+            "interface": None,
+            "profile": None,
+        }
+    for profile in profiles:
+        if profile["type"] not in WIFI_CONNECTION_TYPES or not profile["device"]:
+            continue
+        if profile["name"] == SETUP_AP_PROFILE_NAME:
+            if include_setup_ap:
+                return {
+                    "supported": True,
+                    "connected": True,
+                    "interface": profile["device"],
+                    "profile": profile["name"],
+                }
+            continue
+        if _wifi_profile_mode(executable, profile["name"]) != "infrastructure":
+            continue
+        return {
+            "supported": True,
+            "connected": True,
+            "interface": profile["device"],
+            "profile": profile["name"],
+        }
+    interface, interface_state = _wifi_interface(executable)
+    return {
+        "supported": interface_state == "OK",
+        "connected": False,
+        "interface": interface,
+        "profile": None,
+    }
+
+
+def list_saved_wifi_profiles() -> dict[str, Any]:
+    """List saved client profile names, excluding the managed setup AP."""
+    executable = shutil.which("nmcli")
+    if not executable:
+        return {
+            "supported": False,
+            "profiles": [],
+            "message": "Wi-Fi management is not available on this device.",
+        }
+    profiles, profile_state = _connection_profiles(executable)
+    if profile_state != "OK":
+        return {
+            "supported": False,
+            "profiles": [],
+            "message": "Saved Wi-Fi networks could not be read.",
+        }
+    names = []
+    for profile in profiles:
+        if (
+            profile["type"] in WIFI_CONNECTION_TYPES
+            and profile["name"] != SETUP_AP_PROFILE_NAME
+            and _wifi_profile_mode(executable, profile["name"]) == "infrastructure"
+            and profile["name"] not in names
+        ):
+            names.append(profile["name"])
+    return {"supported": True, "profiles": names}
+
+
+def activate_saved_wifi_profile(profile_name: object) -> dict[str, Any]:
+    """Attempt one previously saved profile with a bounded nmcli invocation."""
+    if (
+        not isinstance(profile_name, str)
+        or not profile_name
+        or any(ord(character) < 32 for character in profile_name)
+    ):
+        return {
+            "success": False,
+            "state": "INVALID",
+            "message": "The saved Wi-Fi profile is invalid.",
+        }
+    executable = shutil.which("nmcli")
+    if not executable:
+        return {
+            "success": False,
+            "state": "NOT_AVAILABLE",
+            "message": "Wi-Fi management is not available on this device.",
+        }
+    interface, interface_state = _wifi_interface(executable)
+    if not interface:
+        return {
+            "success": False,
+            "state": "NOT_AVAILABLE",
+            "message": (
+                "No Wi-Fi adapter was found."
+                if interface_state == "NOT_FOUND"
+                else "Wi-Fi adapter status could not be determined."
+            ),
+        }
+    outcome = _execute(
+        [
+            executable,
+            "--wait",
+            str(WIFI_PROFILE_WAIT_SECONDS),
+            "connection",
+            "up",
+            "id",
+            profile_name,
+            "ifname",
+            interface,
+        ],
+        WIFI_PROFILE_TIMEOUT_SECONDS,
+    )
+    if outcome.timed_out or outcome.unavailable:
+        return {
+            "success": False,
+            "state": "UNKNOWN",
+            "message": "The saved Wi-Fi connection result could not be determined.",
+        }
+    if outcome.returncode == 0:
+        return {
+            "success": True,
+            "state": "CONNECTED",
+            "message": "A saved Wi-Fi network was connected.",
+        }
+    return {
+        "success": False,
+        "state": "FAILED",
+        "message": "The saved Wi-Fi network could not be connected.",
+    }
+
+
+def _setup_password_error(password: object) -> str | None:
+    if not isinstance(password, str) or not password:
+        return "The setup access-point password is not configured."
+    try:
+        encoded = password.encode("utf-8")
+    except UnicodeError:
+        return "The setup access-point password is invalid."
+    if not 8 <= len(encoded) <= 63:
+        return "The setup access-point password must be 8 to 63 bytes."
+    if any(ord(character) < 32 for character in password):
+        return "The setup access-point password contains unsupported characters."
+    return None
+
+
+def setup_access_point_is_active() -> bool:
+    connection = get_active_wifi_connection(include_setup_ap=True)
+    return bool(
+        connection["connected"]
+        and connection["profile"] == SETUP_AP_PROFILE_NAME
+    )
+
+
+def activate_setup_access_point(ssid: object, password: object) -> dict[str, Any]:
+    """Create/update and activate the NetworkManager-managed WPA2 setup AP."""
+    validation_error = _validation_error(ssid, None) or _setup_password_error(password)
+    if validation_error:
+        return {"success": False, "state": "INVALID", "message": validation_error}
+    executable = shutil.which("nmcli")
+    if not executable:
+        return {
+            "success": False,
+            "state": "NOT_AVAILABLE",
+            "message": "NetworkManager is not available on this device.",
+        }
+    interface, interface_state = _wifi_interface(executable)
+    if not interface:
+        return {
+            "success": False,
+            "state": "NOT_AVAILABLE",
+            "message": (
+                "No Wi-Fi adapter was found."
+                if interface_state == "NOT_FOUND"
+                else "Wi-Fi adapter status could not be determined."
+            ),
+        }
+    if setup_access_point_is_active():
+        return {
+            "success": True,
+            "state": "SETUP_AP",
+            "message": "The setup network is active.",
+            "already_active": True,
+        }
+
+    profiles, profile_state = _connection_profiles(executable)
+    if profile_state != "OK":
+        return {
+            "success": False,
+            "state": "FAILED",
+            "message": "NetworkManager profiles could not be read.",
+        }
+    if not any(profile["name"] == SETUP_AP_PROFILE_NAME for profile in profiles):
+        add_outcome = _execute(
+            [
+                executable,
+                "--wait",
+                "5",
+                "connection",
+                "add",
+                "type",
+                "wifi",
+                "ifname",
+                interface,
+                "con-name",
+                SETUP_AP_PROFILE_NAME,
+                "autoconnect",
+                "no",
+                "ssid",
+                str(ssid),
+            ],
+            WIFI_PROFILE_TIMEOUT_SECONDS,
+        )
+        if add_outcome.returncode != 0:
+            return {
+                "success": False,
+                "state": "FAILED",
+                "message": "The setup network profile could not be created.",
+            }
+
+    modify_outcome = _execute(
+        [
+            executable,
+            "--wait",
+            "5",
+            "connection",
+            "modify",
+            "id",
+            SETUP_AP_PROFILE_NAME,
+            "connection.autoconnect",
+            "no",
+            "802-11-wireless.mode",
+            "ap",
+            "802-11-wireless.ssid",
+            str(ssid),
+            "ipv4.method",
+            "shared",
+            "ipv6.method",
+            "disabled",
+            "802-11-wireless-security.key-mgmt",
+            "wpa-psk",
+            "802-11-wireless-security.proto",
+            "rsn",
+            "802-11-wireless-security.psk",
+            str(password),
+        ],
+        WIFI_PROFILE_TIMEOUT_SECONDS,
+    )
+    if modify_outcome.returncode != 0:
+        return {
+            "success": False,
+            "state": "FAILED",
+            "message": "The secure setup network could not be configured.",
+        }
+    up_outcome = _execute(
+        [
+            executable,
+            "--wait",
+            str(SETUP_AP_WAIT_SECONDS),
+            "connection",
+            "up",
+            "id",
+            SETUP_AP_PROFILE_NAME,
+            "ifname",
+            interface,
+        ],
+        SETUP_AP_TIMEOUT_SECONDS,
+    )
+    if up_outcome.timed_out or up_outcome.unavailable:
+        return {
+            "success": False,
+            "state": "UNKNOWN",
+            "message": "The setup network result could not be determined.",
+        }
+    if up_outcome.returncode != 0:
+        return {
+            "success": False,
+            "state": "FAILED",
+            "message": "The setup network could not be started.",
+        }
+    return {
+        "success": True,
+        "state": "SETUP_AP",
+        "message": "The setup network is active.",
+        "already_active": False,
+    }
+
+
+def deactivate_setup_access_point() -> dict[str, Any]:
+    """Deactivate only the setup profile; never delete any saved profile."""
+    executable = shutil.which("nmcli")
+    if not executable:
+        return {
+            "success": False,
+            "state": "NOT_AVAILABLE",
+            "message": "NetworkManager is not available on this device.",
+        }
+    if not setup_access_point_is_active():
+        return {
+            "success": True,
+            "state": "INACTIVE",
+            "message": "The setup network is already inactive.",
+        }
+    outcome = _execute(
+        [
+            executable,
+            "--wait",
+            "5",
+            "connection",
+            "down",
+            "id",
+            SETUP_AP_PROFILE_NAME,
+        ],
+        WIFI_PROFILE_TIMEOUT_SECONDS,
+    )
+    if outcome.returncode == 0:
+        return {
+            "success": True,
+            "state": "INACTIVE",
+            "message": "The setup network was stopped.",
+        }
+    return {
+        "success": False,
+        "state": "FAILED",
+        "message": "The setup network could not be stopped.",
+    }
 
 
 def _network_not_found(stderr: str) -> bool:

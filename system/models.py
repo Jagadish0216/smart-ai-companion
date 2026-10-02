@@ -54,3 +54,28 @@ class CompanionState(models.Model):
     def get_current(cls):
         state, _ = cls.objects.get_or_create(id=1)
         return state
+
+
+class NetworkProvisioningState(models.Model):
+    class State(models.TextChoices):
+        UNPROVISIONED = "UNPROVISIONED", "Unprovisioned"
+        SETUP_AP = "SETUP_AP", "Setup access point"
+        CONNECTING = "CONNECTING", "Connecting"
+        FAILED = "FAILED", "Failed"
+        NORMAL_MODE = "NORMAL_MODE", "Normal mode"
+
+    state = models.CharField(
+        max_length=20,
+        choices=State.choices,
+        default=State.UNPROVISIONED,
+    )
+    last_error = models.CharField(max_length=255, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Network provisioning: {self.state}"
+
+    @classmethod
+    def get_current(cls):
+        state, _ = cls.objects.get_or_create(id=1)
+        return state

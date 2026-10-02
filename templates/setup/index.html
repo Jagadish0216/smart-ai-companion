@@ -1,0 +1,65 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Wi-Fi setup — Smart AI Companion</title>
+    <meta name="description" content="Connect Smart AI Companion to a local Wi-Fi network.">
+    <link rel="stylesheet" href="{% static 'css/setup.css' %}?v=1">
+</head>
+<body>
+    <main class="setup-shell">
+        <section class="setup-card" aria-labelledby="setup-title">
+            <div class="setup-brand" aria-hidden="true">SC</div>
+            <p class="setup-kicker">Smart AI Companion</p>
+            <h1 id="setup-title">Connect Companion to Wi-Fi</h1>
+            <p class="setup-intro">Choose the network Companion should use. Internet access is optional; a local Wi-Fi connection is enough.</p>
+
+            <div class="setup-state" role="status" aria-live="polite">
+                <span class="setup-state-dot"></span>
+                <span id="setup-state-label">{{ state }}</span>
+            </div>
+            <div class="setup-message" id="setup-message" role="status" aria-live="polite">{{ message }}</div>
+
+            <div class="setup-toolbar">
+                <div>
+                    <h2>Available networks</h2>
+                    <p>Setup network: <strong>{{ setup_ssid }}</strong></p>
+                </div>
+                <button class="button button-secondary" id="setup-refresh" type="button">Refresh</button>
+            </div>
+
+            <div class="network-list" id="setup-network-list" aria-live="polite">
+                <div class="empty-state">Scanning for nearby Wi-Fi networks…</div>
+            </div>
+
+            <form class="connect-form hidden" id="setup-connect-form" autocomplete="off">
+                {% csrf_token %}
+                <h2>Connect to <span id="setup-selected-ssid"></span></h2>
+                <label for="setup-wifi-password">Wi-Fi password</label>
+                <input
+                    id="setup-wifi-password"
+                    name="password"
+                    type="password"
+                    maxlength="64"
+                    autocomplete="new-password"
+                    placeholder="Leave blank only for an open network"
+                >
+                <div class="setup-warning">
+                    Companion will leave this setup network while it connects. Your phone or computer may disconnect; join the selected Wi-Fi, then open <strong>smart-ai-companion.local:8000</strong>.
+                </div>
+                <div class="form-actions">
+                    <button class="button button-primary" id="setup-connect" type="submit">Connect Companion</button>
+                    <button class="button button-secondary" id="setup-cancel" type="button">Cancel</button>
+                </div>
+            </form>
+
+            <footer>
+                Normal product address: <a href="{{ canonical_url }}">smart-ai-companion.local:8000</a>
+            </footer>
+        </section>
+    </main>
+    <script src="{% static 'js/setup.js' %}?v=1"></script>
+</body>
+</html>

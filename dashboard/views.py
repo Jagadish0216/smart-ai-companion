@@ -1,4 +1,5 @@
 from django.views.generic import TemplateView
+from django.http import Http404
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.conf import settings
@@ -10,6 +11,7 @@ from conversations.models import Conversation, Message
 from knowledge_base.models import Document
 
 from system.models import SystemLog, SystemSetting
+from system.control_plane.provisioning import get_setup_status, setup_mode_available
 
 
 
@@ -149,3 +151,18 @@ class SettingsView(TemplateView):
 class CompanionStudioView(TemplateView):
 
     template_name = 'dashboard/studio.html'
+
+
+@method_decorator(ensure_csrf_cookie, name='dispatch')
+class SetupView(TemplateView):
+    template_name = 'setup/index.html'
+
+    def dispatch(self, request, *args, **kwargs):
+        if not setup_mode_available():
+            raise Http404("Wi-Fi setup is not active.")
+        return super().dispatch(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context.update(get_setup_status())
+        return context

@@ -1,5 +1,9 @@
+from django.conf import settings
+from django.core.cache import cache
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_protect
 from rest_framework.authentication import SessionAuthentication
-from rest_framework.permissions import IsAdminUser
+from rest_framework.permissions import AllowAny, IsAdminUser
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -8,6 +12,11 @@ from .control_plane.network import (
     connect_wifi,
     get_network_status,
     scan_wifi_networks,
+)
+from .control_plane.provisioning import (
+    get_setup_status,
+    provision_wifi,
+    setup_mode_available,
 )
 from .services import get_device_metrics
 from .models import SystemLog
@@ -64,6 +73,82 @@ class WifiConnectAPIView(APIView):
             "CONNECTING": status.HTTP_202_ACCEPTED,
             "NOT_AVAILABLE": status.HTTP_503_SERVICE_UNAVAILABLE,
             "UNKNOWN": status.HTTP_503_SERVICE_UNAVAILABLE,
+        }.get(result["state"], status.HTTP_200_OK)
+        return Response(result, status=response_status)
+
+
+def _setup_unavailable_response():
+    return Response(
+        {"detail": "Wi-Fi setup is not currently available."},
+        status=status.HTTP_404_NOT_FOUND,
+    )
+
+
+class SetupStatusAPIView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        if not setup_mode_available():
+            return _setup_unavailable_response()
+        return Response(get_setup_status())
+
+
+class SetupWifiScanAPIView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        if not setup_mode_available():
+            return _setup_unavailable_response()
+        try:
+            return Response(scan_wifi_networks())
+        except Exception:
+            return Response({
+                "supported": False,
+                "interface": None,
+                "networks": [],
+                "message": "Available networks could not be loaded.",
+            })
+
+
+@method_decorator(csrf_protect, name="dispatch")
+class SetupWifiConnectAPIView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        if not setup_mode_available():
+            return _setup_unavailable_response()
+        cooldown = max(
+            1,
+            min(int(getattr(settings, "SETUP_CONNECT_COOLDOWN_SECONDS", 5)), 60),
+        )
+        if not cache.add("setup-wifi-connect.cooldown.v1", True, cooldown):
+            return Response(
+                {
+                    "success": False,
+                    "state": "RATE_LIMITED",
+                    "message": "Please wait before trying another Wi-Fi connection.",
+                },
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        if not isinstance(request.data, dict):
+            result = {
+                "success": False,
+                "state": "INVALID",
+                "message": "The connection request is invalid.",
+            }
+        else:
+            result = provision_wifi(
+                request.data.get("ssid"),
+                request.data.get("password"),
+            )
+        response_status = {
+            "INVALID": status.HTTP_400_BAD_REQUEST,
+            "BUSY": status.HTTP_409_CONFLICT,
+            "NOT_AVAILABLE": status.HTTP_404_NOT_FOUND,
+            "FAILED": status.HTTP_503_SERVICE_UNAVAILABLE,
         }.get(result["state"], status.HTTP_200_OK)
         return Response(result, status=response_status)
 

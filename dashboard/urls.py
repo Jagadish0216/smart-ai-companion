@@ -9,9 +9,11 @@ from .views import (
     LogsView,
     NetworkView,
     SettingsView,
+    SetupView,
 )
 
 urlpatterns = [
+    path('setup/', SetupView.as_view(), name='setup'),
     path('', DashboardView.as_view(), name='dashboard'),
     path('studio/', CompanionStudioView.as_view(), name='studio'),
     path('assistant/', AssistantView.as_view(), name='assistant'),
