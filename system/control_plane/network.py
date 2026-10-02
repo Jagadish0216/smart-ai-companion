@@ -33,26 +33,36 @@ class _CommandOutcome:
     unavailable: bool = False
 
 
+def _decode_nmcli_output(output: bytes | None) -> str:
+    """Decode nmcli's UTF-8 output without silently changing any bytes."""
+    return (output or b"").decode("utf-8", errors="strict")
+
+
 def _execute(command: list[str], timeout: float) -> _CommandOutcome:
     """Execute one allowlisted nmcli operation without exposing its arguments."""
     try:
         completed = subprocess.run(
             command,
             capture_output=True,
-            text=True,
+            text=False,
             timeout=timeout,
             check=False,
             shell=False,
-            env={**os.environ, "LANG": "C", "LC_ALL": "C"},
+            env={**os.environ, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"},
         )
     except subprocess.TimeoutExpired:
         return _CommandOutcome(returncode=None, timed_out=True)
     except (OSError, subprocess.SubprocessError):
         return _CommandOutcome(returncode=None, unavailable=True)
+    try:
+        stdout = _decode_nmcli_output(completed.stdout)
+        stderr = _decode_nmcli_output(completed.stderr)
+    except UnicodeDecodeError:
+        return _CommandOutcome(returncode=None, unavailable=True)
     return _CommandOutcome(
         returncode=completed.returncode,
-        stdout=completed.stdout or "",
-        stderr=completed.stderr or "",
+        stdout=stdout,
+        stderr=stderr,
     )
 
 

@@ -128,21 +128,19 @@ class SystemAPITests(TestCase):
         self.assertEqual(response.data['networks'][0]['ssid'], 'Home WiFi')
 
     @patch('system.views.connect_wifi')
-    @patch('system.views.scan_wifi_networks')
+    @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
+    @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
+    @patch('system.control_plane.network.subprocess.run')
     def test_unicode_ssid_round_trips_from_scan_response_to_connect_request(
-        self, scan, connect
+        self, run, _which, _interface, connect
     ):
         ssid = 'Sravani\u2019s iPhone'
-        scan.return_value = {
-            'supported': True,
-            'interface': 'wlan0',
-            'networks': [{
-                'ssid': ssid,
-                'signal_percent': 72,
-                'security': 'WPA2',
-                'connected': False,
-            }],
-        }
+        run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=f':{ssid}:72:WPA2\n'.encode('utf-8'),
+            stderr=b'',
+        )
         connect.return_value = {
             'success': True,
             'ssid': ssid,
@@ -343,7 +341,8 @@ class WifiNetworkControlTests(SimpleTestCase):
             ':   :90:WPA2'
         )
 
-        result = network._parse_wifi_networks(output)
+        decoded_output = network._decode_nmcli_output(output.encode('utf-8'))
+        result = network._parse_wifi_networks(decoded_output)
 
         by_ssid = {item['ssid']: item for item in result}
         self.assertEqual(len(result), 6)
@@ -356,6 +355,29 @@ class WifiNetworkControlTests(SimpleTestCase):
         self.assertEqual(by_ssid[r'Lab\Net']['security'], 'OPEN')
         self.assertIn('Caf\u00e9 \u6771\u4eac', by_ssid)
 
+    def test_raw_nmcli_utf8_decodes_without_replacement(self):
+        ssids = (
+            'Sravani\u2019s iPhone',
+            "Sravani's iPhone",
+            'My Wi-Fi',
+            'Cafe:Network',
+            r'Back\Slash',
+            '\u0c24\u0c46\u0c32\u0c41\u0c17\u0c41',
+            '\u65e5\u672c\u8a9e',
+            'Espa\u00f1ol',
+            'Hotspot \U0001f4f6',
+        )
+
+        for ssid in ssids:
+            with self.subTest(ssid=ssid):
+                encoded = ssid.encode('utf-8')
+                self.assertEqual(network._decode_nmcli_output(encoded), ssid)
+                self.assertNotIn('?', network._decode_nmcli_output(encoded))
+
+    def test_raw_nmcli_invalid_utf8_is_rejected(self):
+        with self.assertRaises(UnicodeDecodeError):
+            network._decode_nmcli_output(b'broken-ssid-\xff')
+
     @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
     @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
     @patch('system.control_plane.network.subprocess.run')
@@ -363,23 +385,46 @@ class WifiNetworkControlTests(SimpleTestCase):
         run.return_value = subprocess.CompletedProcess(
             args=[],
             returncode=0,
-            stdout='*:Home WiFi:75:WPA2\n',
-            stderr='',
+            stdout='*:Sravani\u2019s iPhone:75:WPA2\n'.encode('utf-8'),
+            stderr=b'',
         )
 
         result = network.scan_wifi_networks()
 
         self.assertTrue(result['supported'])
-        self.assertEqual(result['networks'][0]['ssid'], 'Home WiFi')
+        self.assertEqual(result['networks'][0]['ssid'], 'Sravani\u2019s iPhone')
         command = run.call_args.args[0]
         self.assertIsInstance(command, list)
         self.assertEqual(command[0], '/usr/bin/nmcli')
         self.assertIn('--rescan', command)
         self.assertFalse(run.call_args.kwargs['shell'])
+        self.assertFalse(run.call_args.kwargs['text'])
+        self.assertEqual(run.call_args.kwargs['env']['LANG'], 'C.UTF-8')
+        self.assertEqual(run.call_args.kwargs['env']['LC_ALL'], 'C.UTF-8')
         self.assertEqual(
             run.call_args.kwargs['timeout'],
             network.WIFI_SCAN_TIMEOUT_SECONDS,
         )
+
+    @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
+    @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
+    @patch('system.control_plane.network.subprocess.run')
+    def test_scan_fails_safely_for_undecodable_nmcli_output(
+        self, run, _which, _interface
+    ):
+        run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=b':Sravani\xffs iPhone:75:WPA2\n',
+            stderr=b'',
+        )
+
+        result = network.scan_wifi_networks()
+
+        self.assertTrue(result['supported'])
+        self.assertEqual(result['networks'], [])
+        self.assertEqual(result['message'], 'Available networks could not be loaded.')
+        self.assertNotIn('Sravani', str(result))
 
     def test_connection_validation_rejects_unsafe_values(self):
         cases = (
@@ -402,7 +447,7 @@ class WifiNetworkControlTests(SimpleTestCase):
     @patch('system.control_plane.network.subprocess.run')
     def test_connect_uses_bounded_argument_array(self, run, _which, _interface):
         run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout='success', stderr=''
+            args=[], returncode=0, stdout=b'success', stderr=b''
         )
 
         result = network.connect_wifi('Home WiFi', 'private-password')
@@ -424,7 +469,7 @@ class WifiNetworkControlTests(SimpleTestCase):
     @patch('system.control_plane.network.subprocess.run')
     def test_connect_preserves_ssid_characters_exactly(self, run, _which, _interface):
         run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout='success', stderr=''
+            args=[], returncode=0, stdout=b'success', stderr=b''
         )
         ssids = (
             'Sravani\u2019s iPhone',
@@ -456,17 +501,17 @@ class WifiNetworkControlTests(SimpleTestCase):
             subprocess.CompletedProcess(
                 args=[],
                 returncode=10,
-                stdout='',
-                stderr=f"Error: No network with SSID '{ssid}' found.",
+                stdout=b'',
+                stderr=f"Error: No network with SSID '{ssid}' found.".encode('utf-8'),
             ),
             subprocess.CompletedProcess(
                 args=[],
                 returncode=0,
-                stdout=':Unrelated Network:45:WPA2\n',
-                stderr='',
+                stdout=b':Unrelated Network:45:WPA2\n',
+                stderr=b'',
             ),
             subprocess.CompletedProcess(
-                args=[], returncode=0, stdout='success', stderr=''
+                args=[], returncode=0, stdout=b'success', stderr=b''
             ),
         )
 
@@ -498,8 +543,8 @@ class WifiNetworkControlTests(SimpleTestCase):
         run.return_value = subprocess.CompletedProcess(
             args=[],
             returncode=10,
-            stdout='',
-            stderr="Error: Device 'wlan0' not found.",
+            stdout=b'',
+            stderr=b"Error: Device 'wlan0' not found.",
         )
 
         result = network.connect_wifi('Home WiFi', 'private-password')
@@ -544,7 +589,7 @@ class WifiNetworkControlTests(SimpleTestCase):
         self, run, _which, _interface
     ):
         run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=3, stdout='', stderr='operation timed out'
+            args=[], returncode=3, stdout=b'', stderr=b'operation timed out'
         )
 
         result = network.connect_wifi('Home WiFi', 'private-password')
@@ -562,8 +607,8 @@ class WifiNetworkControlTests(SimpleTestCase):
         run.return_value = subprocess.CompletedProcess(
             args=[],
             returncode=10,
-            stdout='',
-            stderr='Error: private-password was rejected; secrets were required.',
+            stdout=b'',
+            stderr=b'Error: private-password was rejected; secrets were required.',
         )
 
         result = network.connect_wifi('Home WiFi', 'private-password')
@@ -576,6 +621,29 @@ class WifiNetworkControlTests(SimpleTestCase):
         )
         self.assertNotIn('private-password', str(result))
         self.assertNotIn('secrets were required', str(result))
+
+    @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
+    @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
+    @patch('system.control_plane.network.subprocess.run')
+    def test_connect_fails_safely_for_undecodable_nmcli_stderr(
+        self, run, _which, _interface
+    ):
+        run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=10,
+            stdout=b'',
+            stderr=b'failed with private-password-\xff',
+        )
+
+        result = network.connect_wifi('Home WiFi', 'private-password')
+
+        self.assertFalse(result['success'])
+        self.assertEqual(result['state'], 'UNKNOWN')
+        self.assertEqual(
+            result['message'],
+            'The connection result could not be determined.',
+        )
+        self.assertNotIn('private-password', str(result))
 
 
 class ServiceHealthTests(SimpleTestCase):
