@@ -13,7 +13,11 @@ from .context_processors import HEADER_INTERNET_CACHE_KEY
 
 
 class AssistantChatTimeoutTests(TestCase):
-    @override_settings(CHAT_REQUEST_TIMEOUT_SECONDS=45)
+    @override_settings(
+        CHAT_REQUEST_TIMEOUT_SECONDS=45,
+        AI_LOCAL_GENERATION_TIMEOUT_SECONDS=30,
+        CHAT_BACKEND_TIMEOUT_MARGIN_SECONDS=15,
+    )
     def test_chat_post_timeout_is_configurable(self):
         response = self.client.get('/assistant/')
 
@@ -22,6 +26,17 @@ class AssistantChatTimeoutTests(TestCase):
         self.assertContains(response, 'new AbortController()')
         self.assertContains(response, 'signal: controller.signal')
         self.assertContains(response, 'AI request timed out. Please try again.')
+
+    @override_settings(
+        CHAT_REQUEST_TIMEOUT_SECONDS=30,
+        AI_LOCAL_GENERATION_TIMEOUT_SECONDS=120,
+        CHAT_BACKEND_TIMEOUT_MARGIN_SECONDS=15,
+    )
+    def test_browser_timeout_cannot_expire_before_backend_timeout(self):
+        response = self.client.get('/assistant/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'const CHAT_REQUEST_TIMEOUT_MS = 135000;')
 
 
 class GlobalHeaderStateTests(TestCase):

@@ -137,6 +137,29 @@ class CapabilityRegistry:
             if status.available
         }
 
+    def with_availability(
+        self,
+        capability: Capability,
+        available: bool,
+        *,
+        unavailable_response: str | None = None,
+    ) -> "CapabilityRegistry":
+        """Return a request-scoped copy with one authoritative override."""
+        statuses = list(self._statuses.values())
+        current = self.status(capability)
+        replacement = CapabilityStatus(
+            capability,
+            bool(available),
+            current.description,
+            unavailable_response
+            if unavailable_response is not None
+            else current.unavailable_response,
+        )
+        return CapabilityRegistry([
+            replacement if status.capability == capability else status
+            for status in statuses
+        ])
+
     def build_grounding_instruction(self) -> str:
         """Describe the current runtime capabilities for one LLM request."""
         available = [

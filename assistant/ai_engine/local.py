@@ -24,12 +24,19 @@ Why Ollama:
 
 import json
 import logging
+import socket
 import time
 import urllib.error
 import urllib.request
 from typing import Optional
 
-from .base import AIEngine, AIEngineResult, EngineUnavailableError
+from .base import (
+    AIEngine,
+    AIEngineResult,
+    EngineTimeoutError,
+    EngineUnavailableError,
+    ModelUnavailableError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +85,7 @@ class LocalLLMEngine(AIEngine):
             if num_predict is not None
             else int(os.environ.get("OLLAMA_NUM_PREDICT", "128"))
         )
+        self._model_cache: tuple[float, set[str]] | None = None
 
     @property
     def engine_name(self) -> str:
@@ -86,11 +94,34 @@ class LocalLLMEngine(AIEngine):
     def health_check(self) -> bool:
         """Check if the Ollama server is reachable."""
         try:
-            req = urllib.request.Request(f"{self._host}/api/tags", method="GET")
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                return resp.status == 200
-        except Exception:
+            self.available_models()
+            return True
+        except EngineUnavailableError:
             return False
+
+    def available_models(self, *, cache_seconds: float = 5.0) -> set[str]:
+        """Return locally installed Ollama model names without pulling anything."""
+        now = time.monotonic()
+        if self._model_cache and now - self._model_cache[0] <= cache_seconds:
+            return set(self._model_cache[1])
+        req = urllib.request.Request(f"{self._host}/api/tags", method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=min(5.0, float(self._timeout))) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.URLError as exc:
+            raise EngineUnavailableError("Ollama model inventory is unavailable.") from exc
+        except (OSError, TimeoutError, json.JSONDecodeError, ValueError) as exc:
+            raise EngineUnavailableError("Ollama model inventory is unavailable.") from exc
+        if not isinstance(payload, dict) or not isinstance(payload.get("models", []), list):
+            raise EngineUnavailableError("Ollama model inventory is unavailable.")
+        models = {
+            str(item.get("name") or item.get("model") or "").strip()
+            for item in payload.get("models", [])
+            if isinstance(item, dict)
+        }
+        models.discard("")
+        self._model_cache = (now, models)
+        return set(models)
 
     def generate(
         self,
@@ -98,6 +129,8 @@ class LocalLLMEngine(AIEngine):
         conversation_history: list | None = None,
         system_instruction: str | None = None,
         num_predict: int | None = None,
+        model: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> AIEngineResult:
         """
         Send a chat request to Ollama and return the structured result.
@@ -111,6 +144,7 @@ class LocalLLMEngine(AIEngine):
                 "Ensure Ollama is installed and running: https://ollama.com"
             )
 
+        selected_model = model or self._model
         messages = self._build_messages(
             query,
             conversation_history,
@@ -123,6 +157,8 @@ class LocalLLMEngine(AIEngine):
             response_data = self._call_ollama_chat(
                 messages,
                 num_predict=num_predict,
+                model=selected_model,
+                timeout_seconds=timeout_seconds,
             )
         except EngineUnavailableError:
             raise
@@ -145,7 +181,7 @@ class LocalLLMEngine(AIEngine):
         return AIEngineResult(
             text=text,
             engine=self.engine_name,
-            model=self._model,
+            model=selected_model,
             mode="offline",
             latency_ms=elapsed_ms,
         )
@@ -240,6 +276,8 @@ class LocalLLMEngine(AIEngine):
         self,
         messages: list[dict],
         num_predict: int | None = None,
+        model: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> dict:
         """
         Make a synchronous HTTP request to Ollama's /api/chat endpoint.
@@ -253,8 +291,10 @@ class LocalLLMEngine(AIEngine):
             - total_duration: total request time (nanoseconds)
         """
         url = f"{self._host}/api/chat"
+        selected_model = model or self._model
+        timeout = self._timeout if timeout_seconds is None else float(timeout_seconds)
         payload = json.dumps({
-            "model": self._model,
+            "model": selected_model,
             "messages": messages,
             "stream": False,
             "keep_alive": self._keep_alive,
@@ -273,7 +313,7 @@ class LocalLLMEngine(AIEngine):
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
                 body = json.loads(resp.read().decode("utf-8"))
                 return body
         except urllib.error.HTTPError as exc:
@@ -287,17 +327,24 @@ class LocalLLMEngine(AIEngine):
                 error_msg = error_body or str(exc)
 
             if exc.code == 404 or "not found" in error_msg.lower():
-                raise EngineUnavailableError(
-                    f"Model '{self._model}' not found in Ollama. "
-                    f"Pull it with: ollama pull {self._model}"
+                raise ModelUnavailableError(
+                    f"Model '{selected_model}' is not installed in Ollama."
                 ) from exc
 
             raise EngineUnavailableError(
                 f"Ollama error (HTTP {exc.code}): {error_msg}"
             ) from exc
         except urllib.error.URLError as exc:
+            if isinstance(exc.reason, (socket.timeout, TimeoutError)):
+                raise EngineTimeoutError(
+                    "Ollama generation exceeded the bounded timeout."
+                ) from exc
             raise EngineUnavailableError(
                 f"Could not connect to Ollama at {self._host}: {exc.reason}"
+            ) from exc
+        except (socket.timeout, TimeoutError) as exc:
+            raise EngineTimeoutError(
+                "Ollama generation exceeded the bounded timeout."
             ) from exc
         except json.JSONDecodeError as exc:
             raise EngineUnavailableError(

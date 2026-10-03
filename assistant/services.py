@@ -15,7 +15,12 @@ from django.utils import timezone as django_timezone
 
 from conversations.models import Conversation, Message
 from knowledge_base.services import build_rag_instruction
-from .ai_engine import get_engine, EngineUnavailableError
+from .ai_engine import (
+    EngineTimeoutError,
+    EngineUnavailableError,
+    ModelUnavailableError,
+    get_engine,
+)
 from .devices.base import (
     DeviceCommandTimeoutError,
     DeviceControllerError,
@@ -28,6 +33,7 @@ from .devices.types import DeviceAction, DeviceCommand, SensorReading
 from .online.base import OnlineRetrievalError, OnlineRetrievalResult
 from .online.factory import get_online_retriever
 from .online.grounding import build_online_grounding_instruction
+from .execution_policy import AIExecutionPlan, get_ai_execution_plan
 from .policy import Capability, CapabilityRegistry, ResponsePlan
 from .routing import QueryRoute, QueryRouteDecision, QueryRouter
 
@@ -60,6 +66,8 @@ class AssistantService:
         The metadata dict contains engine/model/mode/latency for the API
         layer to optionally include in the response.
         """
+        execution_started = time.perf_counter()
+
         # ── Resolve or create conversation ──
         if conversation_id:
             try:
@@ -76,6 +84,20 @@ class AssistantService:
             text=query,
         )
 
+        planned_engine = None
+
+        def local_model_inventory():
+            nonlocal planned_engine
+            planned_engine = get_engine()
+            inventory = getattr(planned_engine, "available_models", None)
+            if not callable(inventory):
+                return ()
+            return inventory()
+
+        execution_plan = get_ai_execution_plan(
+            model_inventory_provider=local_model_inventory,
+        )
+
         effective_instruction = system_instruction
         effective_num_predict = num_predict
         if response_plan is not None:
@@ -87,8 +109,23 @@ class AssistantService:
                 )
             if effective_num_predict is None:
                 effective_num_predict = response_plan.num_predict
+        effective_num_predict = min(
+            effective_num_predict
+            if effective_num_predict is not None
+            else execution_plan.max_output_tokens,
+            execution_plan.max_output_tokens,
+        )
 
         registry = CapabilityRegistry.from_settings()
+        online_configured = registry.is_available(Capability.ONLINE_RETRIEVAL)
+        registry = registry.with_availability(
+            Capability.ONLINE_RETRIEVAL,
+            online_configured and execution_plan.online_allowed,
+            unavailable_response=(
+                "I can't retrieve live online information right now because "
+                "the current connectivity policy does not allow Internet access."
+            ),
+        )
         route_decision = QueryRouter().decide(
             query,
             registry=registry,
@@ -134,6 +171,8 @@ class AssistantService:
                 direct_response,
                 route_decision,
                 metadata_updates=metadata_updates,
+                execution_plan=execution_plan,
+                execution_started=execution_started,
             )
 
         if (
@@ -147,6 +186,16 @@ class AssistantService:
                 conversation,
                 query,
                 route_decision,
+            )
+
+        if not execution_plan.generation_allowed:
+            return _persist_direct_response(
+                conversation,
+                execution_plan.status_message
+                or "Local AI is temporarily unavailable due to system resource conditions.",
+                route_decision,
+                execution_plan=execution_plan,
+                execution_started=execution_started,
             )
 
         online_results: list[OnlineRetrievalResult] = []
@@ -191,6 +240,8 @@ class AssistantService:
                     engine="online",
                     latency_ms=online_latency_ms,
                     online_latency_ms=online_latency_ms,
+                    execution_plan=execution_plan,
+                    execution_started=execution_started,
                 )
             except Exception:
                 online_latency_ms = round(
@@ -204,6 +255,8 @@ class AssistantService:
                     engine="online",
                     latency_ms=online_latency_ms,
                     online_latency_ms=online_latency_ms,
+                    execution_plan=execution_plan,
+                    execution_started=execution_started,
                 )
 
         rag_results = list(route_decision.rag_results)
@@ -224,23 +277,34 @@ class AssistantService:
 
         # ── Run AI inference ──
         try:
-            engine = get_engine()
+            engine = planned_engine or get_engine()
 
             # Build lightweight conversation history for context
-            history = _get_conversation_history(conversation)
+            history = _get_conversation_history(
+                conversation,
+                limit=execution_plan.context_message_limit,
+            )
 
             generation_kwargs = {"conversation_history": history}
             if effective_instruction:
                 generation_kwargs["system_instruction"] = effective_instruction
-            if effective_num_predict is not None:
-                generation_kwargs["num_predict"] = effective_num_predict
+            generation_kwargs["num_predict"] = effective_num_predict
+            generation_kwargs["model"] = execution_plan.effective_model
+            generation_kwargs["timeout_seconds"] = execution_plan.timeout_seconds
             result = engine.generate(query, **generation_kwargs)
+
+            response_text = result.text
+            if execution_plan.status_message and execution_plan.resource_profile in {
+                "ECO",
+                "PROTECTIVE",
+            }:
+                response_text = f"{execution_plan.status_message}\n\n{response_text}"
 
             # ── Persist AI response ──
             Message.objects.create(
                 conversation=conversation,
                 sender='AI',
-                text=result.text,
+                text=response_text,
                 processing_time_ms=result.latency_ms,
             )
 
@@ -265,15 +329,29 @@ class AssistantService:
                 ],
                 "online_results": len(online_results),
                 "online_latency_ms": online_latency_ms,
+                "execution_ms": round(
+                    (time.perf_counter() - execution_started) * 1000
+                ),
             }
+            metadata.update(execution_plan.metadata())
+            metadata["effective_model"] = result.model or execution_plan.effective_model
 
-            return conversation, result.text, metadata, None
+            return conversation, response_text, metadata, None
 
+        except EngineTimeoutError:
+            logger.warning("Local AI generation timed out")
+            return conversation, None, None, (
+                "Local AI generation timed out before completing. Please try again."
+            )
+        except ModelUnavailableError:
+            logger.warning("Selected local AI model is unavailable")
+            return conversation, None, None, (
+                "The selected local AI model is not available on this device."
+            )
         except EngineUnavailableError as exc:
             logger.warning("AI engine unavailable: %s", exc)
             return conversation, None, None, (
-                "AI engine is currently unavailable. "
-                "Ensure the configured backend is running."
+                "The local AI service is currently unavailable or unreachable."
             )
         except Exception as exc:
             logger.exception("Unexpected error during AI inference")
@@ -308,6 +386,8 @@ def _persist_direct_response(
     latency_ms: int = 0,
     online_latency_ms: int = 0,
     metadata_updates: dict | None = None,
+    execution_plan: AIExecutionPlan | None = None,
+    execution_started: float | None = None,
 ) -> tuple:
     Message.objects.create(
         conversation=conversation,
@@ -332,6 +412,11 @@ def _persist_direct_response(
     }
     if metadata_updates:
         metadata.update(metadata_updates)
+    if execution_plan is not None:
+        metadata.update(execution_plan.metadata())
+        metadata["execution_ms"] = round(
+            (time.perf_counter() - execution_started) * 1000
+        ) if execution_started is not None else latency_ms
     return conversation, response_text, metadata, None
 
 

@@ -24,6 +24,7 @@ from assistant.ai_engine import get_engine, reset_engine, AIEngineResult, Engine
 from assistant.ai_engine.base import AIEngine
 from assistant.ai_engine.mock import MockAIEngine
 from assistant.ai_engine.local import LocalLLMEngine, SYSTEM_PROMPT
+from assistant.test_support import install_resource_report
 
 
 # ─── Original API Tests (preserved from baseline) ──────────────────
@@ -455,8 +456,8 @@ class LocalLLMEngineMockedTests(TestCase):
 
         with self.assertRaises(EngineUnavailableError) as ctx:
             self.engine.generate("test")
-        self.assertIn("not found", str(ctx.exception).lower())
-        self.assertIn("ollama pull", str(ctx.exception).lower())
+        self.assertIn("not installed", str(ctx.exception).lower())
+        self.assertNotIn("ollama pull", str(ctx.exception).lower())
 
     @patch("assistant.ai_engine.local.urllib.request.urlopen")
     def test_server_error_response(self, mock_urlopen):
@@ -541,6 +542,7 @@ class LocalLLMEngineMockedTests(TestCase):
 class AssistantServiceEngineIntegrationTests(TestCase):
     def setUp(self):
         reset_engine()
+        install_resource_report(self)
 
     def tearDown(self):
         reset_engine()
@@ -653,7 +655,7 @@ class AssistantServiceRequestInstructionTests(TestCase):
             "Use this runtime capability state",
             call_kwargs["system_instruction"],
         )
-        self.assertNotIn("num_predict", call_kwargs)
+        self.assertEqual(call_kwargs["num_predict"], 128)
         self.assertEqual(conversation.messages.count(), 2)
 
     @patch("assistant.services.get_engine")
@@ -705,6 +707,7 @@ class APIResponseMetadataTests(TestCase):
         self.client = APIClient()
         self.url = '/api/assistant/chat/'
         reset_engine()
+        install_resource_report(self)
 
     def tearDown(self):
         reset_engine()
@@ -731,13 +734,13 @@ class APIResponseMetadataTests(TestCase):
 
     @override_settings(AI_ENGINE="local", OLLAMA_MODEL="llama3.2:1b")
     @patch("assistant.ai_engine.local.urllib.request.urlopen")
-    def test_unavailable_engine_returns_500(self, mock_urlopen):
-        """When local engine is not reachable, API returns 500 with error."""
+    def test_unavailable_engine_returns_503(self, mock_urlopen):
+        """When local engine is not reachable, API returns a truthful 503."""
         import urllib.error
         mock_urlopen.side_effect = urllib.error.URLError("Connection refused")
         
         response = self.client.post(self.url, {'query': 'Hello'}, format='json')
-        self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
         self.assertIn('error', response.data)
 
     @override_settings(AI_ENGINE="local", OLLAMA_MODEL="llama3.2:1b")

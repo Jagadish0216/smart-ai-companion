@@ -34,6 +34,7 @@ from assistant.policy import (
 )
 from assistant.routing import QueryRoute, QueryRouteDecision
 from assistant.services import AssistantService
+from assistant.test_support import install_resource_report
 from knowledge_base.retrieval import RetrievedChunk
 
 
@@ -402,6 +403,9 @@ DEVICE_SETTINGS = {
 
 @override_settings(**DEVICE_SETTINGS)
 class DeviceServiceTests(TestCase):
+    def setUp(self):
+        install_resource_report(self)
+
     def controller_with_result(self, result):
         controller = MagicMock()
         controller.device_id = "companion-esp32-01"

@@ -13,6 +13,7 @@ from assistant.policy import (
     ResponseMode,
 )
 from assistant.services import AssistantService
+from assistant.test_support import install_resource_report
 
 
 @override_settings(
@@ -215,6 +216,9 @@ class AssistantResponsePolicyTests(TestCase):
     DEVICE_CONTROL_ENABLED=False,
 )
 class AssistantPolicyServiceTests(TestCase):
+    def setUp(self):
+        install_resource_report(self)
+
     @patch("assistant.services.get_engine")
     def test_normal_request_receives_capability_grounding(self, mock_get_engine):
         engine = MagicMock()
@@ -338,7 +342,7 @@ class AssistantPolicyServiceTests(TestCase):
         self.assertEqual(text, "A complete grounded answer.")
         self.assertEqual(
             engine.generate.call_args.kwargs["num_predict"],
-            plan.num_predict,
+            min(plan.num_predict, settings.AI_GENERATION_NORMAL_NUM_PREDICT),
         )
         request_instruction = engine.generate.call_args.kwargs["system_instruction"]
         self.assertIn(plan.system_instruction, request_instruction)

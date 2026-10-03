@@ -44,7 +44,12 @@ class AssistantView(TemplateView):
     def get_context_data(self, **kwargs):
 
         context = super().get_context_data(**kwargs)
-        context['chat_request_timeout_ms'] = settings.CHAT_REQUEST_TIMEOUT_SECONDS * 1000
+        backend_timeout = float(settings.AI_LOCAL_GENERATION_TIMEOUT_SECONDS)
+        browser_timeout = max(
+            float(settings.CHAT_REQUEST_TIMEOUT_SECONDS),
+            backend_timeout + float(settings.CHAT_BACKEND_TIMEOUT_MARGIN_SECONDS),
+        )
+        context['chat_request_timeout_ms'] = round(browser_timeout * 1000)
 
 
 

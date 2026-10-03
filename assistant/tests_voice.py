@@ -9,6 +9,7 @@ from rest_framework.test import APIClient
 from rest_framework import status
 
 from conversations.models import Conversation, Message
+from assistant.test_support import install_resource_report
 from assistant.voice.stt import WhisperCppProvider, STTError
 from assistant.voice.tts import PiperProvider, TTSError
 from assistant.voice.factory import get_stt_provider, reset_voice_providers
@@ -141,6 +142,7 @@ class VoiceAPITests(TestCase):
         self.client = APIClient()
         self.url = '/api/assistant/voice/transcribe/'
         reset_voice_providers()
+        install_resource_report(self)
 
     def tearDown(self):
         reset_voice_providers()
@@ -207,8 +209,8 @@ class VoiceAPITests(TestCase):
         mock_urlopen.side_effect = urllib.error.URLError("Connection refused")
 
         response = self.client.post(self.url, {'audio': self._get_audio_file()}, format='multipart')
-        self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
-        self.assertIn("could not generate", response.data['error'].lower())
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertEqual(response.data['error'], "AI unavailable")
 
     @override_settings(STT_ENGINE='mock', TTS_ENGINE='mock', AI_ENGINE='mock')
     @patch('assistant.views.subprocess.run')

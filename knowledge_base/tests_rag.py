@@ -4,6 +4,7 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase, override_settings
@@ -11,6 +12,7 @@ from django.test import SimpleTestCase, TestCase, override_settings
 from assistant.ai_engine.base import AIEngineResult
 from assistant.policy import AssistantResponsePolicy, Capability, CapabilityRegistry
 from assistant.services import AssistantService
+from assistant.test_support import install_resource_report
 from knowledge_base.chunking import chunk_text
 from knowledge_base.models import Document, KnowledgeChunk
 from knowledge_base.retrieval import LexicalRetriever
@@ -60,6 +62,7 @@ class TextChunkingTests(SimpleTestCase):
 class TemporaryMediaTestCase(TestCase):
     def setUp(self):
         super().setUp()
+        install_resource_report(self)
         self._media_directory = tempfile.TemporaryDirectory()
         self._settings_override = override_settings(
             MEDIA_ROOT=self._media_directory.name,
@@ -252,7 +255,10 @@ class RagAssistantServiceTests(TemporaryMediaTestCase):
         instruction = call.kwargs["system_instruction"]
         self.assertIsNone(error)
         self.assertEqual(call.args[0], query)
-        self.assertEqual(call.kwargs["num_predict"], plan.num_predict)
+        self.assertEqual(
+            call.kwargs["num_predict"],
+            min(plan.num_predict, settings.AI_GENERATION_NORMAL_NUM_PREDICT),
+        )
         self.assertIn(plan.system_instruction, instruction)
         self.assertIn("Use this runtime capability state", instruction)
         self.assertIn(EDGE_KNOWLEDGE, instruction)
@@ -304,7 +310,7 @@ class RagAssistantServiceTests(TemporaryMediaTestCase):
         self.assertIn(EDGE_KNOWLEDGE, instruction)
         self.assertEqual(
             engine.generate.call_args.kwargs["num_predict"],
-            plan.num_predict,
+            min(plan.num_predict, settings.AI_GENERATION_NORMAL_NUM_PREDICT),
         )
         self.assertTrue(metadata["rag_used"])
         self.assertEqual(metadata["rag_chunks"], 1)
@@ -332,7 +338,10 @@ class RagAssistantServiceTests(TemporaryMediaTestCase):
         self.assertIn("trusted local knowledge", instruction)
         self.assertNotIn("natural, connected spoken language", instruction)
         self.assertNotIn("one to three short spoken paragraphs", instruction)
-        self.assertNotIn("num_predict", call.kwargs)
+        self.assertEqual(
+            call.kwargs["num_predict"],
+            settings.AI_GENERATION_NORMAL_NUM_PREDICT,
+        )
         self.assertTrue(metadata["rag_used"])
         self.assertEqual(metadata["rag_chunks"], 1)
         self.assertEqual(metadata["rag_sources"][0]["title"], "edge-computing.md")

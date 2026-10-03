@@ -29,6 +29,7 @@ from assistant.online.searxng import (
 from assistant.policy import AssistantResponsePolicy, Capability, CapabilityRegistry
 from assistant.routing import QueryRoute, QueryRouteDecision
 from assistant.services import AssistantService
+from assistant.test_support import install_resource_report
 from assistant.views import _public_assistant_metadata
 from knowledge_base.retrieval import RetrievedChunk
 
@@ -411,6 +412,7 @@ class OnlineAvailabilityTests(SimpleTestCase):
 
 @override_settings(
     AI_ENGINE="local",
+    OLLAMA_MODEL="llama3.2:3b",
     RAG_ENABLED=False,
     ONLINE_RETRIEVAL_ENABLED=True,
     ONLINE_PROVIDER="searxng",
@@ -421,6 +423,9 @@ class OnlineAvailabilityTests(SimpleTestCase):
     DEVICE_CONTROL_ENABLED=False,
 )
 class OnlineServiceTests(TestCase):
+    def setUp(self):
+        install_resource_report(self, online_allowed=True)
+
     def make_engine(self, text="Python 3.14 is the current release."):
         engine = MagicMock()
         engine.generate.return_value = AIEngineResult(
@@ -466,7 +471,7 @@ class OnlineServiceTests(TestCase):
         self.assertFalse(metadata["rag_used"])
         self.assertEqual(metadata["rag_chunks"], 0)
         self.assertGreaterEqual(metadata["online_latency_ms"], 0)
-        self.assertEqual(set(metadata), {
+        self.assertTrue({
             "engine",
             "model",
             "mode",
@@ -479,7 +484,12 @@ class OnlineServiceTests(TestCase):
             "online_sources",
             "online_results",
             "online_latency_ms",
-        })
+        }.issubset(metadata))
+        self.assertEqual(
+            metadata["configured_model"],
+            metadata["effective_model"],
+        )
+        self.assertEqual(metadata["resource_profile"], "BALANCED")
         persisted = list(
             conversation.messages.order_by("id").values_list("sender", "text")
         )

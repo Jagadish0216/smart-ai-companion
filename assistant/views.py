@@ -24,6 +24,18 @@ def _public_assistant_metadata(metadata):
             "online_used",
             "online_results",
             "online_latency_ms",
+            "resource_profile",
+            "configured_model",
+            "effective_model",
+            "generation_budget",
+            "max_output_tokens",
+            "local_ai_allowed",
+            "online_allowed",
+            "execution_ms",
+            "policy_reason",
+            "model_reason",
+            "resource_policy_available",
+            "status_message",
             "action_used",
             "action_name",
             "device_id",
@@ -79,6 +91,25 @@ def _safe_public_source_url(value):
     except (ValueError, UnicodeError):
         return ""
 
+
+def _assistant_error_response(error: str) -> Response:
+    if error.startswith("Local AI generation timed out"):
+        label = "Generation timeout"
+        response_status = status.HTTP_504_GATEWAY_TIMEOUT
+    elif error.startswith("The selected local AI model"):
+        label = "Model unavailable"
+        response_status = status.HTTP_503_SERVICE_UNAVAILABLE
+    elif error.startswith("The local AI service"):
+        label = "AI unavailable"
+        response_status = status.HTTP_503_SERVICE_UNAVAILABLE
+    else:
+        label = "Processing error"
+        response_status = status.HTTP_500_INTERNAL_SERVER_ERROR
+    return Response(
+        {"error": label, "detail": error},
+        status=response_status,
+    )
+
 class ChatAPIView(APIView):
     def get(self, request):
         conversation_id = request.query_params.get('conversation_id')
@@ -124,10 +155,7 @@ class ChatAPIView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         elif error:
-            return Response(
-                {"error": "Processing error", "detail": error},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return _assistant_error_response(error)
 
         response_data = {
             "conversation_id": conversation.id,
@@ -278,10 +306,7 @@ class VoiceAPIView(APIView):
             # 2. Assistant inference
             conversation, ai_text, metadata, error = AssistantService.process_message(transcribed_text, conversation_id)
             if error:
-                return Response(
-                    {"error": "The local AI could not generate a response.", "detail": error},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                )
+                return _assistant_error_response(error)
 
             # 3. TTS
             tts_provider = get_tts_provider()

@@ -8,7 +8,13 @@ Engine selection is driven by the AI_ENGINE Django setting.
 import logging
 from typing import Optional
 
-from .base import AIEngine, AIEngineResult, EngineUnavailableError
+from .base import (
+    AIEngine,
+    AIEngineResult,
+    EngineTimeoutError,
+    EngineUnavailableError,
+    ModelUnavailableError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +90,8 @@ __all__ = [
     "AIEngine",
     "AIEngineResult",
     "EngineUnavailableError",
+    "EngineTimeoutError",
+    "ModelUnavailableError",
     "get_engine",
     "reset_engine",
 ]

@@ -46,6 +46,8 @@ class AIEngine(ABC):
         conversation_history: list | None = None,
         system_instruction: str | None = None,
         num_predict: int | None = None,
+        model: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> AIEngineResult:
         """
         Generate a response for the given query.
@@ -57,6 +59,8 @@ class AIEngine(ABC):
                                   for context-aware responses.
             system_instruction: Optional instruction scoped to this request.
             num_predict: Optional request-scoped generation-token budget.
+            model: Optional trusted server-selected model override.
+            timeout_seconds: Optional bounded request-scoped backend timeout.
 
         Returns:
             AIEngineResult with the response text and metadata.
@@ -82,3 +86,11 @@ class AIEngine(ABC):
 class EngineUnavailableError(Exception):
     """Raised when an engine cannot be initialized or is unreachable."""
     pass
+
+
+class EngineTimeoutError(EngineUnavailableError):
+    """Raised when generation exceeds its bounded backend timeout."""
+
+
+class ModelUnavailableError(EngineUnavailableError):
+    """Raised when the selected local model is not installed."""

@@ -10,6 +10,7 @@ from assistant.ai_engine.base import AIEngineResult
 from assistant.policy import CapabilityRegistry
 from assistant.routing import QueryRoute, QueryRouter
 from assistant.services import AssistantService
+from assistant.test_support import install_resource_report
 from knowledge_base.retrieval import RetrievedChunk
 from knowledge_base.services import KnowledgeIngestionService
 
@@ -29,6 +30,7 @@ RELAY_KNOWLEDGE = (
 class RouterTestCase(TestCase):
     def setUp(self):
         super().setUp()
+        install_resource_report(self)
         self._media_directory = tempfile.TemporaryDirectory()
         self._settings_override = override_settings(
             MEDIA_ROOT=self._media_directory.name,

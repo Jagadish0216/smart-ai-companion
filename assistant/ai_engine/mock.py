@@ -30,6 +30,8 @@ class MockAIEngine(AIEngine):
         conversation_history: list | None = None,
         system_instruction: str | None = None,
         num_predict: int | None = None,
+        model: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> AIEngineResult:
         start = time.perf_counter()
 
