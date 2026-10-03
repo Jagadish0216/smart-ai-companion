@@ -85,6 +85,48 @@ h2 { margin-bottom: .25rem; font-size: 1rem; }
 .setup-message { min-height: 1.5rem; margin: .9rem 0; color: var(--muted); }
 .setup-message.error { color: var(--danger); }
 
+.handoff-panel {
+    display: grid;
+    grid-template-columns: 44px 1fr;
+    gap: 1rem;
+    margin-top: 1.25rem;
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--surface-raised);
+}
+
+.handoff-panel.hidden { display: none; }
+.handoff-panel p { margin: .35rem 0 0; color: var(--muted); line-height: 1.5; }
+.handoff-panel .handoff-guidance { margin-top: .7rem; color: #d3deea; }
+.handoff-panel .button { margin-top: .85rem; }
+
+.handoff-icon {
+    display: grid;
+    width: 44px;
+    height: 44px;
+    place-items: center;
+    border-radius: 50%;
+    background: #24364d;
+    color: var(--accent);
+    font-weight: 850;
+}
+
+.handoff-panel[data-phase="CONNECTING"] .handoff-icon,
+.handoff-panel[data-phase="WAITING_FOR_NETWORK"] .handoff-icon {
+    animation: handoffPulse 1.4s ease-in-out infinite;
+}
+
+.handoff-panel[data-phase="SUCCESS"] { border-color: #28665d; background: var(--accent-dark); }
+.handoff-panel[data-phase="SUCCESS"] .handoff-icon { background: var(--accent); color: #06231f; }
+.handoff-panel[data-phase="FAILURE"] { border-color: #7b3d43; }
+.handoff-panel[data-phase="FAILURE"] .handoff-icon { background: #51272c; color: var(--danger); }
+
+@keyframes handoffPulse {
+    0%, 100% { opacity: .55; transform: scale(.94); }
+    50% { opacity: 1; transform: scale(1); }
+}
+
 .setup-toolbar {
     display: flex;
     align-items: center;

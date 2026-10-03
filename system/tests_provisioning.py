@@ -373,6 +373,93 @@ class SetupPortalTests(TestCase):
                 response = self.client.post(url) if url.endswith("connect/") else self.client.get(url)
                 self.assertEqual(response.status_code, 404)
 
+    def test_handoff_status_is_reachable_in_setup_mode(self):
+        self.activate_setup()
+
+        response = self.client.get("/api/system/setup/handoff-status/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Cache-Control"], "no-store")
+        self.assertEqual(response.json()["state"], "SETUP_AP")
+        self.assertFalse(response.json()["ready"])
+        self.assertIsNone(response.json()["connected_ssid"])
+
+    def test_handoff_status_is_reachable_while_connecting(self):
+        self.state.state = NetworkProvisioningState.State.CONNECTING
+        self.state.save()
+
+        response = self.client.get("/api/system/setup/handoff-status/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["state"], "CONNECTING")
+        self.assertFalse(response.json()["ready"])
+
+    def test_handoff_status_is_reachable_in_failed_state(self):
+        self.state.state = NetworkProvisioningState.State.FAILED
+        self.state.last_error = "The setup network could not be restored."
+        self.state.save()
+
+        response = self.client.get("/api/system/setup/handoff-status/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["state"], "FAILED")
+        self.assertFalse(response.json()["ready"])
+        self.assertEqual(response.json()["last_result"], "FAILED")
+
+    @patch("system.control_plane.provisioning.network.get_network_status")
+    def test_normal_handoff_reports_authoritative_unicode_ssid(self, network_status):
+        ssid = "Sravani’s iPhone 東京"
+        self.state.state = NetworkProvisioningState.State.NORMAL_MODE
+        self.state.save()
+        network_status.return_value = {
+            "wifi": {"connected": True, "ssid": ssid},
+            "internet": {"state": "NONE", "available": False},
+        }
+
+        response = self.client.get("/api/system/setup/handoff-status/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ready"])
+        self.assertEqual(response.json()["state"], "NORMAL_MODE")
+        self.assertEqual(response.json()["connected_ssid"], ssid)
+        self.assertEqual(
+            response.json()["canonical_url"],
+            "http://smart-ai-companion.local:8000/",
+        )
+
+    def test_handoff_failure_marker_exposes_no_credentials_or_raw_error(self):
+        self.state.state = NetworkProvisioningState.State.SETUP_AP
+        self.state.last_error = (
+            "nmcli stderr: private-target-password deployment-setup-secret"
+        )
+        self.state.save()
+
+        response = self.client.get("/api/system/setup/handoff-status/")
+        payload = response.content.decode()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["last_result"], "FAILED")
+        self.assertNotIn("private-target-password", payload)
+        self.assertNotIn("deployment-setup-secret", payload)
+        self.assertNotIn("nmcli", payload.lower())
+        self.assertNotIn("stderr", payload.lower())
+
+    @patch("system.views.provision_wifi")
+    def test_connecting_mode_allows_handoff_but_blocks_setup_mutation(self, provision):
+        self.state.state = NetworkProvisioningState.State.CONNECTING
+        self.state.save()
+
+        handoff = self.client.get("/api/system/setup/handoff-status/")
+        mutation = self.client.post(
+            "/api/system/setup/wifi/connect/",
+            {"ssid": "Home", "password": "private-password"},
+            content_type="application/json",
+        )
+
+        self.assertEqual(handoff.status_code, 200)
+        self.assertEqual(mutation.status_code, 404)
+        provision.assert_not_called()
+
     def test_setup_page_is_local_minimal_and_uses_canonical_hostname(self):
         self.activate_setup()
 
@@ -383,6 +470,11 @@ class SetupPortalTests(TestCase):
         self.assertContains(response, "smart-ai-companion.local:8000")
         self.assertContains(response, "/static/css/setup.css")
         self.assertContains(response, "/static/js/setup.js")
+        self.assertContains(response, 'id="setup-handoff-panel"')
+        self.assertContains(response, 'id="setup-handoff-retry"')
+        self.assertContains(response, "Companion will leave this setup network")
+        self.assertContains(response, "If connection fails, reconnect to")
+        self.assertContains(response, "smart-ai-companion.local:8000/setup/")
         self.assertNotContains(response, "unpkg.com")
         self.assertNotContains(response, "Control Center")
         self.assertNotContains(response, "deployment-setup-secret")
@@ -480,6 +572,57 @@ class SetupPortalTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         connect.assert_not_called()
+
+
+class SetupHandoffFrontendTests(SimpleTestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.script = (
+            Path(settings.BASE_DIR) / "static" / "js" / "setup.js"
+        ).read_text(encoding="utf-8")
+
+    def test_script_defines_handoff_phases_and_expected_disconnect_behavior(self):
+        for phase in (
+            "IDLE",
+            "CONNECTING",
+            "WAITING_FOR_NETWORK",
+            "SUCCESS",
+            "FAILURE",
+            "TIMED_OUT",
+        ):
+            self.assertIn(f"{phase}: '{phase}'", self.script)
+        self.assertIn("Losing this POST response is expected", self.script)
+        self.assertIn("startHandoffPolling(targetSsid);", self.script)
+        self.assertNotIn("Connection failed. The setup network has been restored.", self.script)
+
+    def test_script_uses_bounded_non_cached_single_loop_polling(self):
+        self.assertIn("const HANDOFF_POLL_INTERVAL_MS = 2500;", self.script)
+        self.assertIn("const HANDOFF_REQUEST_TIMEOUT_MS = 4000;", self.script)
+        self.assertIn("const HANDOFF_OVERALL_TIMEOUT_MS = 90000;", self.script)
+        self.assertIn("const controller = new AbortController();", self.script)
+        self.assertIn("cache: 'no-store'", self.script)
+        self.assertIn("let polling = false;", self.script)
+        self.assertIn("let pollRunId = 0;", self.script)
+        self.assertIn("Date.now() < deadline", self.script)
+
+    def test_script_redirects_only_after_confirmed_normal_mode(self):
+        self.assertIn("status.state === 'NORMAL_MODE'", self.script)
+        self.assertIn("status.ready === true", self.script)
+        self.assertIn("showSuccess(status.connected_ssid);", self.script)
+        self.assertIn("window.location.assign('/');", self.script)
+        self.assertIn("const SUCCESS_REDIRECT_DELAY_MS = 2000;", self.script)
+        self.assertNotRegex(self.script, r"(?:192\.168\.|172\.\d+\.|10\.42\.)")
+
+    def test_script_failure_allows_retry_and_timeout_is_neutral(self):
+        self.assertIn("connectButton.disabled = false;", self.script)
+        self.assertIn("Check the Wi-Fi password and try again.", self.script)
+        self.assertIn("Retry connection check", (
+            Path(settings.BASE_DIR) / "templates" / "setup" / "index.html"
+        ).read_text(encoding="utf-8"))
+        self.assertIn("We couldn't reach Smart Companion yet.", self.script)
+        self.assertIn("Make sure this device is connected to", self.script)
+        self.assertNotIn("Provisioning failed because Companion could not be reached", self.script)
 
 
 class ProvisioningCommandAndDeploymentTests(SimpleTestCase):

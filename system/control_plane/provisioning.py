@@ -54,7 +54,42 @@ def setup_ssid(device_seed: str | None = None) -> str:
 
 
 def setup_mode_available() -> bool:
-    return NetworkProvisioningState.get_current().state in SETUP_STATES
+    return current_provisioning_state() in SETUP_STATES
+
+
+def current_provisioning_state() -> str:
+    return NetworkProvisioningState.get_current().state
+
+
+def get_handoff_status() -> dict[str, Any]:
+    """Return the minimal read-only state needed by the setup handoff UI."""
+    current = NetworkProvisioningState.get_current()
+    ready = current.state == NetworkProvisioningState.State.NORMAL_MODE
+    connected_ssid = None
+    if ready:
+        try:
+            wifi = network.get_network_status().get("wifi", {})
+        except Exception:
+            wifi = {}
+        if wifi.get("connected") and isinstance(wifi.get("ssid"), str):
+            connected_ssid = wifi["ssid"]
+
+    result = {
+        "state": current.state,
+        "ready": ready,
+        "connected_ssid": connected_ssid,
+        "canonical_url": settings.COMPANION_CANONICAL_URL,
+    }
+    if (
+        current.state == NetworkProvisioningState.State.FAILED
+        or (
+            current.state == NetworkProvisioningState.State.SETUP_AP
+            and current.last_error
+        )
+    ):
+        # The marker is intentionally generic; last_error is never exposed.
+        result["last_result"] = "FAILED"
+    return result
 
 
 def get_setup_status() -> dict[str, Any]:

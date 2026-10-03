@@ -14,6 +14,7 @@ from .control_plane.network import (
     scan_wifi_networks,
 )
 from .control_plane.provisioning import (
+    get_handoff_status,
     get_setup_status,
     provision_wifi,
     setup_mode_available,
@@ -92,6 +93,16 @@ class SetupStatusAPIView(APIView):
         if not setup_mode_available():
             return _setup_unavailable_response()
         return Response(get_setup_status())
+
+
+class SetupHandoffStatusAPIView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        response = Response(get_handoff_status())
+        response["Cache-Control"] = "no-store"
+        return response
 
 
 class SetupWifiScanAPIView(APIView):
