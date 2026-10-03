@@ -56,9 +56,11 @@ class SystemAPITests(TestCase):
         expected_keys = [
             'device_name', 'status', 'hostname', 'platform', 'architecture',
             'cpu_count', 'cpu_percent', 'uptime_seconds', 'ram_percent',
+            'ram_used_bytes', 'ram_total_bytes', 'ram_available_bytes',
             'ram_used_gb', 'ram_total_gb', 'ram_available_gb',
             'storage_percent', 'storage_total_gb', 'storage_used_gb',
-            'storage_free_gb', 'temperature_c', 'load_1m', 'load_5m',
+            'storage_free_gb', 'storage_total_bytes', 'storage_used_bytes',
+            'storage_free_bytes', 'temperature_c', 'load_1m', 'load_5m',
             'load_15m', 'throttled', 'network', 'audio_status',
             'display_status'
         ]

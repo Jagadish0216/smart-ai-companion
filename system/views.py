@@ -19,6 +19,7 @@ from .control_plane.provisioning import (
     provision_wifi,
     setup_mode_available,
 )
+from .control_plane.resource_manager import get_resource_manager_report
 from .services import get_device_metrics
 from .models import SystemLog
 
@@ -26,6 +27,16 @@ class DeviceMetricsAPIView(APIView):
     def get(self, request):
         metrics = get_device_metrics()
         return Response(metrics)
+
+
+class ResourceManagerAPIView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        response = Response(get_resource_manager_report())
+        response["Cache-Control"] = "no-store"
+        return response
 
 
 class NetworkStatusAPIView(APIView):

@@ -4,6 +4,7 @@ from .views import (
     CompanionStateAPIView,
     DeviceMetricsAPIView,
     NetworkStatusAPIView,
+    ResourceManagerAPIView,
     ServiceHealthAPIView,
     SetupHandoffStatusAPIView,
     SetupStatusAPIView,
@@ -16,6 +17,7 @@ from .views import (
 
 urlpatterns = [
     path('metrics/', DeviceMetricsAPIView.as_view(), name='api-metrics'),
+    path('resource-manager/', ResourceManagerAPIView.as_view(), name='api-resource-manager'),
     path('network/', NetworkStatusAPIView.as_view(), name='api-network'),
     path('network/wifi/scan/', WifiScanAPIView.as_view(), name='api-wifi-scan'),
     path('network/wifi/connect/', WifiConnectAPIView.as_view(), name='api-wifi-connect'),

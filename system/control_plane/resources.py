@@ -312,10 +312,24 @@ def get_resource_metrics() -> dict[str, Any]:
         "cpu_percent": _round(_cpu_percent()),
         "uptime_seconds": _round(_uptime_seconds()),
         "ram_percent": _round(memory["percent"]),
+        "ram_used_bytes": int(memory["used"]) if memory["used"] is not None else None,
+        "ram_total_bytes": int(memory["total"]) if memory["total"] is not None else None,
+        "ram_available_bytes": (
+            int(memory["available"]) if memory["available"] is not None else None
+        ),
         "ram_used_gb": gib(memory["used"]),
         "ram_total_gb": gib(memory["total"]),
         "ram_available_gb": gib(memory["available"]),
         "storage_percent": _round(storage["percent"]),
+        "storage_total_bytes": (
+            int(storage["total"]) if storage["total"] is not None else None
+        ),
+        "storage_used_bytes": (
+            int(storage["used"]) if storage["used"] is not None else None
+        ),
+        "storage_free_bytes": (
+            int(storage["free"]) if storage["free"] is not None else None
+        ),
         "storage_total_gb": gib(storage["total"]),
         "storage_used_gb": gib(storage["used"]),
         "storage_free_gb": gib(storage["free"]),

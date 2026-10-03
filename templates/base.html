@@ -244,6 +244,18 @@
 
         <li>
 
+            <a href="{% url 'resource-manager' %}" class="nav-item {% if request.path == '/resource-manager/' %}active{% endif %}">
+
+                <i data-lucide="gauge"></i>
+
+                Resource Manager
+
+            </a>
+
+        </li>
+
+        <li>
+
             <a href="{% url 'network' %}" class="nav-item {% if request.path == '/network/' %}active{% endif %}">
 
                 <i data-lucide="wifi"></i>

@@ -8,6 +8,7 @@ from .views import (
     KnowledgeBaseView,
     LogsView,
     NetworkView,
+    ResourceManagerView,
     SettingsView,
     SetupView,
 )
@@ -20,6 +21,7 @@ urlpatterns = [
     path('conversations/', ConversationsView.as_view(), name='conversations'),
     path('knowledge/', KnowledgeBaseView.as_view(), name='knowledge'),
     path('device/', DeviceStatusView.as_view(), name='device'),
+    path('resource-manager/', ResourceManagerView.as_view(), name='resource-manager'),
     path('network/', NetworkView.as_view(), name='network'),
     path('logs/', LogsView.as_view(), name='logs'),
     path('settings/', SettingsView.as_view(), name='settings'),

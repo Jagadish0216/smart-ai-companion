@@ -1880,6 +1880,89 @@ input[type="range"]::-webkit-slider-thumb {
 
 .page-header-desc { font-size: 0.8125rem; color: var(--text-secondary); }
 
+/* Resource-aware edge manager */
+.resource-manager-hero {
+    display: grid;
+    grid-template-columns: minmax(150px, .7fr) minmax(150px, .7fr) minmax(260px, 2fr);
+    gap: var(--sp-5);
+    align-items: center;
+    border-left: 3px solid var(--accent);
+}
+
+.resource-manager-hero[data-health="CAUTION"] { border-left-color: var(--warning); }
+.resource-manager-hero[data-health="CONSTRAINED"],
+.resource-manager-hero[data-health="CRITICAL"] { border-left-color: var(--error); }
+.resource-manager-hero[data-health="UNKNOWN"] { border-left-color: var(--text-muted); }
+
+.resource-health-value,
+.resource-profile-value {
+    margin-top: var(--sp-2);
+    font-family: var(--font-display);
+    font-size: 1.35rem;
+    font-weight: 650;
+    letter-spacing: .02em;
+}
+
+.resource-profile-value { color: var(--accent); }
+.resource-manager-explanation { color: var(--text-secondary); line-height: 1.6; }
+.resource-grid { align-items: stretch; }
+.resource-card { min-height: 150px; }
+
+.resource-card-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-3);
+    font-size: .875rem;
+    font-weight: 600;
+}
+
+.resource-card-value {
+    margin: var(--sp-4) 0 var(--sp-2);
+    color: var(--text-primary);
+    font-family: var(--font-display);
+    font-size: 1.15rem;
+    font-weight: 600;
+}
+
+.resource-reasons { display: grid; gap: var(--sp-3); }
+.resource-reason {
+    display: grid;
+    grid-template-columns: minmax(130px, auto) 1fr;
+    gap: var(--sp-3);
+    padding: var(--sp-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: .8125rem;
+    line-height: 1.45;
+}
+
+.resource-reason-code { color: var(--text-primary); font-weight: 650; }
+.resource-reason.caution { border-color: var(--warning-border); }
+.resource-reason.constrained,
+.resource-reason.critical { border-color: var(--error-border); }
+.resource-reason.healthy { border-color: var(--success-border); }
+.resource-manager-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--sp-4);
+    color: var(--text-muted);
+    font-size: .75rem;
+}
+
+@media (max-width: 900px) {
+    .resource-manager-hero { grid-template-columns: 1fr 1fr; }
+    .resource-manager-explanation { grid-column: 1 / -1; }
+}
+
+@media (max-width: 560px) {
+    .resource-manager-hero { grid-template-columns: 1fr; }
+    .resource-manager-explanation { grid-column: auto; }
+    .resource-reason { grid-template-columns: 1fr; }
+    .resource-manager-meta { flex-direction: column; }
+}
+
 
 
 /* ── Settings Section ──────────────────────────────────────── */

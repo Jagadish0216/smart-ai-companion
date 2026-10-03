@@ -109,6 +109,11 @@ class DeviceStatusView(TemplateView):
     template_name = 'dashboard/device.html'
 
 
+class ResourceManagerView(TemplateView):
+
+    template_name = 'dashboard/resource_manager.html'
+
+
 @method_decorator(ensure_csrf_cookie, name='dispatch')
 class NetworkView(TemplateView):
 

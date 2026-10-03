@@ -7,6 +7,8 @@ from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.test import Client, TestCase, override_settings
 
+from system.models import NetworkProvisioningState
+
 from .context_processors import HEADER_INTERNET_CACHE_KEY
 
 
@@ -173,3 +175,53 @@ class NetworkDashboardTests(TestCase):
         connect.assert_called_once_with(ssid, 'private-password')
         self.assertEqual(accepted.json()['ssid'], ssid)
         self.assertNotIn('private-password', accepted.content.decode())
+
+
+class ResourceManagerDashboardTests(TestCase):
+    def setUp(self):
+        self.provisioning_state = NetworkProvisioningState.get_current()
+        self.provisioning_state.state = NetworkProvisioningState.State.NORMAL_MODE
+        self.provisioning_state.save(update_fields=['state', 'updated_at'])
+
+    def test_resource_manager_page_exposes_product_facing_health_sections(self):
+        response = self.client.get('/resource-manager/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'System Health &amp; Resource Manager')
+        self.assertContains(response, 'id="resource-overall-health"')
+        self.assertContains(response, 'id="resource-profile"')
+        self.assertContains(response, 'id="resource-cpu-value"')
+        self.assertContains(response, 'id="resource-memory-value"')
+        self.assertContains(response, 'id="resource-storage-value"')
+        self.assertContains(response, 'id="resource-temperature-value"')
+        self.assertContains(response, 'id="resource-network-value"')
+        self.assertContains(response, 'id="resource-ai-value"')
+        self.assertContains(response, '/static/js/resource_manager.js')
+
+    def test_resource_manager_script_uses_live_api_and_honest_unknown_values(self):
+        script = (
+            Path(settings.BASE_DIR) / 'static' / 'js' / 'resource_manager.js'
+        ).read_text(encoding='utf-8')
+
+        self.assertIn("const endpoint = '/api/system/resource-manager/';", script)
+        self.assertIn("cache: 'no-store'", script)
+        self.assertIn("return 'Unavailable';", script)
+        self.assertIn('reason.message', script)
+        self.assertNotIn('Math.random', script)
+
+    def test_resource_manager_page_redirects_during_setup_and_connecting_modes(self):
+        for provisioning_state in (
+            NetworkProvisioningState.State.SETUP_AP,
+            NetworkProvisioningState.State.CONNECTING,
+        ):
+            with self.subTest(provisioning_state=provisioning_state):
+                self.provisioning_state.state = provisioning_state
+                self.provisioning_state.save(update_fields=['state', 'updated_at'])
+
+                response = self.client.get('/resource-manager/')
+
+                self.assertRedirects(
+                    response,
+                    '/setup/',
+                    fetch_redirect_response=False,
+                )

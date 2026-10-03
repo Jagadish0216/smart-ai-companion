@@ -1,0 +1,89 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block page_title %}Resource Manager{% endblock %}
+{% block page_heading %}Resource Manager{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-header-title">System Health &amp; Resource Manager</div>
+    <div class="page-header-desc">Read-only, deterministic recommendations based on live edge-device telemetry.</div>
+</div>
+
+<section class="resource-manager-hero card" id="resource-manager" aria-live="polite">
+    <div>
+        <div class="label">System health</div>
+        <div class="resource-health-value" id="resource-overall-health">Loading</div>
+    </div>
+    <div>
+        <div class="label">Resource profile</div>
+        <div class="resource-profile-value" id="resource-profile">—</div>
+    </div>
+    <div class="resource-manager-explanation" id="resource-explanation">
+        Collecting current device conditions…
+    </div>
+</section>
+
+<div class="grid grid-3 resource-grid mt-5">
+    <article class="card resource-card" data-resource="cpu">
+        <div class="resource-card-heading"><span>CPU</span><span class="badge badge-neutral" id="resource-cpu-level">—</span></div>
+        <div class="resource-card-value" id="resource-cpu-value">Unavailable</div>
+        <div class="text-sm text-secondary" id="resource-cpu-detail">Waiting for telemetry.</div>
+    </article>
+    <article class="card resource-card" data-resource="memory">
+        <div class="resource-card-heading"><span>Memory</span><span class="badge badge-neutral" id="resource-memory-level">—</span></div>
+        <div class="resource-card-value" id="resource-memory-value">Unavailable</div>
+        <div class="text-sm text-secondary" id="resource-memory-detail">Waiting for telemetry.</div>
+    </article>
+    <article class="card resource-card" data-resource="storage">
+        <div class="resource-card-heading"><span>Storage</span><span class="badge badge-neutral" id="resource-storage-level">—</span></div>
+        <div class="resource-card-value" id="resource-storage-value">Unavailable</div>
+        <div class="text-sm text-secondary" id="resource-storage-detail">Waiting for telemetry.</div>
+    </article>
+    <article class="card resource-card" data-resource="temperature">
+        <div class="resource-card-heading"><span>Temperature</span><span class="badge badge-neutral" id="resource-temperature-level">—</span></div>
+        <div class="resource-card-value" id="resource-temperature-value">Unavailable</div>
+        <div class="text-sm text-secondary" id="resource-temperature-detail">Waiting for telemetry.</div>
+    </article>
+    <article class="card resource-card" data-resource="network">
+        <div class="resource-card-heading"><span>Network</span><span class="badge badge-neutral" id="resource-network-level">—</span></div>
+        <div class="resource-card-value" id="resource-network-value">Unavailable</div>
+        <div class="text-sm text-secondary" id="resource-network-detail">Waiting for telemetry.</div>
+    </article>
+    <article class="card resource-card" data-resource="ai">
+        <div class="resource-card-heading"><span>AI</span><span class="badge badge-neutral" id="resource-ai-level">—</span></div>
+        <div class="resource-card-value" id="resource-ai-value">Unavailable</div>
+        <div class="text-sm text-secondary" id="resource-ai-detail">Waiting for telemetry.</div>
+    </article>
+</div>
+
+<div class="grid grid-2 mt-5">
+    <section class="card">
+        <div class="card-title mb-3">Why this profile?</div>
+        <div class="resource-reasons" id="resource-reasons">
+            <div class="text-sm text-secondary">No policy result yet.</div>
+        </div>
+    </section>
+    <section class="card">
+        <div class="card-title mb-3">Recommendations</div>
+        <div class="info-row"><span class="info-row-label">Preferred model</span><span class="info-row-value" id="resource-model-class">—</span></div>
+        <div class="info-row"><span class="info-row-label">Generation budget</span><span class="info-row-value" id="resource-generation-budget">—</span></div>
+        <div class="info-row"><span class="info-row-label">Local AI allowed</span><span class="info-row-value" id="resource-local-ai">—</span></div>
+        <div class="info-row"><span class="info-row-label">Storage actions</span><span class="info-row-value" id="resource-storage-actions">—</span></div>
+        <div class="info-row"><span class="info-row-label">Services ready</span><span class="info-row-value" id="resource-services">—</span></div>
+    </section>
+</div>
+
+<div class="resource-manager-meta mt-5">
+    <span id="resource-generated-at">Snapshot unavailable</span>
+    <span id="resource-timing">Collection time unavailable</span>
+</div>
+
+<div class="network-message error hidden mt-5" id="resource-manager-error" role="alert">
+    Resource Manager data is temporarily unavailable. Existing device functions are unaffected.
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/resource_manager.js' %}?v=1"></script>
+{% endblock %}
