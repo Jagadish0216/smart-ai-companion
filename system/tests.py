@@ -508,10 +508,11 @@ class WifiNetworkControlTests(SimpleTestCase):
                 self.assertEqual(result['state'], 'INVALID')
                 self.assertFalse(result['success'])
 
+    @patch('system.control_plane.network._find_saved_wifi_profile', return_value=(None, 'OK'))
     @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
     @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
     @patch('system.control_plane.network.subprocess.run')
-    def test_connect_uses_bounded_argument_array(self, run, _which, _interface):
+    def test_connect_uses_bounded_argument_array(self, run, _which, _interface, _saved):
         run.return_value = subprocess.CompletedProcess(
             args=[], returncode=0, stdout=b'success', stderr=b''
         )
@@ -530,10 +531,13 @@ class WifiNetworkControlTests(SimpleTestCase):
             network.WIFI_CONNECT_TIMEOUT_SECONDS,
         )
 
+    @patch('system.control_plane.network._find_saved_wifi_profile', return_value=(None, 'OK'))
     @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
     @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
     @patch('system.control_plane.network.subprocess.run')
-    def test_connect_preserves_ssid_characters_exactly(self, run, _which, _interface):
+    def test_connect_preserves_ssid_characters_exactly(
+        self, run, _which, _interface, _saved
+    ):
         run.return_value = subprocess.CompletedProcess(
             args=[], returncode=0, stdout=b'success', stderr=b''
         )
@@ -556,11 +560,12 @@ class WifiNetworkControlTests(SimpleTestCase):
                 self.assertEqual(command[command.index('connect') + 1], ssid)
                 self.assertNotIn('private-password', str(result))
 
+    @patch('system.control_plane.network._find_saved_wifi_profile', return_value=(None, 'OK'))
     @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
     @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
     @patch('system.control_plane.network.subprocess.run')
     def test_missing_ap_cache_is_refreshed_once_without_scan_result_gate(
-        self, run, _which, _interface
+        self, run, _which, _interface, _saved
     ):
         ssid = 'Sravani\u2019s iPhone'
         run.side_effect = (
@@ -600,11 +605,12 @@ class WifiNetworkControlTests(SimpleTestCase):
             network.WIFI_RETRY_SCAN_TIMEOUT_SECONDS,
         )
 
+    @patch('system.control_plane.network._find_saved_wifi_profile', return_value=(None, 'OK'))
     @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
     @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
     @patch('system.control_plane.network.subprocess.run')
     def test_non_network_not_found_error_is_not_misreported_or_retried(
-        self, run, _which, _interface
+        self, run, _which, _interface, _saved
     ):
         run.return_value = subprocess.CompletedProcess(
             args=[],
@@ -634,11 +640,12 @@ class WifiNetworkControlTests(SimpleTestCase):
         )
         self.assertFalse(network._network_not_found("Device 'wlan0' not found."))
 
+    @patch('system.control_plane.network._find_saved_wifi_profile', return_value=(None, 'OK'))
     @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
     @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
     @patch('system.control_plane.network.subprocess.run')
     def test_subprocess_timeout_returns_safe_unknown_state(
-        self, run, _which, _interface
+        self, run, _which, _interface, _saved
     ):
         run.side_effect = subprocess.TimeoutExpired('nmcli', 10)
 
@@ -648,11 +655,12 @@ class WifiNetworkControlTests(SimpleTestCase):
         self.assertEqual(result['state'], 'UNKNOWN')
         self.assertNotIn('private-password', str(result))
 
+    @patch('system.control_plane.network._find_saved_wifi_profile', return_value=(None, 'OK'))
     @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
     @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
     @patch('system.control_plane.network.subprocess.run')
     def test_nmcli_wait_timeout_returns_connecting_state(
-        self, run, _which, _interface
+        self, run, _which, _interface, _saved
     ):
         run.return_value = subprocess.CompletedProcess(
             args=[], returncode=3, stdout=b'', stderr=b'operation timed out'
@@ -664,11 +672,12 @@ class WifiNetworkControlTests(SimpleTestCase):
         self.assertEqual(result['state'], 'CONNECTING')
         self.assertNotIn('private-password', str(result))
 
+    @patch('system.control_plane.network._find_saved_wifi_profile', return_value=(None, 'OK'))
     @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
     @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
     @patch('system.control_plane.network.subprocess.run')
     def test_connect_failure_maps_raw_error_to_safe_message(
-        self, run, _which, _interface
+        self, run, _which, _interface, _saved
     ):
         run.return_value = subprocess.CompletedProcess(
             args=[],
@@ -688,11 +697,12 @@ class WifiNetworkControlTests(SimpleTestCase):
         self.assertNotIn('private-password', str(result))
         self.assertNotIn('secrets were required', str(result))
 
+    @patch('system.control_plane.network._find_saved_wifi_profile', return_value=(None, 'OK'))
     @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
     @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
     @patch('system.control_plane.network.subprocess.run')
     def test_connect_fails_safely_for_undecodable_nmcli_stderr(
-        self, run, _which, _interface
+        self, run, _which, _interface, _saved
     ):
         run.return_value = subprocess.CompletedProcess(
             args=[],
@@ -710,6 +720,337 @@ class WifiNetworkControlTests(SimpleTestCase):
             'The connection result could not be determined.',
         )
         self.assertNotIn('private-password', str(result))
+
+    @patch('system.control_plane.network._wifi_profile_properties')
+    @patch('system.control_plane.network._connection_profiles')
+    def test_saved_profiles_are_identified_by_authoritative_ssid(
+        self, profiles, properties
+    ):
+        profiles.return_value = (
+            [
+                {
+                    'name': network.SETUP_AP_PROFILE_NAME,
+                    'uuid': 'setup-uuid',
+                    'type': '802-11-wireless',
+                    'device': '',
+                },
+                {
+                    'name': 'netplan-wlan0-JYOTHI 2015',
+                    'uuid': 'jyothi-uuid',
+                    'type': '802-11-wireless',
+                    'device': '',
+                },
+                {
+                    'name': 'Other Hotspot',
+                    'uuid': 'hotspot-uuid',
+                    'type': '802-11-wireless',
+                    'device': '',
+                },
+            ],
+            'OK',
+        )
+        properties.side_effect = (
+            {
+                **profiles.return_value[0][1],
+                'mode': 'infrastructure',
+                'ssid': 'JYOTHI 2015',
+                'key_mgmt': '',
+            },
+            {
+                **profiles.return_value[0][2],
+                'mode': 'ap',
+                'ssid': 'Other Hotspot',
+                'key_mgmt': 'wpa-psk',
+            },
+        )
+
+        match, state = network._find_saved_wifi_profile(
+            '/usr/bin/nmcli', 'JYOTHI 2015'
+        )
+
+        self.assertEqual(state, 'OK')
+        self.assertEqual(match['name'], 'netplan-wlan0-JYOTHI 2015')
+        self.assertEqual(match['ssid'], 'JYOTHI 2015')
+        self.assertEqual(properties.call_count, 2)
+        inspected_names = [call.args[1]['name'] for call in properties.call_args_list]
+        self.assertNotIn(network.SETUP_AP_PROFILE_NAME, inspected_names)
+
+    @patch('system.control_plane.network._execute')
+    def test_saved_profile_properties_are_read_by_uuid(self, execute):
+        execute.return_value = network._CommandOutcome(
+            returncode=0,
+            stdout='infrastructure\nJYOTHI 2015\n--\n',
+        )
+        profile = {
+            'name': 'netplan-wlan0-JYOTHI 2015',
+            'uuid': '6c4d7f41-fd1a-36ea-aaca-b131ba172216',
+            'type': '802-11-wireless',
+            'device': '',
+        }
+
+        result = network._wifi_profile_properties('/usr/bin/nmcli', profile)
+
+        self.assertEqual(result['ssid'], 'JYOTHI 2015')
+        self.assertEqual(result['mode'], 'infrastructure')
+        self.assertEqual(result['key_mgmt'], '')
+        command = execute.call_args.args[0]
+        self.assertEqual(command[-2:], ['uuid', profile['uuid']])
+        self.assertIn('802-11-wireless.ssid', command[2])
+
+    @patch('system.control_plane.network.uuid.uuid4')
+    @patch('system.control_plane.network._connection_profiles')
+    def test_candidate_name_is_application_owned_and_non_conflicting(
+        self, profiles, uuid4
+    ):
+        profiles.return_value = (
+            [
+                {
+                    'name': network.SETUP_AP_PROFILE_NAME,
+                    'uuid': 'setup-uuid',
+                    'type': '802-11-wireless',
+                    'device': 'wlan0',
+                },
+                {
+                    'name': 'SmartCompanion WiFi ABCDEF123456',
+                    'uuid': 'collision-uuid',
+                    'type': '802-11-wireless',
+                    'device': '',
+                },
+            ],
+            'OK',
+        )
+        uuid4.side_effect = (
+            MagicMock(hex='abcdef12345600000000000000000000'),
+            MagicMock(hex='fedcba65432100000000000000000000'),
+        )
+
+        result = network._candidate_profile_name('/usr/bin/nmcli')
+
+        self.assertEqual(result, 'SmartCompanion WiFi FEDCBA654321')
+        self.assertNotEqual(result, network.SETUP_AP_PROFILE_NAME)
+        self.assertEqual(uuid4.call_count, 2)
+
+    @patch('system.control_plane.network._wifi_security_for_ssid', return_value='WPA2')
+    @patch(
+        'system.control_plane.network._candidate_profile_name',
+        return_value='SmartCompanion WiFi TESTCANDIDATE',
+    )
+    @patch('system.control_plane.network._find_saved_wifi_profile')
+    @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
+    @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
+    @patch('system.control_plane.network._execute')
+    def test_failed_existing_profile_uses_complete_wpa2_candidate(
+        self, execute, _which, _interface, find_profile, candidate_name, _security
+    ):
+        secret = 'private-password'
+        profile_uuid = '6c4d7f41-fd1a-36ea-aaca-b131ba172216'
+        find_profile.return_value = (
+            {
+                'name': 'netplan-wlan0-JYOTHI 2015',
+                'uuid': profile_uuid,
+                'type': '802-11-wireless',
+                'device': '',
+                'mode': 'infrastructure',
+                'ssid': 'JYOTHI 2015',
+                'key_mgmt': '',
+            },
+            'OK',
+        )
+        execute.side_effect = (
+            network._CommandOutcome(returncode=10, stderr='authentication failed'),
+            network._CommandOutcome(returncode=0),
+            network._CommandOutcome(returncode=0),
+        )
+
+        result = network.connect_wifi('JYOTHI 2015', secret)
+
+        self.assertTrue(result['success'])
+        self.assertNotIn(secret, str(result))
+        self.assertEqual(execute.call_count, 3)
+        original_activate = execute.call_args_list[0].args[0]
+        candidate_add = execute.call_args_list[1].args[0]
+        candidate_activate = execute.call_args_list[2].args[0]
+        self.assertEqual(
+            original_activate[
+                original_activate.index('up') + 1:original_activate.index('up') + 3
+            ],
+            ['uuid', profile_uuid],
+        )
+        self.assertNotIn('modify', original_activate)
+        self.assertIn('add', candidate_add)
+        self.assertIn('infrastructure', candidate_add)
+        self.assertEqual(
+            candidate_add[candidate_add.index('ssid') + 1],
+            'JYOTHI 2015',
+        )
+        self.assertIn('802-11-wireless-security.key-mgmt', candidate_add)
+        self.assertIn('wpa-psk', candidate_add)
+        self.assertIn('802-11-wireless-security.psk', candidate_add)
+        self.assertIn(secret, candidate_add)
+        self.assertIn('yes', candidate_add)
+        self.assertEqual(
+            candidate_activate[
+                candidate_activate.index('up') + 1:candidate_activate.index('up') + 3
+            ],
+            ['id', candidate_name.return_value],
+        )
+        self.assertFalse(
+            any('delete' in call.args[0] for call in execute.call_args_list)
+        )
+
+    @patch('system.control_plane.network._candidate_profile_name')
+    @patch('system.control_plane.network._wifi_security_for_ssid')
+    @patch('system.control_plane.network._find_saved_wifi_profile')
+    @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
+    @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
+    @patch('system.control_plane.network._execute')
+    def test_existing_profile_with_saved_credentials_is_activated_directly(
+        self, execute, _which, _interface, find_profile, security, candidate_name
+    ):
+        profile_uuid = 'saved-profile-uuid'
+        find_profile.return_value = (
+            {
+                'name': 'Home connection',
+                'uuid': profile_uuid,
+                'mode': 'infrastructure',
+                'ssid': 'Home WiFi',
+                'key_mgmt': 'wpa-psk',
+            },
+            'OK',
+        )
+        execute.return_value = network._CommandOutcome(returncode=0)
+
+        result = network.connect_wifi('Home WiFi', 'submitted-password')
+
+        self.assertTrue(result['success'])
+        self.assertEqual(execute.call_count, 1)
+        command = execute.call_args.args[0]
+        self.assertIn('up', command)
+        self.assertEqual(
+            command[command.index('up') + 1:command.index('up') + 3],
+            ['uuid', profile_uuid],
+        )
+        self.assertNotIn('modify', command)
+        self.assertNotIn('submitted-password', command)
+        security.assert_not_called()
+        candidate_name.assert_not_called()
+
+    @patch('system.control_plane.network._wifi_security_for_ssid', return_value='WPA3')
+    @patch('system.control_plane.network._find_saved_wifi_profile')
+    @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
+    @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
+    @patch('system.control_plane.network._execute')
+    def test_existing_non_wpa2_profile_is_not_rewritten_as_wpa2(
+        self, execute, _which, _interface, find_profile, _security
+    ):
+        find_profile.return_value = (
+            {
+                'name': 'Modern WiFi',
+                'uuid': 'modern-uuid',
+                'mode': 'infrastructure',
+                'ssid': 'Modern WiFi',
+                'key_mgmt': 'sae',
+            },
+            'OK',
+        )
+        execute.return_value = network._CommandOutcome(
+            returncode=10,
+            stderr='authentication failed',
+        )
+
+        result = network.connect_wifi('Modern WiFi', 'private-password')
+
+        self.assertFalse(result['success'])
+        self.assertEqual(result['state'], 'FAILED')
+        self.assertNotIn('private-password', str(result))
+        self.assertEqual(execute.call_count, 1)
+        command = execute.call_args.args[0]
+        self.assertIn('up', command)
+        self.assertNotIn('modify', command)
+        self.assertNotIn('add', command)
+
+    @patch('system.control_plane.network._wifi_security_for_ssid', return_value='WPA2')
+    @patch(
+        'system.control_plane.network._candidate_profile_name',
+        return_value='SmartCompanion WiFi FAILEDTEST',
+    )
+    @patch('system.control_plane.network._find_saved_wifi_profile')
+    @patch('system.control_plane.network._wifi_interface', return_value=('wlan0', 'OK'))
+    @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
+    @patch('system.control_plane.network._execute')
+    def test_wrong_password_deletes_only_candidate_and_preserves_original(
+        self, execute, _which, _interface, find_profile, candidate_name, _security
+    ):
+        secret = 'private-password'
+        find_profile.return_value = (
+            {
+                'name': 'netplan-wlan0-JYOTHI 2015',
+                'uuid': 'jyothi-uuid',
+                'mode': 'infrastructure',
+                'ssid': 'JYOTHI 2015',
+                'key_mgmt': '',
+            },
+            'OK',
+        )
+        execute.side_effect = (
+            network._CommandOutcome(returncode=10, stderr='authentication failed'),
+            network._CommandOutcome(returncode=0),
+            network._CommandOutcome(
+                returncode=10,
+                stderr=f'Error: password {secret}; authentication failed',
+            ),
+            network._CommandOutcome(returncode=0),
+        )
+
+        result = network.connect_wifi('JYOTHI 2015', secret)
+
+        self.assertFalse(result['success'])
+        self.assertEqual(
+            result['message'],
+            'The saved Wi-Fi network could not be connected.',
+        )
+        self.assertNotIn(secret, str(result))
+        self.assertEqual(execute.call_count, 4)
+        original_activate = execute.call_args_list[0].args[0]
+        candidate_add = execute.call_args_list[1].args[0]
+        candidate_activate = execute.call_args_list[2].args[0]
+        candidate_delete = execute.call_args_list[3].args[0]
+        self.assertEqual(
+            original_activate[
+                original_activate.index('up') + 1:original_activate.index('up') + 3
+            ],
+            ['uuid', 'jyothi-uuid'],
+        )
+        self.assertNotIn('modify', original_activate)
+        self.assertIn(candidate_name.return_value, candidate_add)
+        self.assertIn(candidate_name.return_value, candidate_activate)
+        self.assertEqual(
+            candidate_delete[
+                candidate_delete.index('delete') + 1:
+                candidate_delete.index('delete') + 3
+            ],
+            ['id', candidate_name.return_value],
+        )
+        self.assertNotIn('netplan-wlan0-JYOTHI 2015', candidate_delete)
+        self.assertNotIn('jyothi-uuid', candidate_delete)
+
+    @patch('system.control_plane.network._execute')
+    def test_unicode_candidate_profile_preserves_ssid_exactly(self, execute):
+        ssid = 'Sravani’s iPhone 東京'
+        secret = 'private-password'
+        execute.return_value = network._CommandOutcome(returncode=0)
+
+        network._create_wpa2_candidate_profile(
+            '/usr/bin/nmcli',
+            'wlan0',
+            'SmartCompanion WiFi UNICODE',
+            ssid,
+            secret,
+        )
+
+        command = execute.call_args.args[0]
+        self.assertEqual(command[command.index('ssid') + 1], ssid)
+        self.assertIn(secret, command)
 
 
 class ServiceHealthTests(SimpleTestCase):

@@ -86,6 +86,39 @@ class ProvisioningDecisionTests(TestCase):
             [call("one"), call("two")],
         )
 
+    @patch.object(network, "activate_setup_access_point")
+    @patch.object(
+        network,
+        "activate_saved_wifi_profile",
+        return_value={"success": True, "state": "CONNECTED"},
+    )
+    @patch.object(
+        network,
+        "list_saved_wifi_profiles",
+        return_value={
+            "supported": True,
+            "profiles": ["netplan-wlan0-JYOTHI 2015"],
+        },
+    )
+    @patch.object(
+        network,
+        "get_active_wifi_connection",
+        side_effect=(NO_CLIENT, ACTIVE_CLIENT),
+    )
+    def test_prefer_client_can_reuse_original_profile_after_candidate_failure(
+        self, _active, _saved, activate_saved, start_ap
+    ):
+        state = NetworkProvisioningState.get_current()
+        state.state = NetworkProvisioningState.State.SETUP_AP
+        state.last_error = "Could not authenticate with the selected network."
+        state.save()
+
+        result = provisioning.ensure_network_mode(prefer_client=True)
+
+        self.assertEqual(result["state"], NetworkProvisioningState.State.NORMAL_MODE)
+        activate_saved.assert_called_once_with("netplan-wlan0-JYOTHI 2015")
+        start_ap.assert_not_called()
+
     @patch.object(network, "activate_setup_access_point", return_value={**AP_STARTED, "already_active": True})
     @patch.object(network, "list_saved_wifi_profiles")
     def test_repeated_setup_mode_invocation_is_idempotent(self, saved, start_ap):
@@ -317,6 +350,70 @@ class SetupTransitionTests(TestCase):
             NetworkProvisioningState.get_current().state,
             NetworkProvisioningState.State.SETUP_AP,
         )
+
+    @patch.object(network, "activate_setup_access_point", return_value=AP_STARTED)
+    @patch.object(
+        network,
+        "get_network_status",
+        return_value={"wifi": {"connected": False, "ssid": None}},
+    )
+    @patch.object(
+        network,
+        "_candidate_profile_name",
+        return_value="SmartCompanion WiFi RECOVERYTEST",
+    )
+    @patch.object(network, "_wifi_security_for_ssid", return_value="WPA2")
+    @patch.object(network, "_find_saved_wifi_profile")
+    @patch.object(network, "_wifi_interface", return_value=("wlan0", "OK"))
+    @patch.object(network.shutil, "which", return_value="/usr/bin/nmcli")
+    @patch.object(network, "_execute")
+    @patch.object(
+        network,
+        "deactivate_setup_access_point",
+        return_value={"success": True, "state": "INACTIVE", "message": "stopped"},
+    )
+    def test_wrong_password_candidate_recovery_preserves_original_profile(
+        self,
+        _deactivate,
+        execute,
+        _which,
+        _interface,
+        find_profile,
+        _security,
+        candidate_name,
+        _status,
+        _restore,
+    ):
+        original_name = "netplan-wlan0-JYOTHI 2015"
+        original_uuid = "6c4d7f41-fd1a-36ea-aaca-b131ba172216"
+        find_profile.return_value = (
+            {
+                "name": original_name,
+                "uuid": original_uuid,
+                "mode": "infrastructure",
+                "ssid": "JYOTHI 2015",
+                "key_mgmt": "wpa-psk",
+            },
+            "OK",
+        )
+        execute.side_effect = (
+            network._CommandOutcome(returncode=10, stderr="authentication failed"),
+            network._CommandOutcome(returncode=0),
+            network._CommandOutcome(returncode=10, stderr="authentication failed"),
+            network._CommandOutcome(returncode=0),
+        )
+
+        result = provisioning.provision_wifi("JYOTHI 2015", "wrong-secret")
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["state"], NetworkProvisioningState.State.SETUP_AP)
+        self.assertNotIn("wrong-secret", str(result))
+        commands = [invocation.args[0] for invocation in execute.call_args_list]
+        self.assertFalse(any("modify" in command for command in commands))
+        delete_command = next(command for command in commands if "delete" in command)
+        self.assertIn(candidate_name.return_value, delete_command)
+        self.assertNotIn(original_name, delete_command)
+        self.assertNotIn(original_uuid, delete_command)
 
     @patch.object(
         network,

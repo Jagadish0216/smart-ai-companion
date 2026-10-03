@@ -7,6 +7,7 @@ import os
 import shutil
 import socket
 import subprocess
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ WIFI_PROFILE_TIMEOUT_SECONDS = 10.0
 SETUP_AP_WAIT_SECONDS = 12
 SETUP_AP_TIMEOUT_SECONDS = 15.0
 SETUP_AP_PROFILE_NAME = "SmartCompanion Setup"
+CANDIDATE_PROFILE_PREFIX = "SmartCompanion WiFi"
 WIFI_CONNECTION_TYPES = {"802-11-wireless", "wifi"}
 SETUP_PASSWORD_PLACEHOLDERS = {
     "change-me",
@@ -370,7 +372,7 @@ def _connection_profiles(
         "--escape",
         "yes",
         "-f",
-        "NAME,TYPE,DEVICE",
+        "NAME,UUID,TYPE,DEVICE",
         "connection",
         "show",
     ]
@@ -384,14 +386,92 @@ def _connection_profiles(
     profiles = []
     for line in outcome.stdout.splitlines():
         fields = _split_terse(line)
-        if len(fields) < 2 or not fields[0]:
+        if len(fields) < 3 or not fields[0] or not fields[1]:
             continue
         profiles.append({
             "name": fields[0],
-            "type": fields[1].lower(),
-            "device": fields[2] if len(fields) > 2 else "",
+            "uuid": fields[1],
+            "type": fields[2].lower(),
+            "device": fields[3] if len(fields) > 3 else "",
         })
     return profiles, "OK"
+
+
+def _wifi_profile_properties(
+    executable: str,
+    profile: dict[str, str],
+) -> dict[str, str] | None:
+    """Read authoritative Wi-Fi properties for one saved NM profile."""
+    profile_uuid = profile.get("uuid", "")
+    if not profile_uuid:
+        return None
+    outcome = _execute(
+        [
+            executable,
+            "-g",
+            (
+                "802-11-wireless.mode,802-11-wireless.ssid,"
+                "802-11-wireless-security.key-mgmt"
+            ),
+            "connection",
+            "show",
+            "uuid",
+            profile_uuid,
+        ],
+        COMMAND_TIMEOUT_SECONDS,
+    )
+    if outcome.returncode != 0 or outcome.timed_out or outcome.unavailable:
+        return None
+    values = outcome.stdout.splitlines()
+    values.extend([""] * (3 - len(values)))
+    mode, ssid, key_mgmt = (
+        (_split_terse(value)[0] if value else "") for value in values[:3]
+    )
+    normalized_mode = mode.strip().lower()
+    normalized_key_mgmt = key_mgmt.strip().lower()
+    return {
+        **profile,
+        "mode": (
+            "infrastructure"
+            if normalized_mode in {"", "--"}
+            else normalized_mode
+        ),
+        "ssid": ssid,
+        "key_mgmt": "" if normalized_key_mgmt == "--" else normalized_key_mgmt,
+    }
+
+
+def _saved_wifi_profiles(
+    executable: str,
+) -> tuple[list[dict[str, str]], str]:
+    """Return saved infrastructure profiles with their authoritative SSIDs."""
+    profiles, profile_state = _connection_profiles(executable)
+    if profile_state != "OK":
+        return [], profile_state
+    saved: list[dict[str, str]] = []
+    for profile in profiles:
+        if (
+            profile["type"] not in WIFI_CONNECTION_TYPES
+            or profile["name"] == SETUP_AP_PROFILE_NAME
+        ):
+            continue
+        details = _wifi_profile_properties(executable, profile)
+        if details is None:
+            return [], "ERROR"
+        if details["mode"] != "infrastructure" or not details["ssid"]:
+            continue
+        saved.append(details)
+    return saved, "OK"
+
+
+def _find_saved_wifi_profile(
+    executable: str,
+    ssid: str,
+) -> tuple[dict[str, str] | None, str]:
+    profiles, state = _saved_wifi_profiles(executable)
+    if state != "OK":
+        return None, state
+    return next((profile for profile in profiles if profile["ssid"] == ssid), None), "OK"
 
 
 def _wifi_profile_mode(executable: str, profile_name: str) -> str | None:
@@ -520,6 +600,21 @@ def activate_saved_wifi_profile(profile_name: object) -> dict[str, Any]:
                 else "Wi-Fi adapter status could not be determined."
             ),
         }
+    return _activate_wifi_profile(
+        executable,
+        "id",
+        profile_name,
+        interface,
+    )
+
+
+def _activate_wifi_profile(
+    executable: str,
+    reference_type: str,
+    reference: str,
+    interface: str,
+) -> dict[str, Any]:
+    """Activate one known profile without disclosing its identifier on failure."""
     outcome = _execute(
         [
             executable,
@@ -527,8 +622,8 @@ def activate_saved_wifi_profile(profile_name: object) -> dict[str, Any]:
             str(WIFI_PROFILE_WAIT_SECONDS),
             "connection",
             "up",
-            "id",
-            profile_name,
+            reference_type,
+            reference,
             "ifname",
             interface,
         ],
@@ -776,6 +871,172 @@ def _safe_connection_failure(stderr: str) -> str:
     return "Could not connect to the selected network."
 
 
+def _wifi_security_for_ssid(
+    executable: str,
+    interface: str,
+    ssid: str,
+) -> str | None:
+    outcome = _wifi_scan_outcome(executable, interface)
+    if outcome.returncode != 0 or outcome.timed_out or outcome.unavailable:
+        return None
+    match = next(
+        (
+            network
+            for network in _parse_wifi_networks(outcome.stdout)
+            if network["ssid"] == ssid
+        ),
+        None,
+    )
+    return str(match["security"]) if match else None
+
+
+def _is_wpa2_personal(security: str | None) -> bool:
+    if not security:
+        return False
+    tokens = set(security.upper().split())
+    return "WPA2" in tokens and not tokens.intersection({"802.1X", "EAP"})
+
+
+def _candidate_profile_name(executable: str) -> str | None:
+    profiles, state = _connection_profiles(executable)
+    if state != "OK":
+        return None
+    existing_names = {profile["name"] for profile in profiles}
+    for _attempt in range(5):
+        candidate = f"{CANDIDATE_PROFILE_PREFIX} {uuid.uuid4().hex[:12].upper()}"
+        if candidate not in existing_names:
+            return candidate
+    return None
+
+
+def _create_wpa2_candidate_profile(
+    executable: str,
+    interface: str,
+    profile_name: str,
+    ssid: str,
+    password: str,
+) -> _CommandOutcome:
+    """Create one complete application-owned WPA2 client profile."""
+    return _execute(
+        [
+            executable,
+            "--wait",
+            "5",
+            "connection",
+            "add",
+            "type",
+            "wifi",
+            "ifname",
+            interface,
+            "con-name",
+            profile_name,
+            "autoconnect",
+            "yes",
+            "ssid",
+            ssid,
+            "802-11-wireless.mode",
+            "infrastructure",
+            "802-11-wireless-security.key-mgmt",
+            "wpa-psk",
+            "802-11-wireless-security.psk",
+            password,
+        ],
+        WIFI_PROFILE_TIMEOUT_SECONDS,
+    )
+
+
+def _delete_candidate_profile(
+    executable: str,
+    profile_name: str,
+) -> _CommandOutcome:
+    """Delete only the uniquely named candidate created by this attempt."""
+    return _execute(
+        [
+            executable,
+            "--wait",
+            "5",
+            "connection",
+            "delete",
+            "id",
+            profile_name,
+        ],
+        WIFI_PROFILE_TIMEOUT_SECONDS,
+    )
+
+
+def _connect_saved_wifi_profile(
+    executable: str,
+    interface: str,
+    profile: dict[str, str],
+    ssid: str,
+    password: str,
+) -> dict[str, Any]:
+    profile_uuid = profile["uuid"]
+    existing_result = _activate_wifi_profile(
+        executable,
+        "uuid",
+        profile_uuid,
+        interface,
+    )
+    if (
+        existing_result["success"]
+        or not password
+        or existing_result["state"] != "FAILED"
+    ):
+        return {**existing_result, "ssid": ssid}
+
+    security = _wifi_security_for_ssid(executable, interface, ssid)
+    if not _is_wpa2_personal(security):
+        return {
+            "success": False,
+            "ssid": ssid,
+            "state": "FAILED",
+            "message": "A replacement Wi-Fi profile could not be created safely.",
+        }
+
+    candidate_name = _candidate_profile_name(executable)
+    if candidate_name is None:
+        return {
+            "success": False,
+            "ssid": ssid,
+            "state": "UNKNOWN",
+            "message": "A unique replacement Wi-Fi profile could not be prepared.",
+        }
+    created = _create_wpa2_candidate_profile(
+        executable,
+        interface,
+        candidate_name,
+        ssid,
+        password,
+    )
+    if created.timed_out or created.unavailable:
+        _delete_candidate_profile(executable, candidate_name)
+        return {
+            "success": False,
+            "ssid": ssid,
+            "state": "UNKNOWN",
+            "message": "The replacement Wi-Fi profile result could not be determined.",
+        }
+    if created.returncode != 0:
+        _delete_candidate_profile(executable, candidate_name)
+        return {
+            "success": False,
+            "ssid": ssid,
+            "state": "FAILED",
+            "message": _safe_connection_failure(created.stderr),
+        }
+
+    candidate_result = _activate_wifi_profile(
+        executable,
+        "id",
+        candidate_name,
+        interface,
+    )
+    if not candidate_result["success"]:
+        _delete_candidate_profile(executable, candidate_name)
+    return {**candidate_result, "ssid": ssid}
+
+
 def connect_wifi(ssid: object, password: object = None) -> dict[str, Any]:
     """Attempt a bounded NetworkManager Wi-Fi connection."""
     validation_error = _validation_error(ssid, password)
@@ -809,6 +1070,23 @@ def connect_wifi(ssid: object, password: object = None) -> dict[str, Any]:
             "state": "NOT_AVAILABLE",
             "message": message,
         }
+
+    saved_profile, profile_state = _find_saved_wifi_profile(executable, safe_ssid)
+    if profile_state != "OK":
+        return {
+            "success": False,
+            "ssid": safe_ssid,
+            "state": "UNKNOWN",
+            "message": "Saved Wi-Fi profiles could not be read safely.",
+        }
+    if saved_profile is not None:
+        return _connect_saved_wifi_profile(
+            executable,
+            interface,
+            saved_profile,
+            safe_ssid,
+            safe_password,
+        )
 
     command = [
         executable,
