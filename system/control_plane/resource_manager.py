@@ -181,6 +181,14 @@ def collect_resource_snapshot() -> dict[str, Any]:
             "lan_connected": lan_connected,
             "wifi_connected": wifi_connected,
             "ethernet_connected": ethernet_connected,
+            "default_route_available": network.get("internet", {}).get(
+                "default_route_available"
+            ),
+            "networkmanager_connectivity": str(
+                network.get("internet", {}).get(
+                    "networkmanager_connectivity", "UNKNOWN"
+                )
+            ).upper(),
             "internet_state": str(
                 network.get("internet", {}).get("state", "UNKNOWN")
             ).upper(),
@@ -300,7 +308,7 @@ def _classify_network(snapshot: dict[str, Any]) -> dict[str, str]:
     if not lan:
         level = "CAUTION" if provisioning != "NORMAL_MODE" else "CONSTRAINED"
         return _component(level, "No client LAN connection is currently active.")
-    if internet == "NONE":
+    if internet == "OFFLINE":
         return _component("CAUTION", "LAN is available without Internet access.")
     if internet == "UNKNOWN":
         return _component("UNKNOWN", "LAN is available; Internet state is unknown.")
@@ -385,7 +393,7 @@ def _policy_reasons(
 
     if health["network"]["level"] != "HEALTHY":
         internet = snapshot["network"].get("internet_state")
-        code = "INTERNET_OFFLINE" if internet == "NONE" else "NETWORK_LIMITED"
+        code = "INTERNET_OFFLINE" if internet == "OFFLINE" else "NETWORK_LIMITED"
         reasons.append(_reason(code, health["network"]["level"], health["network"]["summary"]))
     if health["services"]["level"] != "HEALTHY":
         reasons.append(

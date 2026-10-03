@@ -62,6 +62,8 @@ def healthy_snapshot() -> dict:
             "lan_connected": True,
             "wifi_connected": True,
             "ethernet_connected": False,
+            "default_route_available": True,
+            "networkmanager_connectivity": "FULL",
             "internet_state": "FULL",
             "internet_available": True,
         },
@@ -85,6 +87,7 @@ class ResourcePolicyTests(SimpleTestCase):
         self.assertEqual(result["overall_health"], "HEALTHY")
         self.assertEqual(result["recommended_profile"], "BALANCED")
         self.assertTrue(result["ai_recommendation"]["local_ai_allowed"])
+        self.assertTrue(result["ai_recommendation"]["online_allowed"])
         self.assertEqual(result["reasons"], [])
 
     def test_ample_measured_headroom_recommends_performance(self):
@@ -198,7 +201,12 @@ class ResourcePolicyTests(SimpleTestCase):
     def test_offline_internet_does_not_disable_local_ai(self):
         snapshot = healthy_snapshot()
         snapshot["network"].update(
-            {"internet_state": "NONE", "internet_available": False}
+            {
+                "default_route_available": False,
+                "networkmanager_connectivity": "FULL",
+                "internet_state": "OFFLINE",
+                "internet_available": False,
+            }
         )
 
         result = resource_manager.evaluate_resource_policy(snapshot)
@@ -206,6 +214,7 @@ class ResourcePolicyTests(SimpleTestCase):
         self.assertTrue(result["ai_recommendation"]["local_ai_allowed"])
         self.assertFalse(result["ai_recommendation"]["online_allowed"])
         self.assertEqual(result["subsystem_health"]["network"]["level"], "CAUTION")
+        self.assertEqual(result["reasons"][0]["code"], "INTERNET_OFFLINE")
 
     def test_ollama_unavailable_is_separate_from_internet(self):
         snapshot = healthy_snapshot()
@@ -302,6 +311,11 @@ class ResourceSnapshotTests(SimpleTestCase):
         self.assertEqual(result["subsystem_health"]["temperature"]["level"], "UNKNOWN")
         self.assertEqual(result["subsystem_health"]["throttling"]["level"], "UNKNOWN")
         self.assertIsNone(snapshot["network"]["lan_connected"])
+        self.assertIsNone(snapshot["network"]["default_route_available"])
+        self.assertEqual(
+            snapshot["network"]["networkmanager_connectivity"],
+            "UNKNOWN",
+        )
 
     @patch.object(resource_manager, "collect_resource_snapshot")
     def test_report_exposes_collection_and_policy_timing(self, collect):
@@ -350,6 +364,9 @@ class ResourceManagerAPITests(TestCase):
             "thresholds",
         ):
             self.assertIn(key, response.json())
+        network_snapshot = response.json()["snapshot"]["network"]
+        self.assertTrue(network_snapshot["default_route_available"])
+        self.assertEqual(network_snapshot["networkmanager_connectivity"], "FULL")
 
     @patch("system.views.get_resource_manager_report")
     def test_api_is_blocked_in_setup_and_connecting_modes(self, report):

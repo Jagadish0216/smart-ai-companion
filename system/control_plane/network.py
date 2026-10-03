@@ -7,6 +7,7 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -133,18 +134,6 @@ def _nmcli_addresses(executable: str, interface: str) -> list[str]:
     return addresses
 
 
-def _nmcli_gateway(executable: str, interface: str) -> str | None:
-    output = _run([executable, "-t", "-f", "IP4.GATEWAY", "device", "show", interface])
-    for line in (output or "").splitlines():
-        _, separator, value = line.partition(":")
-        candidate = value.strip() if separator else ""
-        try:
-            return str(ipaddress.ip_address(candidate))
-        except ValueError:
-            continue
-    return None
-
-
 def _nmcli_wifi_details(executable: str, interface: str) -> tuple[str | None, int | None]:
     output = _run(
         [
@@ -169,25 +158,118 @@ def _nmcli_wifi_details(executable: str, interface: str) -> tuple[str | None, in
     return None, None
 
 
-def _connectivity(executable: str) -> dict[str, bool | str | None]:
+def _networkmanager_connectivity(executable: str) -> str:
     raw = (_run([executable, "-t", "-f", "CONNECTIVITY", "general"]) or "").lower()
     mapping = {
-        "full": ("FULL", True),
-        "limited": ("LIMITED", False),
-        "portal": ("LIMITED", False),
-        "none": ("NONE", False),
-        "unknown": ("UNKNOWN", None),
+        "full": "FULL",
+        "limited": "LIMITED",
+        "portal": "PORTAL",
+        "none": "OFFLINE",
+        "unknown": "UNKNOWN",
     }
-    state, available = mapping.get(raw, ("UNKNOWN", None))
-    return {"state": state, "available": available}
+    return mapping.get(raw, "UNKNOWN")
+
+
+def _parse_linux_default_route(text: str) -> dict[str, Any]:
+    """Return the lowest-metric usable IPv4 default route from procfs."""
+    lines = text.splitlines()
+    if not lines:
+        return {"available": None, "interface": None, "gateway": None}
+    headings = lines[0].split()
+    required = {"Iface", "Destination", "Gateway", "Flags", "Metric", "Mask"}
+    if not required.issubset(headings):
+        return {"available": None, "interface": None, "gateway": None}
+    positions = {name: headings.index(name) for name in required}
+    routes: list[dict[str, Any]] = []
+    parsed_rows = 0
+    for line in lines[1:]:
+        fields = line.split()
+        if len(fields) < len(headings):
+            continue
+        try:
+            interface = fields[positions["Iface"]]
+            destination = fields[positions["Destination"]]
+            gateway_hex = fields[positions["Gateway"]]
+            flags = int(fields[positions["Flags"]], 16)
+            metric = int(fields[positions["Metric"]])
+            mask = fields[positions["Mask"]]
+        except (IndexError, ValueError):
+            continue
+        parsed_rows += 1
+        if (
+            destination != "00000000"
+            or mask != "00000000"
+            or not flags & 0x1
+            or interface.lower() == "lo"
+            or interface.lower().startswith(VIRTUAL_ETHERNET_PREFIXES)
+        ):
+            continue
+        try:
+            gateway = socket.inet_ntoa(bytes.fromhex(gateway_hex)[::-1])
+        except (OSError, ValueError):
+            gateway = None
+        routes.append(
+            {"interface": interface, "gateway": gateway, "metric": metric}
+        )
+    if routes:
+        route = min(routes, key=lambda item: item["metric"])
+        return {"available": True, **route}
+    if parsed_rows:
+        return {"available": False, "interface": None, "gateway": None}
+    return {"available": None, "interface": None, "gateway": None}
+
+
+def _default_route_status() -> dict[str, Any]:
+    """Inspect the live Linux kernel route table without changing networking."""
+    if not sys.platform.startswith("linux"):
+        return {"available": None, "interface": None, "gateway": None}
+    try:
+        text = Path("/proc/net/route").read_text(encoding="ascii")
+    except (OSError, UnicodeError):
+        return {"available": None, "interface": None, "gateway": None}
+    return _parse_linux_default_route(text)
+
+
+def _internet_status(
+    networkmanager_connectivity: str,
+    default_route_available: bool | None,
+    lan_connected: bool | None = None,
+) -> dict[str, bool | str | None]:
+    """Combine independent LAN, kernel-route, and NetworkManager signals."""
+    networkmanager_connectivity = str(
+        networkmanager_connectivity or "UNKNOWN"
+    ).upper()
+    diagnostics: dict[str, bool | str | None] = {
+        "networkmanager_connectivity": networkmanager_connectivity,
+        "default_route_available": default_route_available,
+    }
+    if lan_connected is False or default_route_available is False:
+        return {"state": "OFFLINE", "available": False, **diagnostics}
+    if default_route_available is None:
+        if networkmanager_connectivity == "OFFLINE":
+            return {"state": "OFFLINE", "available": False, **diagnostics}
+        return {"state": "UNKNOWN", "available": None, **diagnostics}
+    mapping: dict[str, tuple[str, bool | None]] = {
+        "FULL": ("FULL", True),
+        "LIMITED": ("LIMITED", False),
+        "PORTAL": ("PORTAL", False),
+        "OFFLINE": ("OFFLINE", False),
+    }
+    state, available = mapping.get(
+        networkmanager_connectivity,
+        ("UNKNOWN", None),
+    )
+    return {"state": state, "available": available, **diagnostics}
 
 
 def get_internet_status() -> dict[str, bool | str | None]:
-    """Return the lightweight NetworkManager WAN-connectivity state."""
+    """Return WAN state from the live route table plus NetworkManager signal."""
     executable = shutil.which("nmcli")
-    if not executable:
-        return {"state": "UNKNOWN", "available": None}
-    return _connectivity(executable)
+    networkmanager = (
+        _networkmanager_connectivity(executable) if executable else "UNKNOWN"
+    )
+    route = _default_route_status()
+    return _internet_status(networkmanager, route["available"])
 
 
 def _wifi_interface(executable: str) -> tuple[str | None, str]:
@@ -1221,12 +1303,12 @@ def _from_nmcli(executable: str) -> dict[str, Any] | None:
         if wifi_active
         else (None, None)
     )
-    default_route = None
-    for entry in [item for item in interfaces if item["state"] == "CONNECTED"]:
-        gateway = _nmcli_gateway(executable, entry["interface"])
-        if gateway:
-            default_route = {"interface": entry["interface"], "gateway": gateway}
-            break
+    route = _default_route_status()
+    lan_connected = bool(
+        wifi_active
+        or (primary_ethernet and primary_ethernet["state"] == "CONNECTED")
+    )
+    networkmanager = _networkmanager_connectivity(executable)
 
     return {
         "wifi": {
@@ -1261,8 +1343,19 @@ def _from_nmcli(executable: str) -> dict[str, Any] | None:
             ),
         },
         "interfaces": interfaces,
-        "default_route": default_route,
-        "internet": _connectivity(executable),
+        "default_route": (
+            {
+                "interface": route["interface"],
+                "gateway": route["gateway"],
+            }
+            if route["available"]
+            else None
+        ),
+        "internet": _internet_status(
+            networkmanager,
+            route["available"],
+            lan_connected,
+        ),
     }
 
 
@@ -1319,6 +1412,11 @@ def _fallback_status() -> dict[str, Any]:
         (item for item in wifi_devices if item["state"] == "CONNECTED"), None
     )
     primary_ethernet = _primary_ethernet(ethernet_devices)
+    route = _default_route_status()
+    lan_connected = bool(
+        wifi_active
+        or (primary_ethernet and primary_ethernet["state"] == "CONNECTED")
+    )
     return {
         "wifi": {
             "supported": bool(wifi_devices),
@@ -1348,8 +1446,19 @@ def _fallback_status() -> dict[str, Any]:
             ),
         },
         "interfaces": interfaces,
-        "default_route": None,
-        "internet": {"state": "UNKNOWN", "available": None},
+        "default_route": (
+            {
+                "interface": route["interface"],
+                "gateway": route["gateway"],
+            }
+            if route["available"]
+            else None
+        ),
+        "internet": _internet_status(
+            "UNKNOWN",
+            route["available"],
+            lan_connected,
+        ),
     }
 
 

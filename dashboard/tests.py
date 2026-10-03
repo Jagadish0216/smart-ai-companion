@@ -61,7 +61,9 @@ class GlobalHeaderStateTests(TestCase):
     ):
         cases = (
             ('FULL', 'ONLINE', 'online'),
-            ('NONE', 'OFFLINE', 'offline'),
+            ('LIMITED', 'LIMITED', 'limited'),
+            ('PORTAL', 'PORTAL', 'limited'),
+            ('OFFLINE', 'OFFLINE', 'offline'),
             ('UNKNOWN', 'UNKNOWN', 'unknown'),
         )
 

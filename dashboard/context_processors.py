@@ -9,7 +9,8 @@ HEADER_INTERNET_CACHE_SECONDS = 10
 INTERNET_PRESENTATION = {
     'FULL': ('ONLINE', 'online'),
     'LIMITED': ('LIMITED', 'limited'),
-    'NONE': ('OFFLINE', 'offline'),
+    'PORTAL': ('PORTAL', 'limited'),
+    'OFFLINE': ('OFFLINE', 'offline'),
     'UNKNOWN': ('UNKNOWN', 'unknown'),
 }
 

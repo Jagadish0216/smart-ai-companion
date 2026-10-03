@@ -89,10 +89,18 @@ class SystemAPITests(TestCase):
             },
             'interfaces': [],
             'default_route': None,
-            'internet': {'state': 'UNKNOWN', 'available': None},
+            'internet': {
+                'state': 'UNKNOWN',
+                'available': None,
+                'default_route_available': None,
+                'networkmanager_connectivity': 'UNKNOWN',
+            },
         }
         response = self.client.get(self.network_url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['internet']['state'], 'UNKNOWN')
+        self.assertIn('default_route_available', response.data['internet'])
+        self.assertIn('networkmanager_connectivity', response.data['internet'])
         self.assertNotIn('password', str(response.data).lower())
 
     @patch('system.views.get_service_health')
@@ -265,9 +273,135 @@ class NetworkTelemetryTests(SimpleTestCase):
         result = network.get_network_status()
         self.assertFalse(result['wifi']['supported'])
         self.assertFalse(result['wifi']['connected'])
+        self.assertEqual(result['internet']['state'], 'OFFLINE')
+        self.assertFalse(result['internet']['available'])
+        self.assertNotIn('password', str(result).lower())
+
+    def test_lan_connected_without_default_route_is_offline(self):
+        result = network._internet_status('UNKNOWN', False, True)
+
+        self.assertEqual(result['state'], 'OFFLINE')
+        self.assertFalse(result['available'])
+
+    def test_nm_full_cannot_override_missing_default_route(self):
+        result = network._internet_status('FULL', False, True)
+
+        self.assertEqual(result['state'], 'OFFLINE')
+        self.assertFalse(result['available'])
+        self.assertEqual(result['networkmanager_connectivity'], 'FULL')
+        self.assertFalse(result['default_route_available'])
+
+    @patch(
+        'system.control_plane.network._default_route_status',
+        return_value={'available': False, 'interface': None, 'gateway': None},
+    )
+    @patch('system.control_plane.network._run')
+    def test_pi_wifi_stays_lan_connected_but_wan_is_offline_without_default_route(
+        self, run, _route
+    ):
+        def command_result(command):
+            fields = command[command.index('-f') + 1]
+            if fields == 'DEVICE,TYPE,STATE,CONNECTION':
+                return 'wlan0:wifi:connected:JYOTHI 2015'
+            if fields == 'IP4.ADDRESS':
+                return 'IP4.ADDRESS[1]:192.168.1.10/24'
+            if fields == 'IN-USE,SSID,SIGNAL,SECURITY':
+                return '*:JYOTHI 2015:80:WPA2'
+            if fields == 'CONNECTIVITY':
+                return 'full'
+            return None
+
+        run.side_effect = command_result
+
+        result = network._from_nmcli('/usr/bin/nmcli')
+
+        self.assertTrue(result['wifi']['connected'])
+        self.assertEqual(result['wifi']['ssid'], 'JYOTHI 2015')
+        self.assertIsNone(result['default_route'])
+        self.assertEqual(result['internet']['networkmanager_connectivity'], 'FULL')
+        self.assertFalse(result['internet']['default_route_available'])
+        self.assertEqual(result['internet']['state'], 'OFFLINE')
+        self.assertFalse(result['internet']['available'])
+
+    def test_lan_route_and_nm_full_report_full_internet(self):
+        result = network._internet_status('FULL', True, True)
+
+        self.assertEqual(result['state'], 'FULL')
+        self.assertTrue(result['available'])
+
+    def test_disconnected_lan_is_offline_even_with_route_and_nm_full(self):
+        result = network._internet_status('FULL', True, False)
+
+        self.assertEqual(result['state'], 'OFFLINE')
+        self.assertFalse(result['available'])
+
+    def test_unknown_default_route_does_not_fabricate_nm_full(self):
+        result = network._internet_status('FULL', None, True)
+
+        self.assertEqual(result['state'], 'UNKNOWN')
+        self.assertIsNone(result['available'])
+
+    def test_proc_route_detects_live_wifi_default_route(self):
+        route = network._parse_linux_default_route(
+            'Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT\n'
+            'wlan0 00000000 0101A8C0 0003 0 0 600 00000000 0 0 0\n'
+            'wlan0 0001A8C0 00000000 0001 0 0 600 00FFFFFF 0 0 0\n'
+        )
+
+        self.assertTrue(route['available'])
+        self.assertEqual(route['interface'], 'wlan0')
+        self.assertEqual(route['gateway'], '192.168.1.1')
+
+    def test_pi_local_and_docker_routes_without_default_are_offline(self):
+        route = network._parse_linux_default_route(
+            'Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT\n'
+            'docker0 000011AC 00000000 0001 0 0 0 0000FFFF 0 0 0\n'
+            'wlan0 0001A8C0 00000000 0001 0 0 600 00FFFFFF 0 0 0\n'
+        )
+
+        self.assertFalse(route['available'])
+        self.assertIsNone(route['interface'])
+
+    def test_docker_default_route_is_not_an_internet_route(self):
+        route = network._parse_linux_default_route(
+            'Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT\n'
+            'docker0 00000000 010011AC 0003 0 0 0 00000000 0 0 0\n'
+        )
+
+        self.assertFalse(route['available'])
+
+    @patch('system.control_plane.network.Path.read_text', side_effect=OSError)
+    @patch('system.control_plane.network.sys.platform', 'linux')
+    def test_default_route_inspection_failure_is_unknown(self, _read_text):
+        route = network._default_route_status()
+
+        self.assertIsNone(route['available'])
+
+    @patch('system.control_plane.network.sys.platform', 'win32')
+    def test_non_linux_default_route_inspection_is_unknown(self):
+        route = network._default_route_status()
+
+        self.assertIsNone(route['available'])
+        self.assertIsNone(route['interface'])
+
+    @patch(
+        'system.control_plane.network._fallback_interfaces',
+        return_value=[
+            {
+                'interface': 'Ethernet',
+                'type': 'ETHERNET',
+                'state': 'CONNECTED',
+                'addresses': ['192.168.1.20'],
+            }
+        ],
+    )
+    @patch('system.control_plane.network.sys.platform', 'win32')
+    def test_non_linux_connected_lan_keeps_wan_unknown(self, _interfaces):
+        result = network._fallback_status()
+
+        self.assertTrue(result['ethernet']['connected'])
         self.assertEqual(result['internet']['state'], 'UNKNOWN')
         self.assertIsNone(result['internet']['available'])
-        self.assertNotIn('password', str(result).lower())
 
     def test_terse_output_handles_escaped_ssid_separator(self):
         self.assertEqual(
@@ -335,10 +469,59 @@ class NetworkTelemetryTests(SimpleTestCase):
         self.assertIsNone(signal)
 
     @patch('system.control_plane.network.shutil.which', return_value=None)
-    def test_internet_status_without_nmcli_is_unknown(self, _which):
-        self.assertEqual(
-            network.get_internet_status(),
-            {'state': 'UNKNOWN', 'available': None},
+    @patch(
+        'system.control_plane.network._default_route_status',
+        return_value={'available': None, 'interface': None, 'gateway': None},
+    )
+    def test_internet_status_without_nmcli_is_unknown(self, _route, _which):
+        result = network.get_internet_status()
+
+        self.assertEqual(result['state'], 'UNKNOWN')
+        self.assertIsNone(result['available'])
+        self.assertEqual(result['networkmanager_connectivity'], 'UNKNOWN')
+
+    @patch(
+        'system.control_plane.network._default_route_status',
+        return_value={
+            'available': True,
+            'interface': 'wlan0',
+            'gateway': '192.168.1.1',
+        },
+    )
+    @patch('system.control_plane.network.shutil.which', return_value='/usr/bin/nmcli')
+    @patch('system.control_plane.network._run')
+    def test_status_telemetry_executes_no_network_mutation_commands(
+        self, run, _which, _route
+    ):
+        def command_result(command):
+            fields = command[command.index('-f') + 1]
+            if fields == 'DEVICE,TYPE,STATE,CONNECTION':
+                return 'wlan0:wifi:connected:Home'
+            if fields == 'IP4.ADDRESS':
+                return 'IP4.ADDRESS[1]:192.168.1.10/24'
+            if fields == 'IN-USE,SSID,SIGNAL,SECURITY':
+                return '*:Home:80:WPA2'
+            if fields == 'CONNECTIVITY':
+                return 'full'
+            return None
+
+        run.side_effect = command_result
+
+        result = network.get_network_status()
+
+        self.assertEqual(result['internet']['state'], 'FULL')
+        commands = [' '.join(call.args[0]) for call in run.call_args_list]
+        forbidden = (
+            ' connection add ',
+            ' connection modify ',
+            ' connection delete ',
+            ' connection up ',
+            ' connection down ',
+            ' device wifi connect ',
+            ' device wifi hotspot ',
+        )
+        self.assertFalse(
+            any(marker in f' {command} ' for command in commands for marker in forbidden)
         )
 
     @patch('system.control_plane.network._run')

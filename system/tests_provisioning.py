@@ -59,7 +59,7 @@ class ProvisioningDecisionTests(TestCase):
         self.assertEqual(result["state"], NetworkProvisioningState.State.NORMAL_MODE)
         start_ap.assert_not_called()
 
-    @patch.object(network, "get_internet_status", return_value={"state": "NONE", "available": False})
+    @patch.object(network, "get_internet_status", return_value={"state": "OFFLINE", "available": False})
     @patch.object(network, "get_active_wifi_connection", return_value=ACTIVE_CLIENT)
     def test_lan_without_internet_remains_normal_mode(self, _active, internet):
         result = provisioning.ensure_network_mode()
@@ -311,7 +311,7 @@ class SetupTransitionTests(TestCase):
         }
         status.return_value = {
             "wifi": {"connected": True, "ssid": ssid},
-            "internet": {"state": "NONE", "available": False},
+            "internet": {"state": "OFFLINE", "available": False},
         }
 
         result = provisioning.provision_wifi(ssid, "private-password")
@@ -510,7 +510,7 @@ class SetupPortalTests(TestCase):
         self.state.save()
         network_status.return_value = {
             "wifi": {"connected": True, "ssid": ssid},
-            "internet": {"state": "NONE", "available": False},
+            "internet": {"state": "OFFLINE", "available": False},
         }
 
         response = self.client.get("/api/system/setup/handoff-status/")
