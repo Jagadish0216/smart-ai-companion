@@ -1,13 +1,16 @@
 [Unit]
 Description=Smart AI Companion first-boot network mode
-Wants=NetworkManager.service
-After=NetworkManager.service
-Before=smart-ai-companion-web.service
+Wants=NetworkManager.service avahi-daemon.service
+After=NetworkManager.service avahi-daemon.service
+Before=smart-ai-companion.service
 
 [Service]
 Type=oneshot
-WorkingDirectory=/opt/smart-ai-companion
-ExecStart=/opt/smart-ai-companion/venv/bin/python /opt/smart-ai-companion/manage.py ensure_network_mode
+User=jagadish
+Group=jagadish
+WorkingDirectory=/home/jagadish/apps/smart-ai-companion
+EnvironmentFile=/home/jagadish/apps/smart-ai-companion/.env
+ExecStart=/home/jagadish/apps/smart-ai-companion/venv/bin/python /home/jagadish/apps/smart-ai-companion/manage.py ensure_network_mode
 TimeoutStartSec=90
 RemainAfterExit=yes
 

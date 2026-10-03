@@ -1,5 +1,6 @@
 import io
 import json
+import re
 import subprocess
 from pathlib import Path
 from unittest.mock import call, patch
@@ -130,13 +131,34 @@ class SetupAccessPointNetworkTests(SimpleTestCase):
         self.assertRegex(first, r"^SmartCompanion-[0-9A-F]{4}$")
         self.assertNotIn("stable-device-id", first)
 
-    @patch.object(network, "shutil")
-    def test_missing_setup_password_fails_before_nmcli(self, shutil_module):
-        result = network.activate_setup_access_point("SmartCompanion-A3F2", "")
+    @patch.object(network.shutil, "which")
+    def test_invalid_setup_passwords_fail_before_nmcli(self, which):
+        invalid_passwords = (
+            None,
+            "",
+            "short",
+            "password",
+            "CHANGE-ME",
+            " " * 8,
+            "<unique-random-passphrase>",
+            "valid-but\nunsafe",
+            "x" * 64,
+            "é" * 32,
+        )
 
-        self.assertFalse(result["success"])
-        self.assertNotIn("password", str(result).lower().replace("setup access-point password", ""))
-        shutil_module.which.assert_not_called()
+        for password in invalid_passwords:
+            with self.subTest(password_type=type(password).__name__):
+                result = network.activate_setup_access_point(
+                    "SmartCompanion-A3F2", password
+                )
+                self.assertFalse(result["success"])
+                self.assertEqual(result["state"], "INVALID")
+
+        which.assert_not_called()
+
+    def test_setup_password_accepts_wpa2_length_boundaries(self):
+        self.assertIsNone(network._setup_password_error("abcdefgh"))
+        self.assertIsNone(network._setup_password_error("x" * 63))
 
     @patch.object(network, "_connection_profiles", return_value=([], "OK"))
     @patch.object(network, "setup_access_point_is_active", return_value=False)
@@ -477,7 +499,7 @@ class ProvisioningCommandAndDeploymentTests(SimpleTestCase):
         with self.assertRaises(CommandError):
             call_command("ensure_network_mode", "--force-setup", "--prefer-client")
 
-    def test_systemd_template_is_bounded_and_contains_no_secret_or_sudo(self):
+    def test_systemd_template_matches_real_non_root_deployment(self):
         unit = (
             Path(settings.BASE_DIR)
             / "deployment"
@@ -485,9 +507,67 @@ class ProvisioningCommandAndDeploymentTests(SimpleTestCase):
             / "smart-ai-companion-network-mode.service"
         ).read_text(encoding="utf-8")
 
+        self.assertIn("Type=oneshot", unit)
+        self.assertIn("User=jagadish", unit)
+        self.assertIn("Group=jagadish", unit)
+        self.assertIn(
+            "WorkingDirectory=/home/jagadish/apps/smart-ai-companion",
+            unit,
+        )
+        self.assertIn(
+            "EnvironmentFile=/home/jagadish/apps/smart-ai-companion/.env",
+            unit,
+        )
         self.assertIn("After=NetworkManager.service", unit)
+        self.assertIn("avahi-daemon.service", unit)
+        self.assertIn("Before=smart-ai-companion.service", unit)
         self.assertIn("TimeoutStartSec=90", unit)
-        self.assertIn("/opt/smart-ai-companion/venv/bin/python", unit)
+        self.assertIn(
+            "ExecStart=/home/jagadish/apps/smart-ai-companion/venv/bin/python "
+            "/home/jagadish/apps/smart-ai-companion/manage.py ensure_network_mode",
+            unit,
+        )
+        self.assertIn("RemainAfterExit=yes", unit)
+
+    def test_systemd_template_contains_no_stale_paths_or_privilege_escalation(self):
+        unit = (
+            Path(settings.BASE_DIR)
+            / "deployment"
+            / "systemd"
+            / "smart-ai-companion-network-mode.service"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("/opt/smart-ai-companion", unit)
+        self.assertNotIn("smart-ai-companion-web.service", unit)
         self.assertNotIn("SETUP_AP_PASSWORD", unit)
         self.assertNotIn("sudo", unit.lower())
+        self.assertNotIn("shell=True", unit)
+        self.assertNotIn("User=root", unit)
         self.assertNotIn("Restart=always", unit)
+
+    def test_polkit_rule_grants_only_required_actions_to_service_user(self):
+        rule = (
+            Path(settings.BASE_DIR)
+            / "deployment"
+            / "polkit"
+            / "49-smart-ai-companion-network.rules"
+        ).read_text(encoding="utf-8")
+        actions = set(
+            re.findall(r'"(org\.freedesktop\.NetworkManager\.[^"]+)"', rule)
+        )
+
+        self.assertEqual(
+            actions,
+            {
+                "org.freedesktop.NetworkManager.wifi.scan",
+                "org.freedesktop.NetworkManager.network-control",
+                "org.freedesktop.NetworkManager.settings.modify.system",
+                "org.freedesktop.NetworkManager.wifi.share.protected",
+            },
+        )
+        self.assertIn('subject.user === "jagadish"', rule)
+        self.assertNotIn("wifi.share.open", rule)
+        self.assertNotIn("enable-disable-wifi", rule)
+        self.assertNotIn("enable-disable-network", rule)
+        self.assertNotIn("settings.modify.hostname", rule)
+        self.assertNotIn("NetworkManager.*", rule)

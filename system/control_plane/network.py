@@ -24,6 +24,16 @@ SETUP_AP_WAIT_SECONDS = 12
 SETUP_AP_TIMEOUT_SECONDS = 15.0
 SETUP_AP_PROFILE_NAME = "SmartCompanion Setup"
 WIFI_CONNECTION_TYPES = {"802-11-wireless", "wifi"}
+SETUP_PASSWORD_PLACEHOLDERS = {
+    "change-me",
+    "changeme",
+    "default-password",
+    "password",
+    "password123",
+    "replace-me",
+    "setup-password",
+    "your-password-here",
+}
 VIRTUAL_ETHERNET_PREFIXES = ("veth", "docker", "br-", "virbr")
 PREFERRED_ETHERNET_PREFIXES = ("eth", "en")
 MAX_SSID_BYTES = 32
@@ -554,6 +564,13 @@ def _setup_password_error(password: object) -> str | None:
         return "The setup access-point password must be 8 to 63 bytes."
     if any(ord(character) < 32 for character in password):
         return "The setup access-point password contains unsupported characters."
+    normalized = password.strip().casefold()
+    if (
+        not normalized
+        or normalized in SETUP_PASSWORD_PLACEHOLDERS
+        or (normalized.startswith("<") and normalized.endswith(">"))
+    ):
+        return "The setup access-point password must not be a placeholder."
     return None
 
 
