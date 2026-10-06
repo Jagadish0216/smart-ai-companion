@@ -929,6 +929,7 @@
     'use strict';
 
     const CHAT_REQUEST_TIMEOUT_MS = {{ chat_request_timeout_ms|default:30000 }};
+    const CHAT_STREAM_IDLE_TIMEOUT_MS = {{ chat_stream_idle_timeout_ms|default:45000 }};
 
 
 
@@ -1068,39 +1069,33 @@
 
         msgDiv.className = 'chat-msg ' + sender;
 
+        const author = document.createElement('div');
+        author.className = 'msg-author';
+        const authorIcon = document.createElement('i');
+        authorIcon.setAttribute('data-lucide', sender === 'user' ? 'user' : 'bot');
+        authorIcon.style.width = '14px';
+        authorIcon.style.height = '14px';
+        if (sender !== 'user') authorIcon.style.color = 'var(--accent)';
+        author.appendChild(authorIcon);
+        author.appendChild(document.createTextNode(
+            ' ' + (sender === 'user' ? 'You' : 'Smart AI Companion')
+        ));
+        msgDiv.appendChild(author);
 
-
-        const authorIcon = sender === 'user'
-
-            ? '<i data-lucide="user" style="width:14px;height:14px;"></i>'
-
-            : '<i data-lucide="bot" style="width:14px;height:14px;color:var(--accent);"></i>';
-
-
-
-        let extraHtml = '';
+        const bubble = document.createElement('div');
+        bubble.className = 'msg-bubble';
+        bubble.textContent = text || '';
+        msgDiv.appendChild(bubble);
 
         if (sender === 'user' && isVoice) {
-
-            extraHtml = '<div class="voice-transcription-mark"><i data-lucide="mic"></i> Transcribed from voice</div>';
-
+            const voiceMark = document.createElement('div');
+            voiceMark.className = 'voice-transcription-mark';
+            const micIcon = document.createElement('i');
+            micIcon.setAttribute('data-lucide', 'mic');
+            voiceMark.appendChild(micIcon);
+            voiceMark.appendChild(document.createTextNode(' Transcribed from voice'));
+            msgDiv.appendChild(voiceMark);
         }
-
-
-
-        const authorName = sender === 'user' ? 'You' : 'Smart AI Companion';
-
-
-
-        msgDiv.innerHTML = `
-
-            <div class="msg-author">${authorIcon} ${authorName}</div>
-
-            <div class="msg-bubble">${text}</div>
-
-            ${extraHtml}
-
-        `;
 
 
 
@@ -1115,6 +1110,8 @@
             lucide.createIcons({nodes: [msgDiv]});
 
         }
+
+        return bubble;
 
     }
 
@@ -1395,137 +1392,117 @@
 
 
     async function sendMessage() {
-
         const text = chatInput.value.trim();
-
         if (!text) return;
 
-
-
         chatInput.value = '';
-
         chatInput.dispatchEvent(new Event('input'));
-
         chatInput.disabled = true;
-
-
-
         appendMessage(text, 'user', false);
-
+        const aiBubble = appendMessage('', 'ai', false);
         setVoiceState('PROCESSING');
 
-
-
-        var payload = { query: text };
-
-        var convId = localStorage.getItem('companion_conversation_id');
-
+        const payload = { query: text };
+        const convId = localStorage.getItem('companion_conversation_id');
         if (convId) payload.conversation_id = parseInt(convId, 10);
 
-
-
         const controller = new AbortController();
-
-        const requestTimeoutId = setTimeout(() => controller.abort(), CHAT_REQUEST_TIMEOUT_MS);
+        let timeoutId = null;
+        let receivedOutput = false;
+        let streamCompleted = false;
+        let accumulated = '';
+        let interruptionMarked = false;
+        const armTimeout = (delay) => {
+            clearTimeout(timeoutId);
+            timeoutId = setTimeout(() => controller.abort(), delay);
+        };
+        const markStreamInterrupted = (errorMessage) => {
+            if (accumulated) {
+                if (interruptionMarked) return;
+                aiBubble.textContent = accumulated + '\n\n[Response interrupted.]';
+                interruptionMarked = true;
+            } else {
+                aiBubble.textContent = errorMessage;
+            }
+        };
+        armTimeout(CHAT_REQUEST_TIMEOUT_MS);
 
         try {
-
-            const response = await fetch('/api/assistant/chat/', {
-
+            const response = await fetch('/api/assistant/chat/stream/', {
                 method: 'POST',
-
                 headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
-
                 body: JSON.stringify(payload),
-
                 signal: controller.signal
-
             });
-
-            if (!response.ok) throw new Error('API Error');
-
-            const data = await response.json();
-
-
-
-            if (data.conversation_id && data.conversation_id != convId) {
-
-                localStorage.setItem('companion_conversation_id', data.conversation_id);
-
+            if (!response.ok || !response.body) {
+                throw new Error('The streaming AI service rejected the request.');
             }
 
-            updateSidebar(data);
-
-
-
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            while (true) {
+                const readResult = await reader.read();
+                if (readResult.done) break;
+                armTimeout(CHAT_STREAM_IDLE_TIMEOUT_MS);
+                buffer += decoder.decode(readResult.value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+                for (const rawLine of lines) {
+                    if (!rawLine.trim()) continue;
+                    const event = JSON.parse(rawLine);
+                    if (event.conversation_id && event.conversation_id != convId) {
+                        localStorage.setItem('companion_conversation_id', event.conversation_id);
+                    }
+                    if (event.type === 'delta' && event.text) {
+                        accumulated += event.text;
+                        aiBubble.textContent = accumulated;
+                        if (!receivedOutput) {
+                            receivedOutput = true;
+                            setVoiceState('SPEAKING');
+                        }
+                        chatHistory.scrollTop = chatHistory.scrollHeight;
+                    } else if (event.type === 'done') {
+                        streamCompleted = true;
+                        if (typeof event.response === 'string') {
+                            accumulated = event.response;
+                            aiBubble.textContent = accumulated;
+                        }
+                        updateSidebar(event);
+                        setVoiceState('IDLE');
+                    } else if (event.type === 'error') {
+                        const detail = event.detail || 'The AI response could not be completed.';
+                        throw new Error(detail);
+                    }
+                }
+            }
+            buffer += decoder.decode();
+            if (buffer.trim()) {
+                const finalEvent = JSON.parse(buffer);
+                if (finalEvent.type === 'error') {
+                    throw new Error(finalEvent.detail || 'Stream error.');
+                }
+                if (finalEvent.type === 'done') streamCompleted = true;
+            }
+            if (!streamCompleted) {
+                throw new Error('The AI connection ended before completion.');
+            }
             setVoiceState('IDLE');
-
-            appendMessage(data.response || 'No response received.', 'ai', false);
-
-
-
-            if (data.audio_base64) {
-
-                setVoiceState('SPEAKING');
-
-                var audio = new Audio('data:audio/wav;base64,' + data.audio_base64);
-
-                audio.onended = () => setVoiceState('IDLE');
-
-                audio.onerror = () => { showToast('Audio playback failed.', 'error'); setVoiceState('ALERT'); };
-
-                try { await audio.play(); }
-
-                catch (e) { showToast('Speech playback failed.', 'error'); setVoiceState('ALERT'); }
-
-            } else {
-
-                setVoiceState('IDLE');
-
-            }
-
         } catch (e) {
-
-            console.error('Chat error:', e);
-
+            console.error('Chat stream error:', e);
             const errorMessage = e.name === 'AbortError'
-
-                ? 'AI request timed out. Please try again.'
-
-                : 'Failed to connect to AI Service.';
-
+                ? (receivedOutput
+                    ? 'The AI stream stopped after becoming idle. Please try again.'
+                    : 'The AI did not start responding in time. Please try again.')
+                : (e.message || 'Failed to connect to AI Service.');
             showToast(errorMessage, 'error');
-
             setVoiceState('ALERT');
-
-            appendMessage(
-
-                e.name === 'AbortError' ? errorMessage : 'Error processing request. Check connection.',
-
-                'ai',
-
-                false
-
-            );
-
+            markStreamInterrupted(errorMessage);
         } finally {
-
-            clearTimeout(requestTimeoutId);
-
-            if (voiceState === 'PROCESSING' || voiceState === 'ALERT') {
-
-                // Keep SPEAKING state active if audio is playing, otherwise reset
-
-                if (voiceState !== 'SPEAKING') setVoiceState('IDLE');
-
-            }
-
+            clearTimeout(timeoutId);
             chatInput.disabled = false;
-
             chatInput.focus();
-
         }
-
     }
 
 

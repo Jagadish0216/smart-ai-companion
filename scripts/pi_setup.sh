@@ -19,7 +19,7 @@
 
 set -e
 
-MODEL="llama3.2:1b"
+MODEL="llama3.2:3b"
 BENCHMARK_FILE="benchmark_results.txt"
 
 echo "============================================================"

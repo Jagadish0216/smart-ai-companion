@@ -7,7 +7,8 @@ and the structured result type returned by every engine.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional
+from collections.abc import Iterator
+from typing import Literal, Optional
 
 
 @dataclass
@@ -25,10 +26,23 @@ class AIEngineResult:
     latency_ms: int = 0                 # wall-clock processing time
     sources: list = field(default_factory=list)  # RAG source metadata (future)
     error: Optional[str] = None         # non-None means partial/failed response
+    ttft_ms: Optional[int] = None       # request start to first generated content
+    generation_ms: Optional[int] = None # complete backend generation wall time
+    prompt_prepare_ms: Optional[int] = None
+    metrics: dict = field(default_factory=dict)  # backend metrics; not public by default
 
     @property
     def success(self) -> bool:
         return self.error is None
+
+
+@dataclass(frozen=True)
+class AIEngineStreamEvent:
+    """One backend-independent streaming generation event."""
+
+    type: Literal["delta", "done"]
+    text: str = ""
+    result: Optional[AIEngineResult] = None
 
 
 class AIEngine(ABC):
@@ -68,6 +82,28 @@ class AIEngine(ABC):
             user-friendly fallback message.
         """
         ...
+
+    def generate_stream(
+        self,
+        query: str,
+        conversation_history: list | None = None,
+        system_instruction: str | None = None,
+        num_predict: int | None = None,
+        model: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> Iterator[AIEngineStreamEvent]:
+        """Stream generation events, with a safe fallback for non-stream engines."""
+        result = self.generate(
+            query,
+            conversation_history=conversation_history,
+            system_instruction=system_instruction,
+            num_predict=num_predict,
+            model=model,
+            timeout_seconds=timeout_seconds,
+        )
+        if result.text:
+            yield AIEngineStreamEvent(type="delta", text=result.text)
+        yield AIEngineStreamEvent(type="done", result=result)
 
     @property
     @abstractmethod

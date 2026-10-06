@@ -1,0 +1,16 @@
+[Unit]
+Description=Warm the Smart AI Companion primary Ollama model
+Wants=ollama.service
+After=ollama.service network.target
+
+[Service]
+Type=oneshot
+User=jagadish
+Group=jagadish
+WorkingDirectory=/home/jagadish/apps/smart-ai-companion
+EnvironmentFile=-/home/jagadish/apps/smart-ai-companion/.env
+ExecStart=/home/jagadish/apps/smart-ai-companion/venv/bin/python /home/jagadish/apps/smart-ai-companion/manage.py warm_ai_model --timeout 90
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

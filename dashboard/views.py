@@ -35,6 +35,7 @@ class DashboardView(TemplateView):
 
 
 
+@method_decorator(ensure_csrf_cookie, name='dispatch')
 class AssistantView(TemplateView):
 
     template_name = 'dashboard/assistant.html'
@@ -50,6 +51,9 @@ class AssistantView(TemplateView):
             backend_timeout + float(settings.CHAT_BACKEND_TIMEOUT_MARGIN_SECONDS),
         )
         context['chat_request_timeout_ms'] = round(browser_timeout * 1000)
+        context['chat_stream_idle_timeout_ms'] = round(
+            float(settings.CHAT_STREAM_IDLE_TIMEOUT_SECONDS) * 1000
+        )
 
 
 

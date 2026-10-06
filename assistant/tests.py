@@ -292,7 +292,7 @@ class LocalLLMEngineMockedTests(TestCase):
             "eval_duration": 500000000,  # 500ms in nanoseconds
             "total_duration": 800000000,
         })
-        mock_urlopen.side_effect = [health_resp, chat_resp]
+        mock_urlopen.return_value = chat_resp
 
         result = self.engine.generate("Hello")
 
@@ -313,7 +313,7 @@ class LocalLLMEngineMockedTests(TestCase):
             "eval_count": 8,
             "eval_duration": 300000000,
         })
-        mock_urlopen.side_effect = [health_resp, chat_resp]
+        mock_urlopen.return_value = chat_resp
 
         history = [
             {"role": "USER", "content": "What is edge AI?"},
@@ -325,7 +325,7 @@ class LocalLLMEngineMockedTests(TestCase):
         self.assertEqual(result.text, "Edge AI processes data locally.")
 
         # Verify the chat request included history
-        call_args = mock_urlopen.call_args_list[1]  # Second call is /api/chat
+        call_args = mock_urlopen.call_args_list[0]
         request_obj = call_args[0][0]
         sent_payload = json.loads(request_obj.data.decode("utf-8"))
         # system + 2 history msgs + current query = 4 messages
@@ -424,7 +424,7 @@ class LocalLLMEngineMockedTests(TestCase):
             "total_duration": 900_000_000,
             "load_duration": 100_000_000,
         })
-        mock_urlopen.side_effect = [health_resp, chat_resp]
+        mock_urlopen.return_value = chat_resp
 
         self.engine.generate("Hello")
 
@@ -443,16 +443,13 @@ class LocalLLMEngineMockedTests(TestCase):
     def test_model_not_found_error(self, mock_urlopen):
         """Ollama returns 404 when model is not pulled."""
         health_resp = self._make_mock_response({"models": []})
-        mock_urlopen.side_effect = [
-            health_resp,
-            urllib.error.HTTPError(
+        mock_urlopen.side_effect = urllib.error.HTTPError(
                 url="http://localhost:11434/api/chat",
                 code=404,
                 msg="Not Found",
                 hdrs={},
                 fp=io.BytesIO(json.dumps({"error": "model 'llama3.2:1b' not found"}).encode()),
-            ),
-        ]
+            )
 
         with self.assertRaises(EngineUnavailableError) as ctx:
             self.engine.generate("test")
@@ -463,16 +460,13 @@ class LocalLLMEngineMockedTests(TestCase):
     def test_server_error_response(self, mock_urlopen):
         """Ollama returns 500 server error."""
         health_resp = self._make_mock_response({"models": []})
-        mock_urlopen.side_effect = [
-            health_resp,
-            urllib.error.HTTPError(
+        mock_urlopen.side_effect = urllib.error.HTTPError(
                 url="http://localhost:11434/api/chat",
                 code=500,
                 msg="Internal Server Error",
                 hdrs={},
                 fp=io.BytesIO(json.dumps({"error": "model loading failed"}).encode()),
-            ),
-        ]
+            )
 
         with self.assertRaises(EngineUnavailableError) as ctx:
             self.engine.generate("test")
@@ -497,7 +491,7 @@ class LocalLLMEngineMockedTests(TestCase):
         bad_resp.read.return_value = b"not valid json at all"
         bad_resp.__enter__ = MagicMock(return_value=bad_resp)
         bad_resp.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.side_effect = [health_resp, bad_resp]
+        mock_urlopen.return_value = bad_resp
 
         with self.assertRaises(EngineUnavailableError) as ctx:
             self.engine.generate("test")
@@ -510,7 +504,7 @@ class LocalLLMEngineMockedTests(TestCase):
         chat_resp = self._make_mock_response({
             "message": {"role": "assistant", "content": ""},
         })
-        mock_urlopen.side_effect = [health_resp, chat_resp]
+        mock_urlopen.return_value = chat_resp
 
         with self.assertRaises(EngineUnavailableError) as ctx:
             self.engine.generate("test")
@@ -521,10 +515,7 @@ class LocalLLMEngineMockedTests(TestCase):
         """Ollama request times out."""
         import socket
         health_resp = self._make_mock_response({"models": []})
-        mock_urlopen.side_effect = [
-            health_resp,
-            urllib.error.URLError(socket.timeout("timed out")),
-        ]
+        mock_urlopen.side_effect = urllib.error.URLError(socket.timeout("timed out"))
 
         with self.assertRaises(EngineUnavailableError) as ctx:
             self.engine.generate("test")
@@ -614,7 +605,7 @@ class AssistantServiceEngineIntegrationTests(TestCase):
         chat_resp.__enter__ = MagicMock(return_value=chat_resp)
         chat_resp.__exit__ = MagicMock(return_value=False)
 
-        mock_urlopen.side_effect = [health_resp, chat_resp]
+        mock_urlopen.return_value = chat_resp
 
         conv, text, metadata, error = AssistantService.process_message("What is Raspberry Pi?")
 
@@ -766,7 +757,7 @@ class APIResponseMetadataTests(TestCase):
         chat_resp.__enter__ = MagicMock(return_value=chat_resp)
         chat_resp.__exit__ = MagicMock(return_value=False)
 
-        mock_urlopen.side_effect = [health_resp, chat_resp]
+        mock_urlopen.return_value = chat_resp
 
         response = self.client.post(self.url, {'query': 'What is 2+2?'}, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)

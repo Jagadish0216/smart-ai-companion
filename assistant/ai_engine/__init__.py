@@ -11,6 +11,7 @@ from typing import Optional
 from .base import (
     AIEngine,
     AIEngineResult,
+    AIEngineStreamEvent,
     EngineTimeoutError,
     EngineUnavailableError,
     ModelUnavailableError,
@@ -89,6 +90,7 @@ def reset_engine():
 __all__ = [
     "AIEngine",
     "AIEngineResult",
+    "AIEngineStreamEvent",
     "EngineUnavailableError",
     "EngineTimeoutError",
     "ModelUnavailableError",

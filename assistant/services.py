@@ -9,6 +9,7 @@ AI engines directly.
 import logging
 import math
 import time
+from dataclasses import dataclass, field
 
 from django.conf import settings
 from django.utils import timezone as django_timezone
@@ -40,6 +41,23 @@ from .routing import QueryRoute, QueryRouteDecision, QueryRouter
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class PreparedAssistantRequest:
+    conversation: Conversation
+    query: str
+    history: list[dict]
+    engine: object
+    execution_plan: AIExecutionPlan
+    route_decision: QueryRouteDecision
+    system_instruction: str
+    num_predict: int
+    rag_results: list
+    online_results: list[OnlineRetrievalResult]
+    online_latency_ms: int
+    execution_started: float
+    stage_ms: dict[str, int] = field(default_factory=dict)
+
+
 class AssistantService:
 
     @staticmethod
@@ -66,296 +84,478 @@ class AssistantService:
         The metadata dict contains engine/model/mode/latency for the API
         layer to optionally include in the response.
         """
-        execution_started = time.perf_counter()
-
-        # ── Resolve or create conversation ──
-        if conversation_id:
-            try:
-                conversation = Conversation.objects.get(id=conversation_id)
-            except Conversation.DoesNotExist:
-                return None, None, None, "Conversation not found."
-        else:
-            conversation = Conversation.objects.create(title=query[:50])
-
-        # ── Persist user message ──
-        Message.objects.create(
-            conversation=conversation,
-            sender='USER',
-            text=query,
-        )
-
-        planned_engine = None
-
-        def local_model_inventory():
-            nonlocal planned_engine
-            planned_engine = get_engine()
-            inventory = getattr(planned_engine, "available_models", None)
-            if not callable(inventory):
-                return ()
-            return inventory()
-
-        execution_plan = get_ai_execution_plan(
-            model_inventory_provider=local_model_inventory,
-        )
-
-        effective_instruction = system_instruction
-        effective_num_predict = num_predict
-        if response_plan is not None:
-            if response_plan.system_instruction:
-                effective_instruction = (
-                    f"{effective_instruction}\n\n{response_plan.system_instruction}"
-                    if effective_instruction
-                    else response_plan.system_instruction
-                )
-            if effective_num_predict is None:
-                effective_num_predict = response_plan.num_predict
-        effective_num_predict = min(
-            effective_num_predict
-            if effective_num_predict is not None
-            else execution_plan.max_output_tokens,
-            execution_plan.max_output_tokens,
-        )
-
-        registry = CapabilityRegistry.from_settings()
-        online_configured = registry.is_available(Capability.ONLINE_RETRIEVAL)
-        registry = registry.with_availability(
-            Capability.ONLINE_RETRIEVAL,
-            online_configured and execution_plan.online_allowed,
-            unavailable_response=(
-                "I can't retrieve live online information right now because "
-                "the current connectivity policy does not allow Internet access."
-            ),
-        )
-        route_decision = QueryRouter().decide(
+        prepared = _prepare_message(
             query,
-            registry=registry,
-            response_mode=response_plan.mode if response_plan is not None else None,
-            required_capability=(
-                response_plan.required_capability
-                if response_plan is not None
-                else None
-            ),
+            conversation_id=conversation_id,
+            system_instruction=system_instruction,
+            num_predict=num_predict,
+            response_plan=response_plan,
         )
+        if isinstance(prepared, tuple):
+            return prepared
 
-        direct_response = _direct_response_for_route(
-            route_decision,
-            registry,
-            planned_response=(
-                response_plan.direct_response
-                if response_plan is not None
-                else None
-            ),
-        )
-        if direct_response:
-            metadata_updates = None
-            if (
-                route_decision.route == QueryRoute.ACTION
-                and route_decision.required_capability in (
-                    Capability.DEVICE_CONTROL,
-                    Capability.ENVIRONMENT_SENSING,
-                )
-            ):
-                command = map_device_command(
-                    query,
-                    route_decision.required_capability,
-                )
-                metadata_updates = _device_metadata(
-                    command=command,
-                    device_id=getattr(settings, "ESP32_DEVICE_ID", "") or None,
-                    success=False,
-                    latency_ms=0,
-                    used=False,
-                )
-            return _persist_direct_response(
-                conversation,
-                direct_response,
-                route_decision,
-                metadata_updates=metadata_updates,
-                execution_plan=execution_plan,
-                execution_started=execution_started,
-            )
-
-        if (
-            route_decision.route == QueryRoute.ACTION
-            and route_decision.required_capability in (
-                Capability.DEVICE_CONTROL,
-                Capability.ENVIRONMENT_SENSING,
-            )
-        ):
-            return _execute_device_action(
-                conversation,
+        try:
+            result = prepared.engine.generate(
                 query,
-                route_decision,
+                **_generation_kwargs(prepared),
             )
+            response_text = _apply_resource_status(result.text, prepared.execution_plan)
+            _persist_generated_response(prepared.conversation, response_text, result.latency_ms)
+            metadata = _generation_metadata(prepared, result)
+            _log_request_performance(prepared, metadata)
+            return prepared.conversation, response_text, metadata, None
+        except Exception as exc:
+            return _generation_failure_tuple(prepared, exc)
 
-        if not execution_plan.generation_allowed:
-            return _persist_direct_response(
-                conversation,
-                execution_plan.status_message
-                or "Local AI is temporarily unavailable due to system resource conditions.",
-                route_decision,
-                execution_plan=execution_plan,
-                execution_started=execution_started,
-            )
-
-        online_results: list[OnlineRetrievalResult] = []
-        online_instruction = None
-        online_latency_ms = 0
-        if route_decision.route == QueryRoute.ONLINE:
-            online_request_time = django_timezone.localtime(django_timezone.now())
-            retrieval_started = time.perf_counter()
-            try:
-                retrieved_results = get_online_retriever().retrieve(query)
-                online_latency_ms = round(
-                    (time.perf_counter() - retrieval_started) * 1000
-                )
-                online_instruction, online_results = (
-                    build_online_grounding_instruction(
-                        retrieved_results,
-                        max_context_chars=getattr(
-                            settings,
-                            "ONLINE_MAX_CONTEXT_CHARS",
-                            6000,
-                        ),
-                        query=query,
-                        request_time=online_request_time,
-                    )
-                )
-                if not online_results:
-                    raise OnlineRetrievalError(
-                        "The online provider returned no useful results."
-                    )
-            except OnlineRetrievalError as exc:
-                online_latency_ms = round(
-                    (time.perf_counter() - retrieval_started) * 1000
-                )
-                logger.warning(
-                    "Online retrieval failed: %s",
-                    exc.__class__.__name__,
-                )
-                return _persist_direct_response(
-                    conversation,
-                    "I couldn't retrieve current information right now.",
-                    route_decision,
-                    engine="online",
-                    latency_ms=online_latency_ms,
-                    online_latency_ms=online_latency_ms,
-                    execution_plan=execution_plan,
-                    execution_started=execution_started,
-                )
-            except Exception:
-                online_latency_ms = round(
-                    (time.perf_counter() - retrieval_started) * 1000
-                )
-                logger.exception("Unexpected online retrieval failure")
-                return _persist_direct_response(
-                    conversation,
-                    "I couldn't retrieve current information right now.",
-                    route_decision,
-                    engine="online",
-                    latency_ms=online_latency_ms,
-                    online_latency_ms=online_latency_ms,
-                    execution_plan=execution_plan,
-                    execution_started=execution_started,
-                )
-
-        rag_results = list(route_decision.rag_results)
-        rag_instruction = build_rag_instruction(rag_results) if rag_results else None
-        rag_voice_instruction = (
-            response_plan.rag_system_instruction
-            if rag_results and response_plan is not None
-            else None
+    @staticmethod
+    def process_message_stream(
+        query: str,
+        conversation_id: int = None,
+        system_instruction: str | None = None,
+        num_predict: int | None = None,
+        response_plan: ResponsePlan | None = None,
+    ):
+        """Yield transport-neutral start/delta/done/error dictionaries."""
+        prepared = _prepare_message(
+            query,
+            conversation_id=conversation_id,
+            system_instruction=system_instruction,
+            num_predict=num_predict,
+            response_plan=response_plan,
         )
-        grounding_instruction = registry.build_grounding_instruction()
+        if isinstance(prepared, tuple):
+            conversation, text, metadata, error = prepared
+            if error:
+                yield _stream_error(error, conversation=conversation)
+                return
+            yield {
+                "type": "start",
+                "conversation_id": conversation.id,
+                "direct": True,
+            }
+            yield {"type": "delta", "text": text}
+            yield {
+                "type": "done",
+                "conversation_id": conversation.id,
+                "response": text,
+                **metadata,
+            }
+            return
+
+        yield {
+            "type": "start",
+            "conversation_id": prepared.conversation.id,
+            "direct": False,
+            "effective_model": prepared.execution_plan.effective_model,
+            "route": prepared.route_decision.route.value,
+        }
+        complete_text = ""
+        result = None
+        prefix = _resource_status_prefix(prepared.execution_plan)
+        if prefix:
+            complete_text += prefix
+            yield {"type": "delta", "text": prefix}
+        try:
+            for event in prepared.engine.generate_stream(
+                query,
+                **_generation_kwargs(prepared),
+            ):
+                if event.type == "delta" and event.text:
+                    complete_text += event.text
+                    yield {"type": "delta", "text": event.text}
+                elif event.type == "done":
+                    result = event.result
+            if result is None:
+                raise EngineUnavailableError(
+                    "The AI engine stream ended without completion metadata."
+                )
+            expected_text = prefix + result.text
+            if complete_text != expected_text:
+                raise EngineUnavailableError(
+                    "The AI engine stream content did not match its final response."
+                )
+            _persist_generated_response(
+                prepared.conversation,
+                complete_text,
+                result.latency_ms,
+            )
+            metadata = _generation_metadata(prepared, result)
+            _log_request_performance(prepared, metadata)
+            yield {
+                "type": "done",
+                "conversation_id": prepared.conversation.id,
+                "response": complete_text,
+                **metadata,
+            }
+        except GeneratorExit:
+            logger.info(
+                "Assistant stream closed by client before completion",
+                extra={"conversation_id": prepared.conversation.id},
+            )
+            raise
+        except Exception as exc:
+            _log_generation_exception(exc)
+            _log_failed_request(prepared)
+            yield _stream_error(
+                _generation_error_message(exc),
+                conversation=prepared.conversation,
+                partial=bool(complete_text),
+            )
+
+
+def _prepare_message(
+    query: str,
+    *,
+    conversation_id: int | None,
+    system_instruction: str | None,
+    num_predict: int | None,
+    response_plan: ResponsePlan | None,
+) -> PreparedAssistantRequest | tuple:
+    execution_started = time.perf_counter()
+    if conversation_id:
+        try:
+            conversation = Conversation.objects.get(id=conversation_id)
+        except Conversation.DoesNotExist:
+            return None, None, None, "Conversation not found."
+    else:
+        conversation = Conversation.objects.create(title=query[:50])
+
+    # Identity/state boundary: history is captured before the current row exists.
+    history_started = time.perf_counter()
+    requested_history_limit = max(
+        getattr(settings, "AI_CONTEXT_NORMAL_MESSAGES", 10),
+        getattr(settings, "AI_CONTEXT_REDUCED_MESSAGES", 6),
+        getattr(settings, "AI_CONTEXT_MINIMAL_MESSAGES", 3),
+    )
+    history = _get_conversation_history(conversation, requested_history_limit)
+    history_ms = round((time.perf_counter() - history_started) * 1000)
+    Message.objects.create(conversation=conversation, sender="USER", text=query)
+
+    planned_engine = None
+
+    def local_model_inventory():
+        nonlocal planned_engine
+        planned_engine = get_engine()
+        inventory = getattr(planned_engine, "available_models", None)
+        return inventory() if callable(inventory) else ()
+
+    policy_started = time.perf_counter()
+    execution_plan = get_ai_execution_plan(
+        model_inventory_provider=local_model_inventory,
+    )
+    policy_ms = round((time.perf_counter() - policy_started) * 1000)
+    history = history[-execution_plan.context_message_limit:]
+
+    effective_instruction = system_instruction
+    effective_num_predict = num_predict
+    if response_plan is not None:
         effective_instruction = _combine_instructions(
             effective_instruction,
-            rag_instruction,
-            rag_voice_instruction,
-            online_instruction,
-            grounding_instruction,
+            response_plan.system_instruction,
+        )
+        if effective_num_predict is None:
+            effective_num_predict = response_plan.num_predict
+    effective_num_predict = min(
+        effective_num_predict
+        if effective_num_predict is not None
+        else execution_plan.max_output_tokens,
+        execution_plan.max_output_tokens,
+    )
+
+    registry = CapabilityRegistry.from_settings()
+    online_configured = registry.is_available(Capability.ONLINE_RETRIEVAL)
+    registry = registry.with_availability(
+        Capability.ONLINE_RETRIEVAL,
+        online_configured and execution_plan.online_allowed,
+        unavailable_response=(
+            "I can't retrieve live online information right now because "
+            "the current connectivity policy does not allow Internet access."
+        ),
+    )
+    routing_started = time.perf_counter()
+    route_decision = QueryRouter().decide(
+        query,
+        registry=registry,
+        response_mode=response_plan.mode if response_plan is not None else None,
+        required_capability=(
+            response_plan.required_capability if response_plan is not None else None
+        ),
+    )
+    routing_ms = round((time.perf_counter() - routing_started) * 1000)
+    stage_ms = {
+        "history_ms": history_ms,
+        "policy_ms": policy_ms,
+        "routing_ms": routing_ms,
+        "rag_ms": getattr(route_decision, "rag_latency_ms", 0),
+    }
+
+    direct_response = _direct_response_for_route(
+        route_decision,
+        registry,
+        planned_response=(response_plan.direct_response if response_plan else None),
+    )
+    if direct_response:
+        metadata_updates = None
+        if (
+            route_decision.route == QueryRoute.ACTION
+            and route_decision.required_capability
+            in (Capability.DEVICE_CONTROL, Capability.ENVIRONMENT_SENSING)
+        ):
+            command = map_device_command(query, route_decision.required_capability)
+            metadata_updates = _device_metadata(
+                command=command,
+                device_id=getattr(settings, "ESP32_DEVICE_ID", "") or None,
+                success=False,
+                latency_ms=0,
+                used=False,
+            )
+        return _persist_direct_response(
+            conversation,
+            direct_response,
+            route_decision,
+            metadata_updates=metadata_updates,
+            execution_plan=execution_plan,
+            execution_started=execution_started,
+            stage_ms=stage_ms,
         )
 
-        # ── Run AI inference ──
+    if (
+        route_decision.route == QueryRoute.ACTION
+        and route_decision.required_capability
+        in (Capability.DEVICE_CONTROL, Capability.ENVIRONMENT_SENSING)
+    ):
+        return _execute_device_action(
+            conversation,
+            query,
+            route_decision,
+            execution_plan=execution_plan,
+            execution_started=execution_started,
+            stage_ms=stage_ms,
+        )
+
+    if not execution_plan.generation_allowed:
+        return _persist_direct_response(
+            conversation,
+            execution_plan.status_message
+            or "Local AI is temporarily unavailable due to system resource conditions.",
+            route_decision,
+            execution_plan=execution_plan,
+            execution_started=execution_started,
+            stage_ms=stage_ms,
+        )
+
+    online_results: list[OnlineRetrievalResult] = []
+    online_instruction = None
+    online_latency_ms = 0
+    if route_decision.route == QueryRoute.ONLINE:
+        retrieval_started = time.perf_counter()
         try:
-            engine = planned_engine or get_engine()
-
-            # Build lightweight conversation history for context
-            history = _get_conversation_history(
+            retrieved_results = get_online_retriever().retrieve(query)
+            online_latency_ms = round((time.perf_counter() - retrieval_started) * 1000)
+            online_instruction, online_results = build_online_grounding_instruction(
+                retrieved_results,
+                max_context_chars=getattr(settings, "ONLINE_MAX_CONTEXT_CHARS", 6000),
+                query=query,
+                request_time=django_timezone.localtime(django_timezone.now()),
+            )
+            if not online_results:
+                raise OnlineRetrievalError("The online provider returned no useful results.")
+        except OnlineRetrievalError as exc:
+            online_latency_ms = round((time.perf_counter() - retrieval_started) * 1000)
+            logger.warning("Online retrieval failed: %s", exc.__class__.__name__)
+            return _persist_direct_response(
                 conversation,
-                limit=execution_plan.context_message_limit,
+                "I couldn't retrieve current information right now.",
+                route_decision,
+                engine="online",
+                latency_ms=online_latency_ms,
+                online_latency_ms=online_latency_ms,
+                execution_plan=execution_plan,
+                execution_started=execution_started,
+                stage_ms={**stage_ms, "online_ms": online_latency_ms},
             )
-
-            generation_kwargs = {"conversation_history": history}
-            if effective_instruction:
-                generation_kwargs["system_instruction"] = effective_instruction
-            generation_kwargs["num_predict"] = effective_num_predict
-            generation_kwargs["model"] = execution_plan.effective_model
-            generation_kwargs["timeout_seconds"] = execution_plan.timeout_seconds
-            result = engine.generate(query, **generation_kwargs)
-
-            response_text = result.text
-            if execution_plan.status_message and execution_plan.resource_profile in {
-                "ECO",
-                "PROTECTIVE",
-            }:
-                response_text = f"{execution_plan.status_message}\n\n{response_text}"
-
-            # ── Persist AI response ──
-            Message.objects.create(
-                conversation=conversation,
-                sender='AI',
-                text=response_text,
-                processing_time_ms=result.latency_ms,
+        except Exception:
+            online_latency_ms = round((time.perf_counter() - retrieval_started) * 1000)
+            logger.exception("Unexpected online retrieval failure")
+            return _persist_direct_response(
+                conversation,
+                "I couldn't retrieve current information right now.",
+                route_decision,
+                engine="online",
+                latency_ms=online_latency_ms,
+                online_latency_ms=online_latency_ms,
+                execution_plan=execution_plan,
+                execution_started=execution_started,
+                stage_ms={**stage_ms, "online_ms": online_latency_ms},
             )
+    stage_ms["online_ms"] = online_latency_ms
 
-            conversation.save(update_fields=['updated_at'])
+    rag_results = list(route_decision.rag_results)
+    effective_instruction = _combine_instructions(
+        effective_instruction,
+        build_rag_instruction(rag_results) if rag_results else None,
+        response_plan.rag_system_instruction
+        if rag_results and response_plan is not None
+        else None,
+        online_instruction,
+        registry.build_grounding_instruction(),
+    )
+    return PreparedAssistantRequest(
+        conversation=conversation,
+        query=query,
+        history=history,
+        engine=planned_engine or get_engine(),
+        execution_plan=execution_plan,
+        route_decision=route_decision,
+        system_instruction=effective_instruction,
+        num_predict=effective_num_predict,
+        rag_results=rag_results,
+        online_results=online_results,
+        online_latency_ms=online_latency_ms,
+        execution_started=execution_started,
+        stage_ms=stage_ms,
+    )
 
-            metadata = {
-                "engine": result.engine,
-                "model": result.model,
-                "mode": result.mode,
-                "latency_ms": result.latency_ms,
-                "rag_used": bool(rag_results),
-                "rag_sources": [
-                    retrieved.source_metadata()
-                    for retrieved in rag_results
-                ],
-                "rag_chunks": len(rag_results),
-                "route": route_decision.route.value,
-                "online_used": bool(online_results),
-                "online_sources": [
-                    retrieved.source_metadata()
-                    for retrieved in online_results
-                ],
-                "online_results": len(online_results),
-                "online_latency_ms": online_latency_ms,
-                "execution_ms": round(
-                    (time.perf_counter() - execution_started) * 1000
-                ),
-            }
-            metadata.update(execution_plan.metadata())
-            metadata["effective_model"] = result.model or execution_plan.effective_model
 
-            return conversation, response_text, metadata, None
+def _generation_kwargs(prepared: PreparedAssistantRequest) -> dict:
+    return {
+        "conversation_history": prepared.history,
+        "system_instruction": prepared.system_instruction,
+        "num_predict": prepared.num_predict,
+        "model": prepared.execution_plan.effective_model,
+        "timeout_seconds": prepared.execution_plan.timeout_seconds,
+    }
 
-        except EngineTimeoutError:
-            logger.warning("Local AI generation timed out")
-            return conversation, None, None, (
-                "Local AI generation timed out before completing. Please try again."
-            )
-        except ModelUnavailableError:
-            logger.warning("Selected local AI model is unavailable")
-            return conversation, None, None, (
-                "The selected local AI model is not available on this device."
-            )
-        except EngineUnavailableError as exc:
-            logger.warning("AI engine unavailable: %s", exc)
-            return conversation, None, None, (
-                "The local AI service is currently unavailable or unreachable."
-            )
-        except Exception as exc:
-            logger.exception("Unexpected error during AI inference")
-            return conversation, None, None, "Failed to process query."
+
+def _resource_status_prefix(execution_plan: AIExecutionPlan) -> str:
+    if execution_plan.status_message and execution_plan.resource_profile in {
+        "ECO",
+        "PROTECTIVE",
+    }:
+        return f"{execution_plan.status_message}\n\n"
+    return ""
+
+
+def _apply_resource_status(text: str, execution_plan: AIExecutionPlan) -> str:
+    return _resource_status_prefix(execution_plan) + text
+
+
+def _persist_generated_response(
+    conversation: Conversation,
+    text: str,
+    latency_ms: int,
+) -> None:
+    Message.objects.create(
+        conversation=conversation,
+        sender="AI",
+        text=text,
+        processing_time_ms=latency_ms,
+    )
+    conversation.save(update_fields=["updated_at"])
+
+
+def _generation_metadata(prepared: PreparedAssistantRequest, result) -> dict:
+    metadata = {
+        "engine": result.engine,
+        "model": result.model,
+        "mode": result.mode,
+        "latency_ms": result.latency_ms,
+        "generation_ms": result.generation_ms or result.latency_ms,
+        "ttft_ms": result.ttft_ms,
+        "prompt_prepare_ms": result.prompt_prepare_ms,
+        "rag_used": bool(prepared.rag_results),
+        "rag_sources": [item.source_metadata() for item in prepared.rag_results],
+        "rag_chunks": len(prepared.rag_results),
+        "route": prepared.route_decision.route.value,
+        "online_used": bool(prepared.online_results),
+        "online_sources": [item.source_metadata() for item in prepared.online_results],
+        "online_results": len(prepared.online_results),
+        "online_latency_ms": prepared.online_latency_ms,
+        "execution_ms": round((time.perf_counter() - prepared.execution_started) * 1000),
+    }
+    metadata.update(prepared.execution_plan.metadata())
+    metadata["effective_model"] = result.model or prepared.execution_plan.effective_model
+    metadata.update(prepared.stage_ms)
+    return metadata
+
+
+def _log_request_performance(prepared: PreparedAssistantRequest, metadata: dict) -> None:
+    safe_metrics = {
+        key: metadata.get(key)
+        for key in (
+            "execution_ms", "policy_ms", "routing_ms", "rag_ms", "online_ms",
+            "prompt_prepare_ms", "ttft_ms", "generation_ms", "route",
+            "resource_profile", "effective_model",
+        )
+    }
+    logger.info(
+        "Assistant request stage timings: %s",
+        safe_metrics,
+        extra={"assistant_timings": safe_metrics},
+    )
+
+
+def _generation_error_message(exc: Exception) -> str:
+    if isinstance(exc, EngineTimeoutError):
+        return "Local AI generation timed out before completing. Please try again."
+    if isinstance(exc, ModelUnavailableError):
+        return "The selected local AI model is not available on this device."
+    if isinstance(exc, EngineUnavailableError):
+        return "The local AI service is currently unavailable or unreachable."
+    return "Failed to process query."
+
+
+def _log_generation_exception(exc: Exception) -> None:
+    if isinstance(exc, EngineTimeoutError):
+        logger.warning("Local AI generation timed out")
+    elif isinstance(exc, ModelUnavailableError):
+        logger.warning("Selected local AI model is unavailable")
+    elif isinstance(exc, EngineUnavailableError):
+        logger.warning("AI engine unavailable: %s", exc)
+    else:
+        logger.exception("Unexpected error during AI inference")
+
+
+def _log_failed_request(prepared: PreparedAssistantRequest) -> None:
+    safe_metrics = {
+        **prepared.stage_ms,
+        "execution_ms": round(
+            (time.perf_counter() - prepared.execution_started) * 1000
+        ),
+        "route": prepared.route_decision.route.value,
+        "resource_profile": prepared.execution_plan.resource_profile,
+        "effective_model": prepared.execution_plan.effective_model,
+        "failed": True,
+    }
+    logger.info(
+        "Assistant request failed after stage timings: %s",
+        safe_metrics,
+        extra={"assistant_timings": safe_metrics},
+    )
+
+
+def _generation_failure_tuple(
+    prepared: PreparedAssistantRequest,
+    exc: Exception,
+) -> tuple:
+    _log_generation_exception(exc)
+    _log_failed_request(prepared)
+    return prepared.conversation, None, None, _generation_error_message(exc)
+
+
+def _stream_error(
+    error: str,
+    *,
+    conversation: Conversation | None,
+    partial: bool = False,
+) -> dict:
+    return {
+        "type": "error",
+        "error": "generation_error",
+        "detail": error,
+        "conversation_id": conversation.id if conversation is not None else None,
+        "partial": partial,
+    }
 
 
 def _direct_response_for_route(
@@ -388,6 +588,7 @@ def _persist_direct_response(
     metadata_updates: dict | None = None,
     execution_plan: AIExecutionPlan | None = None,
     execution_started: float | None = None,
+    stage_ms: dict[str, int] | None = None,
 ) -> tuple:
     Message.objects.create(
         conversation=conversation,
@@ -417,6 +618,20 @@ def _persist_direct_response(
         metadata["execution_ms"] = round(
             (time.perf_counter() - execution_started) * 1000
         ) if execution_started is not None else latency_ms
+    if stage_ms:
+        metadata.update(stage_ms)
+    logger.info(
+        "Assistant direct request completed",
+        extra={
+            "assistant_timings": {
+                key: metadata.get(key)
+                for key in (
+                    "execution_ms", "policy_ms", "routing_ms", "rag_ms",
+                    "online_ms", "route", "resource_profile",
+                )
+            }
+        },
+    )
     return conversation, response_text, metadata, None
 
 
@@ -424,6 +639,10 @@ def _execute_device_action(
     conversation: Conversation,
     query: str,
     decision: QueryRouteDecision,
+    *,
+    execution_plan: AIExecutionPlan | None = None,
+    execution_started: float | None = None,
+    stage_ms: dict[str, int] | None = None,
 ) -> tuple:
     command = map_device_command(query, decision.required_capability)
     configured_device_id = getattr(settings, "ESP32_DEVICE_ID", "") or None
@@ -443,6 +662,9 @@ def _execute_device_action(
                 success=False,
                 latency_ms=0,
             ),
+            execution_plan=execution_plan,
+            execution_started=execution_started,
+            stage_ms=stage_ms,
         )
 
     started = time.perf_counter()
@@ -491,6 +713,9 @@ def _execute_device_action(
                 latency_ms=result.latency_ms,
                 sensor=sensor,
             ),
+            execution_plan=execution_plan,
+            execution_started=execution_started,
+            stage_ms=stage_ms,
         )
     except DeviceCommandTimeoutError:
         latency_ms = round((time.perf_counter() - started) * 1000)
@@ -515,6 +740,9 @@ def _execute_device_action(
             success=False,
             latency_ms=latency_ms,
         ),
+        execution_plan=execution_plan,
+        execution_started=execution_started,
+        stage_ms=stage_ms,
     )
 
 
@@ -571,7 +799,7 @@ def _get_conversation_history(conversation: Conversation, limit: int = 10) -> li
     """
     messages = (
         conversation.messages
-        .order_by('-timestamp')[:limit]
+        .order_by('-timestamp', '-id')[:limit]
     )
     # Reverse to chronological order
     history = [

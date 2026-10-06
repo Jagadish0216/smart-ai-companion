@@ -1,0 +1,20 @@
+[Unit]
+Description=Smart AI Companion Django application
+Wants=smart-ai-companion-network-mode.service smart-ai-companion-model-warm.service
+After=network.target smart-ai-companion-network-mode.service smart-ai-companion-model-warm.service
+
+[Service]
+Type=simple
+User=jagadish
+Group=jagadish
+WorkingDirectory=/home/jagadish/apps/smart-ai-companion
+EnvironmentFile=-/home/jagadish/apps/smart-ai-companion/.env
+ExecStart=/home/jagadish/apps/smart-ai-companion/venv/bin/gunicorn config.wsgi:application --bind 0.0.0.0:8000 --worker-class gthread --workers 1 --threads 4 --timeout 180 --access-logfile - --error-logfile -
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

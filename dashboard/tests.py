@@ -23,9 +23,11 @@ class AssistantChatTimeoutTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'const CHAT_REQUEST_TIMEOUT_MS = 45000;')
+        self.assertContains(response, 'const CHAT_STREAM_IDLE_TIMEOUT_MS = 45000;')
         self.assertContains(response, 'new AbortController()')
         self.assertContains(response, 'signal: controller.signal')
-        self.assertContains(response, 'AI request timed out. Please try again.')
+        self.assertContains(response, 'The AI did not start responding in time.')
+        self.assertContains(response, 'armTimeout(CHAT_STREAM_IDLE_TIMEOUT_MS)')
 
     @override_settings(
         CHAT_REQUEST_TIMEOUT_SECONDS=30,

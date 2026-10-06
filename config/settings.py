@@ -152,8 +152,9 @@ AI_ENGINE = os.environ.get('AI_ENGINE', 'mock')
 
 # Ollama configuration (only used when AI_ENGINE=local)
 OLLAMA_HOST = os.environ.get('OLLAMA_HOST', 'http://localhost:11434')
-OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', 'llama3.2:1b')
+OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', 'llama3.2:3b')
 OLLAMA_TIMEOUT = int(os.environ.get('OLLAMA_TIMEOUT', '120'))
+OLLAMA_KEEP_ALIVE = os.environ.get('OLLAMA_KEEP_ALIVE', '30m')
 OLLAMA_NUM_PREDICT = int(os.environ.get('OLLAMA_NUM_PREDICT', '128'))
 AI_LIGHTWEIGHT_MODEL = os.environ.get('AI_LIGHTWEIGHT_MODEL', 'llama3.2:1b')
 AI_GENERATION_NORMAL_NUM_PREDICT = int(
@@ -169,6 +170,7 @@ AI_LOCAL_GENERATION_TIMEOUT_SECONDS = float(
 )
 CHAT_REQUEST_TIMEOUT_SECONDS = int(os.environ.get('CHAT_REQUEST_TIMEOUT_SECONDS', '30'))
 CHAT_BACKEND_TIMEOUT_MARGIN_SECONDS = int(os.environ.get('CHAT_BACKEND_TIMEOUT_MARGIN_SECONDS', '15'))
+CHAT_STREAM_IDLE_TIMEOUT_SECONDS = int(os.environ.get('CHAT_STREAM_IDLE_TIMEOUT_SECONDS', '45'))
 
 # Offline local knowledge / RAG
 RAG_ENABLED = os.environ.get('RAG_ENABLED', 'false').lower() in ('1', 'true', 'yes', 'on')

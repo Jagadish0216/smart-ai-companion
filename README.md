@@ -203,8 +203,13 @@ For deployment on the Raspberry Pi, use Gunicorn instead of the development serv
 ```bash
 pip install gunicorn
 python manage.py collectstatic
-gunicorn config.wsgi:application --bind 0.0.0.0:8000
+gunicorn config.wsgi:application --bind 0.0.0.0:8000 --worker-class gthread --workers 1 --threads 4 --timeout 180
 ```
+
+The repository unit at `deployment/systemd/smart-ai-companion.service` uses one
+`gthread` worker with four threads. This retains a single application process on
+the memory-constrained appliance while allowing status and resource requests to
+run during a long streaming response.
 
 ### 3. Raspberry Pi + Ollama (For Real LLM)
 
@@ -218,14 +223,14 @@ ollama --version
 #### Pull the Model
 
 ```bash
-ollama pull llama3.2:1b
+ollama pull llama3.2:3b
 ollama list
 ```
 
 #### Test Directly
 
 ```bash
-ollama run llama3.2:1b "Hello, what can you do?"
+ollama run llama3.2:3b "Hello, what can you do?"
 ```
 
 #### Or use the setup script
@@ -244,10 +249,11 @@ Edit your `.env` file:
 ```env
 AI_ENGINE=local
 OLLAMA_HOST=http://localhost:11434
-OLLAMA_MODEL=llama3.2:1b
-OLLAMA_KEEP_ALIVE=30m
+OLLAMA_MODEL=llama3.2:3b
+OLLAMA_KEEP_ALIVE=24h
 OLLAMA_NUM_PREDICT=128
 CHAT_REQUEST_TIMEOUT_SECONDS=30
+CHAT_STREAM_IDLE_TIMEOUT_SECONDS=45
 ```
 
 Then restart Django:
@@ -272,11 +278,13 @@ Mock mode requires no external services and is useful for frontend development.
 |---|---|---|
 | `AI_ENGINE` | `mock` | Engine selection: `mock` or `local` |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
-| `OLLAMA_MODEL` | `llama3.2:1b` | Model identifier |
+| `OLLAMA_MODEL` | `llama3.2:3b` | Primary model identifier |
+| `AI_LIGHTWEIGHT_MODEL` | `llama3.2:1b` | Optional installed fallback selected only by ECO/PROTECTIVE resource policy |
 | `OLLAMA_TIMEOUT` | `120` | Request timeout (seconds) |
-| `OLLAMA_KEEP_ALIVE` | `30m` | How long Ollama keeps the model loaded after a request |
+| `OLLAMA_KEEP_ALIVE` | `30m` (`24h` recommended in `.env.example`) | How long Ollama keeps the model loaded after a request |
 | `OLLAMA_NUM_PREDICT` | `128` | Maximum number of tokens Ollama generates per response |
-| `CHAT_REQUEST_TIMEOUT_SECONDS` | `30` | Browser timeout for chat POST requests |
+| `CHAT_REQUEST_TIMEOUT_SECONDS` | `30` | Minimum timeout while waiting for initial stream activity; it is raised above the backend timeout when needed |
+| `CHAT_STREAM_IDLE_TIMEOUT_SECONDS` | `45` | Browser idle timeout reset whenever streamed bytes arrive; not a hard completion deadline |
 | `RAG_ENABLED` | `false` | Enable local retrieval with `AI_ENGINE=local` after knowledge has been ingested |
 | `RAG_RETRIEVER` | `lexical` | Local retriever implementation; v1 supports `lexical` |
 | `RAG_CHUNK_CHARS` | `1000` | Approximate source chunk size in characters |
@@ -397,24 +405,87 @@ The suite includes local knowledge chunking/ingestion/retrieval tests plus mocke
 python manage.py test knowledge_base.tests knowledge_base.tests_rag
 ```
 
+## Streaming, Prewarming, and Latency Diagnostics
+
+Text chat uses `POST /api/assistant/chat/stream/` with CSRF protection and
+`application/x-ndjson`. The original `POST /api/assistant/chat/` JSON endpoint
+is retained for API clients and the voice path. Every stream line is one JSON
+object with one of these stable event shapes:
+
+```json
+{"type":"start","conversation_id":12,"direct":false,"effective_model":"llama3.2:3b","route":"local"}
+{"type":"delta","text":"Edge"}
+{"type":"done","conversation_id":12,"response":"Edge computing ...","ttft_ms":180,"generation_ms":8050,"execution_ms":8075}
+{"type":"error","error":"generation_error","detail":"The local AI service is currently unavailable or unreachable.","partial":true}
+```
+
+The browser buffers incomplete NDJSON lines, updates one pending AI bubble with
+`textContent`, and resets an idle timer as bytes arrive. A successful generated
+answer is accumulated and persisted as exactly one AI message. If generation
+fails after a partial response, the UI labels it interrupted and the backend
+does not persist that incomplete AI text as a completed answer.
+
+Run the explicit warm-up after Ollama starts:
+
+```bash
+python manage.py warm_ai_model
+python manage.py warm_ai_model --model llama3.2:1b --timeout 90
+```
+
+The default target is `OLLAMA_MODEL`; the lightweight resource-pressure fallback
+is not required at boot. `deployment/systemd/smart-ai-companion-model-warm.service`
+weakly depends on the standard Ollama installer unit, `ollama.service`. The app
+unit wants and starts after the warm unit, but does not require it, so a temporary
+Ollama failure is visible in `systemctl`/`journalctl` without preventing the
+dashboard from starting.
+
+Install the reviewed unit templates on the Pi with:
+
+```bash
+sudo install -o root -g root -m 0644 deployment/systemd/smart-ai-companion-model-warm.service /etc/systemd/system/
+sudo install -o root -g root -m 0644 deployment/systemd/smart-ai-companion.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable smart-ai-companion-model-warm.service smart-ai-companion.service
+sudo systemctl restart smart-ai-companion.service
+systemctl status --no-pager ollama.service smart-ai-companion-model-warm.service smart-ai-companion.service
+journalctl -u smart-ai-companion-model-warm.service -u smart-ai-companion.service -b --no-pager
+ollama ps
+```
+
+If Ollama was installed under a differently named unit, adjust only the weak
+`Wants=`/`After=` references after confirming the real unit with
+`systemctl list-unit-files | grep -i ollama`.
+
+Structured logs report safe stage timings for resource policy, routing, local
+RAG, online retrieval, prompt preparation, time to first token, generation, and
+total execution. Prompts, document contents, conversation history, and secrets
+are not logged. Ollama counts/durations and calculated token throughput remain
+internal structured metrics; only safe additive timing fields are public.
+
 ## Raspberry Pi Benchmark Results
 
-> **Placeholder**: Run `scripts/pi_setup.sh` on the Pi to collect real measurements.
-> Results will be recorded here after the Pi is connected and tested.
+Measured on Raspberry Pi 5 (8 GB), Debian 13 ARM64, Python 3.13.5,
+Django 5.2.17, and Ollama 0.34.2:
 
-| Metric | Value |
-|---|---|
-| Pi Model | _pending_ |
-| RAM | _pending_ |
-| OS | _pending_ |
-| Ollama Version | _pending_ |
-| Model | `llama3.2:1b` |
-| Model Size | _pending_ |
-| Avg Response Time | _pending_ |
-| Tokens/sec | _pending_ |
-| RAM Usage (inference) | _pending_ |
-| Temperature (idle) | _pending_ |
-| Temperature (inference) | _pending_ |
+| Model / state / budget | TTFT | Total | Load | Generation | Output rate |
+|---|---:|---:|---:|---:|---:|
+| `llama3.2:3b`, cold, 64 max tokens | 27.05 s | 36.94 s | 25.74 s | 9.89 s | 6.07 tok/s |
+| `llama3.2:3b`, warm, 48 max tokens | 0.18 s | 8.05 s | 0.00 s | 7.87 s | 6.10 tok/s |
+| `llama3.2:1b`, cold, 64 max tokens | 18.51 s | 25.28 s | 17.69 s | 6.77 s | 8.71 tok/s |
+| `llama3.2:1b`, warm, 48 max tokens | 0.13 s | 5.60 s | 0.01 s | 5.48 s | 8.76 tok/s |
+
+With both models resident, measured memory was 5.1 GiB used, 2.8 GiB
+available, and no swap, with approximately 2.9 GB for 3B and 1.8 GB for 1B.
+The 48-token samples truncated mid-answer, so normal mode remains at a quality-
+preserving budget. Streaming improves perceived latency by exposing warm TTFT;
+total completion time remains bounded by Raspberry Pi CPU generation speed.
+
+For an acceptance run, execute one cold and three warm prompts at the normal
+budget, record client-observed first-delta time and final time, compare the final
+NDJSON metadata with Ollama metrics in the journal, verify `load_duration` is
+near zero after warm-up, then repeat under ECO pressure to confirm the approved
+1B fallback still applies. Also issue `/api/system/resource-manager/` requests
+during generation to confirm the threaded worker remains responsive.
 
 ## Current Implementation Status
 
@@ -423,7 +494,7 @@ python manage.py test knowledge_base.tests knowledge_base.tests_rag
 | Control Center UI | ✅ Implemented |
 | Mock AI Engine | ✅ Implemented |
 | Local LLM Engine (Ollama) | ✅ Implemented (uses /api/chat with system prompt) |
-| Llama 3.2 1B Integration | ✅ Architecture ready, pending Pi connection |
+| Llama 3.2 3B primary / 1B fallback | ✅ Resource-aware local integration |
 | Conversation Persistence | ✅ Implemented |
 | Document Upload | ✅ Implemented |
 | Device Metrics (simulated) | ✅ Implemented |

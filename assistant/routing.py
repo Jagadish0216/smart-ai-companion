@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -30,6 +31,7 @@ class QueryRouteDecision:
     response_mode: ResponseMode
     required_capability: Capability | None = None
     rag_results: tuple[RetrievedChunk, ...] = field(default_factory=tuple)
+    rag_latency_ms: int = field(default=0, compare=False)
 
 
 _EXPLICIT_ONLINE_PATTERNS = (
@@ -89,12 +91,17 @@ class QueryRouter:
                 required_capability == Capability.LOCAL_RAG
                 and registry.is_available(Capability.LOCAL_RAG)
             ):
+                rag_started = time.perf_counter()
                 rag_results = self._retrieve(query)
+                rag_latency_ms = round((time.perf_counter() - rag_started) * 1000)
+            else:
+                rag_latency_ms = 0
             return QueryRouteDecision(
                 QueryRoute.ACTION,
                 response_mode,
                 required_capability,
                 rag_results,
+                rag_latency_ms,
             )
 
         if self.requires_online(query):
@@ -104,20 +111,26 @@ class QueryRouter:
                 Capability.ONLINE_RETRIEVAL,
             )
 
+        rag_latency_ms = 0
         if registry.is_available(Capability.LOCAL_RAG):
+            rag_started = time.perf_counter()
             rag_results = self._retrieve(query)
+            rag_latency_ms = round((time.perf_counter() - rag_started) * 1000)
             if rag_results:
                 return QueryRouteDecision(
                     QueryRoute.LOCAL_RAG,
                     response_mode,
                     Capability.LOCAL_RAG,
                     rag_results,
+                    rag_latency_ms,
                 )
 
         return QueryRouteDecision(
             QueryRoute.LOCAL,
             response_mode,
             required_capability,
+            (),
+            rag_latency_ms,
         )
 
     @staticmethod

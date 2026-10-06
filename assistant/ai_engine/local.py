@@ -33,6 +33,7 @@ from typing import Optional
 from .base import (
     AIEngine,
     AIEngineResult,
+    AIEngineStreamEvent,
     EngineTimeoutError,
     EngineUnavailableError,
     ModelUnavailableError,
@@ -60,7 +61,7 @@ class LocalLLMEngine(AIEngine):
 
     Configuration (environment variables):
         OLLAMA_HOST    — Ollama server URL (default: http://localhost:11434)
-        OLLAMA_MODEL   — Model to use (default: llama3.2:1b)
+        OLLAMA_MODEL   — Model to use (default: llama3.2:3b)
         OLLAMA_TIMEOUT — Request timeout in seconds (default: 120)
         OLLAMA_KEEP_ALIVE — How long Ollama keeps the model loaded (default: 30m)
         OLLAMA_NUM_PREDICT — Maximum tokens to generate (default: 128)
@@ -77,7 +78,7 @@ class LocalLLMEngine(AIEngine):
         import os
 
         self._host = (host or os.environ.get("OLLAMA_HOST", "http://localhost:11434")).rstrip("/")
-        self._model = model or os.environ.get("OLLAMA_MODEL", "llama3.2:1b")
+        self._model = model or os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
         self._timeout = timeout or int(os.environ.get("OLLAMA_TIMEOUT", "120"))
         self._keep_alive = keep_alive or os.environ.get("OLLAMA_KEEP_ALIVE", "30m")
         self._num_predict = (
@@ -138,18 +139,14 @@ class LocalLLMEngine(AIEngine):
         Uses /api/chat which automatically applies the correct chat template
         for the loaded model (e.g., Llama 3.2 instruct format).
         """
-        if not self.health_check():
-            raise EngineUnavailableError(
-                f"Cannot reach Ollama at {self._host}. "
-                "Ensure Ollama is installed and running: https://ollama.com"
-            )
-
         selected_model = model or self._model
+        prompt_started = time.perf_counter()
         messages = self._build_messages(
             query,
             conversation_history,
             system_instruction=system_instruction,
         )
+        prompt_prepare_ms = round((time.perf_counter() - prompt_started) * 1000)
 
         start = time.perf_counter()
 
@@ -167,7 +164,7 @@ class LocalLLMEngine(AIEngine):
             raise EngineUnavailableError(f"Inference failed: {exc}") from exc
 
         elapsed_ms = int((time.perf_counter() - start) * 1000)
-        self._log_performance_metrics(response_data)
+        metrics = self._log_performance_metrics(response_data)
 
         # Extract response text
         message = response_data.get("message", {})
@@ -184,6 +181,115 @@ class LocalLLMEngine(AIEngine):
             model=selected_model,
             mode="offline",
             latency_ms=elapsed_ms,
+            generation_ms=elapsed_ms,
+            prompt_prepare_ms=prompt_prepare_ms,
+            metrics=metrics,
+        )
+
+    def generate_stream(
+        self,
+        query: str,
+        conversation_history: list | None = None,
+        system_instruction: str | None = None,
+        num_predict: int | None = None,
+        model: str | None = None,
+        timeout_seconds: float | None = None,
+    ):
+        """Yield Ollama text deltas immediately and finish with safe metrics."""
+        selected_model = model or self._model
+        prompt_started = time.perf_counter()
+        messages = self._build_messages(
+            query,
+            conversation_history,
+            system_instruction=system_instruction,
+        )
+        prompt_prepare_ms = round((time.perf_counter() - prompt_started) * 1000)
+        request = self._build_chat_request(
+            messages,
+            stream=True,
+            num_predict=num_predict,
+            model=selected_model,
+        )
+        timeout = self._timeout if timeout_seconds is None else float(timeout_seconds)
+        request_started = time.perf_counter()
+        first_content_at = None
+        complete_text = ""
+        final_payload = None
+
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                for raw_line in response:
+                    if not raw_line or not raw_line.strip():
+                        continue
+                    try:
+                        event = json.loads(raw_line.decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                        raise EngineUnavailableError(
+                            "Ollama returned a malformed streaming event."
+                        ) from exc
+                    if not isinstance(event, dict):
+                        raise EngineUnavailableError(
+                            "Ollama returned a malformed streaming event."
+                        )
+                    if event.get("error"):
+                        self._raise_ollama_message_error(
+                            str(event["error"]),
+                            selected_model,
+                        )
+                    message = event.get("message")
+                    content = message.get("content", "") if isinstance(message, dict) else ""
+                    if content:
+                        if first_content_at is None:
+                            first_content_at = time.perf_counter()
+                        complete_text += content
+                        yield AIEngineStreamEvent(type="delta", text=content)
+                    if event.get("done") is True:
+                        final_payload = event
+                        break
+        except urllib.error.HTTPError as exc:
+            self._raise_http_error(exc, selected_model)
+        except urllib.error.URLError as exc:
+            self._raise_url_error(exc)
+        except (socket.timeout, TimeoutError) as exc:
+            raise EngineTimeoutError(
+                "Ollama generation exceeded the bounded timeout."
+            ) from exc
+        except OSError as exc:
+            raise EngineUnavailableError(
+                "The Ollama streaming connection was interrupted."
+            ) from exc
+
+        if final_payload is None:
+            raise EngineUnavailableError("Ollama stream ended before its done event.")
+        if not complete_text.strip():
+            raise EngineUnavailableError(
+                "Ollama returned an empty response. The model may not be loaded correctly."
+            )
+
+        generation_ms = round((time.perf_counter() - request_started) * 1000)
+        ttft_ms = round((first_content_at - request_started) * 1000)
+        metrics = self._log_performance_metrics(final_payload)
+        logger.info(
+            "Ollama streaming request completed",
+            extra={
+                "ttft_ms": ttft_ms,
+                "generation_ms": generation_ms,
+                "prompt_prepare_ms": prompt_prepare_ms,
+            },
+        )
+        yield AIEngineStreamEvent(
+            type="done",
+            result=AIEngineResult(
+                text=complete_text,
+                engine=self.engine_name,
+                model=selected_model,
+                mode="offline",
+                latency_ms=generation_ms,
+                ttft_ms=ttft_ms,
+                generation_ms=generation_ms,
+                prompt_prepare_ms=prompt_prepare_ms,
+                metrics=metrics,
+            ),
         )
 
     # ── Internal helpers ───────────────────────────────────────
@@ -228,7 +334,7 @@ class LocalLLMEngine(AIEngine):
 
         return messages
 
-    def _log_performance_metrics(self, response_data: dict) -> None:
+    def _log_performance_metrics(self, response_data: dict) -> dict:
         """Log Ollama token counts, timings, and throughput when available."""
         metrics = {}
 
@@ -271,6 +377,34 @@ class LocalLLMEngine(AIEngine):
                 json.dumps(metrics, sort_keys=True),
                 extra={"ollama_metrics": metrics, **metrics},
             )
+        return metrics
+
+    def _build_chat_request(
+        self,
+        messages: list[dict],
+        *,
+        stream: bool,
+        num_predict: int | None = None,
+        model: str | None = None,
+    ) -> urllib.request.Request:
+        selected_model = model or self._model
+        payload = json.dumps({
+            "model": selected_model,
+            "messages": messages,
+            "stream": stream,
+            "keep_alive": self._keep_alive,
+            "options": {
+                "num_predict": (
+                    num_predict if num_predict is not None else self._num_predict
+                )
+            },
+        }).encode("utf-8")
+        return urllib.request.Request(
+            f"{self._host}/api/chat",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
 
     def _call_ollama_chat(
         self,
@@ -290,26 +424,13 @@ class LocalLLMEngine(AIEngine):
             - eval_duration: time spent generating (nanoseconds)
             - total_duration: total request time (nanoseconds)
         """
-        url = f"{self._host}/api/chat"
         selected_model = model or self._model
         timeout = self._timeout if timeout_seconds is None else float(timeout_seconds)
-        payload = json.dumps({
-            "model": selected_model,
-            "messages": messages,
-            "stream": False,
-            "keep_alive": self._keep_alive,
-            "options": {
-                "num_predict": (
-                    num_predict if num_predict is not None else self._num_predict
-                )
-            },
-        }).encode("utf-8")
-
-        req = urllib.request.Request(
-            url,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
+        req = self._build_chat_request(
+            messages,
+            stream=False,
+            num_predict=num_predict,
+            model=selected_model,
         )
 
         try:
@@ -317,31 +438,9 @@ class LocalLLMEngine(AIEngine):
                 body = json.loads(resp.read().decode("utf-8"))
                 return body
         except urllib.error.HTTPError as exc:
-            # Parse Ollama error responses
-            error_body = ""
-            try:
-                error_body = exc.read().decode("utf-8", errors="replace")
-                error_data = json.loads(error_body)
-                error_msg = error_data.get("error", error_body)
-            except (json.JSONDecodeError, Exception):
-                error_msg = error_body or str(exc)
-
-            if exc.code == 404 or "not found" in error_msg.lower():
-                raise ModelUnavailableError(
-                    f"Model '{selected_model}' is not installed in Ollama."
-                ) from exc
-
-            raise EngineUnavailableError(
-                f"Ollama error (HTTP {exc.code}): {error_msg}"
-            ) from exc
+            self._raise_http_error(exc, selected_model)
         except urllib.error.URLError as exc:
-            if isinstance(exc.reason, (socket.timeout, TimeoutError)):
-                raise EngineTimeoutError(
-                    "Ollama generation exceeded the bounded timeout."
-                ) from exc
-            raise EngineUnavailableError(
-                f"Could not connect to Ollama at {self._host}: {exc.reason}"
-            ) from exc
+            self._raise_url_error(exc)
         except (socket.timeout, TimeoutError) as exc:
             raise EngineTimeoutError(
                 "Ollama generation exceeded the bounded timeout."
@@ -350,6 +449,73 @@ class LocalLLMEngine(AIEngine):
             raise EngineUnavailableError(
                 f"Invalid JSON response from Ollama: {exc}"
             ) from exc
+
+    def _raise_http_error(self, exc: urllib.error.HTTPError, model: str) -> None:
+        error_body = ""
+        try:
+            error_body = exc.read().decode("utf-8", errors="replace")
+            error_data = json.loads(error_body)
+            error_msg = error_data.get("error", error_body)
+        except Exception:
+            error_msg = error_body or str(exc)
+        if exc.code == 404 or "not found" in str(error_msg).lower():
+            raise ModelUnavailableError(
+                f"Model '{model}' is not installed in Ollama."
+            ) from exc
+        raise EngineUnavailableError(
+            f"Ollama error (HTTP {exc.code}): {error_msg}"
+        ) from exc
+
+    def _raise_url_error(self, exc: urllib.error.URLError) -> None:
+        if isinstance(exc.reason, (socket.timeout, TimeoutError)):
+            raise EngineTimeoutError(
+                "Ollama generation exceeded the bounded timeout."
+            ) from exc
+        raise EngineUnavailableError(
+            f"Cannot reach Ollama at {self._host}: {exc.reason}"
+        ) from exc
+
+    def _raise_ollama_message_error(self, message: str, model: str) -> None:
+        if "not found" in message.lower():
+            raise ModelUnavailableError(
+                f"Model '{model}' is not installed in Ollama."
+            )
+        raise EngineUnavailableError(f"Ollama error: {message}")
+
+    def warm_model(
+        self,
+        model: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> dict:
+        """Load one configured model without generating user-visible content."""
+        selected_model = model or self._model
+        timeout = self._timeout if timeout_seconds is None else float(timeout_seconds)
+        payload = json.dumps({
+            "model": selected_model,
+            "prompt": "",
+            "stream": False,
+            "keep_alive": self._keep_alive,
+        }).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self._host}/api/generate",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            self._raise_http_error(exc, selected_model)
+        except urllib.error.URLError as exc:
+            self._raise_url_error(exc)
+        except (socket.timeout, TimeoutError) as exc:
+            raise EngineTimeoutError("Ollama model warm-up timed out.") from exc
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise EngineUnavailableError("Ollama returned invalid warm-up data.") from exc
+        if not isinstance(result, dict) or result.get("done") is not True:
+            raise EngineUnavailableError("Ollama did not confirm model warm-up.")
+        return result
 
     # Legacy method kept for backwards compatibility with existing tests
     def _build_prompt(self, query: str, history: list | None) -> str:

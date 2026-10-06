@@ -1,5 +1,10 @@
+import json
 from urllib import parse
 
+from django.http import StreamingHttpResponse
+from django.utils import timezone
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_protect
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -32,6 +37,10 @@ def _public_assistant_metadata(metadata):
             "local_ai_allowed",
             "online_allowed",
             "execution_ms",
+            "latency_ms",
+            "generation_ms",
+            "ttft_ms",
+            "prompt_prepare_ms",
             "policy_reason",
             "model_reason",
             "resource_policy_available",
@@ -166,6 +175,80 @@ class ChatAPIView(APIView):
         response_data.update(_public_assistant_metadata(metadata))
 
         return Response(response_data, status=status.HTTP_200_OK)
+
+
+def _conversation_display_fields(conversation):
+    if conversation is None:
+        return {}
+    return {
+        "conversation_title": conversation.title or f"Conversation {conversation.id}",
+        "conversation_display_time": timezone.localtime(
+            conversation.updated_at
+        ).strftime("%b %d, %H:%M"),
+    }
+
+
+def _ndjson_stream(query, conversation_id):
+    for event in AssistantService.process_message_stream(query, conversation_id):
+        protocol_fields = {
+            "type", "text", "response", "error", "detail", "partial",
+            "conversation_id", "direct",
+        }
+        safe_event = {
+            key: value
+            for key, value in event.items()
+            if key in protocol_fields
+        }
+        metadata = _public_assistant_metadata(event)
+        safe_event.update(metadata)
+        event_conversation_id = event.get("conversation_id")
+        if event_conversation_id:
+            try:
+                conversation = Conversation.objects.get(id=event_conversation_id)
+            except Conversation.DoesNotExist:
+                conversation = None
+            safe_event.update(_conversation_display_fields(conversation))
+        yield json.dumps(safe_event, separators=(",", ":")) + "\n"
+
+
+@method_decorator(csrf_protect, name="dispatch")
+class ChatStreamAPIView(APIView):
+    """POST-only newline-delimited JSON assistant stream."""
+
+    def post(self, request):
+        serializer = ChatQuerySerializer(data=request.data)
+        if not serializer.is_valid():
+            return StreamingHttpResponse(
+                iter([json.dumps({
+                    "type": "error",
+                    "error": "invalid_request",
+                    "detail": serializer.errors,
+                }) + "\n"]),
+                status=status.HTTP_400_BAD_REQUEST,
+                content_type="application/x-ndjson",
+            )
+        query = serializer.validated_data["query"]
+        if not query.strip():
+            return StreamingHttpResponse(
+                iter([json.dumps({
+                    "type": "error",
+                    "error": "empty_query",
+                    "detail": "Query cannot be empty.",
+                }) + "\n"]),
+                status=status.HTTP_400_BAD_REQUEST,
+                content_type="application/x-ndjson",
+            )
+        response = StreamingHttpResponse(
+            _ndjson_stream(
+                query,
+                serializer.validated_data.get("conversation_id"),
+            ),
+            content_type="application/x-ndjson",
+        )
+        response["Cache-Control"] = "no-store"
+        response["X-Accel-Buffering"] = "no"
+        response["X-Content-Type-Options"] = "nosniff"
+        return response
 
 import os
 import tempfile
