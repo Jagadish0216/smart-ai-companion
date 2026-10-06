@@ -35,7 +35,12 @@ from .online.base import OnlineRetrievalError, OnlineRetrievalResult
 from .online.factory import get_online_retriever
 from .online.grounding import build_online_grounding_instruction
 from .execution_policy import AIExecutionPlan, get_ai_execution_plan
-from .policy import Capability, CapabilityRegistry, ResponsePlan
+from .policy import (
+    Capability,
+    CapabilityRegistry,
+    ResponsePlan,
+    build_runtime_capability_registry,
+)
 from .routing import QueryRoute, QueryRouteDecision, QueryRouter
 
 logger = logging.getLogger(__name__)
@@ -262,15 +267,8 @@ def _prepare_message(
         execution_plan.max_output_tokens,
     )
 
-    registry = CapabilityRegistry.from_settings()
-    online_configured = registry.is_available(Capability.ONLINE_RETRIEVAL)
-    registry = registry.with_availability(
-        Capability.ONLINE_RETRIEVAL,
-        online_configured and execution_plan.online_allowed,
-        unavailable_response=(
-            "I can't retrieve live online information right now because "
-            "the current connectivity policy does not allow Internet access."
-        ),
+    registry = build_runtime_capability_registry(
+        online_allowed=execution_plan.online_allowed,
     )
     routing_started = time.perf_counter()
     route_decision = QueryRouter().decide(
@@ -391,14 +389,12 @@ def _prepare_message(
     stage_ms["online_ms"] = online_latency_ms
 
     rag_results = list(route_decision.rag_results)
-    effective_instruction = _combine_instructions(
-        effective_instruction,
-        build_rag_instruction(rag_results) if rag_results else None,
-        response_plan.rag_system_instruction
-        if rag_results and response_plan is not None
-        else None,
-        online_instruction,
-        registry.build_grounding_instruction(),
+    effective_instruction = _build_generation_instruction(
+        registry=registry,
+        base_instruction=effective_instruction,
+        rag_results=rag_results,
+        response_plan=response_plan,
+        online_instruction=online_instruction,
     )
     return PreparedAssistantRequest(
         conversation=conversation,
@@ -414,6 +410,28 @@ def _prepare_message(
         online_latency_ms=online_latency_ms,
         execution_started=execution_started,
         stage_ms=stage_ms,
+    )
+
+
+def _build_generation_instruction(
+    *,
+    registry: CapabilityRegistry,
+    base_instruction: str | None,
+    rag_results: list,
+    response_plan: ResponsePlan | None,
+    online_instruction: str | None,
+) -> str:
+    """Keep stable capability grounding before request-specific context."""
+    return _combine_instructions(
+        registry.build_grounding_instruction(),
+        base_instruction,
+        build_rag_instruction(rag_results) if rag_results else None,
+        (
+            response_plan.rag_system_instruction
+            if rag_results and response_plan is not None
+            else None
+        ),
+        online_instruction,
     )
 
 

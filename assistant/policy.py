@@ -186,6 +186,23 @@ class CapabilityRegistry:
         )
 
 
+def build_runtime_capability_registry(
+    *,
+    online_allowed: bool,
+) -> CapabilityRegistry:
+    """Build the request-scoped capability state shared by runtime and warm-up."""
+    registry = CapabilityRegistry.from_settings()
+    online_configured = registry.is_available(Capability.ONLINE_RETRIEVAL)
+    return registry.with_availability(
+        Capability.ONLINE_RETRIEVAL,
+        online_configured and online_allowed,
+        unavailable_response=(
+            "I can't retrieve live online information right now because "
+            "the current connectivity policy does not allow Internet access."
+        ),
+    )
+
+
 @dataclass(frozen=True)
 class ResponsePlan:
     mode: ResponseMode

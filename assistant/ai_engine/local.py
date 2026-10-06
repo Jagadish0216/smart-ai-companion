@@ -517,6 +517,38 @@ class LocalLLMEngine(AIEngine):
             raise EngineUnavailableError("Ollama did not confirm model warm-up.")
         return result
 
+    def warm_chat_prefix(
+        self,
+        *,
+        system_instruction: str | None = None,
+        model: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> dict:
+        """Prime the reusable production /api/chat system prefix."""
+        messages = self._build_messages(
+            "Ready.",
+            [],
+            system_instruction=system_instruction,
+        )
+        try:
+            result = self._call_ollama_chat(
+                messages,
+                num_predict=1,
+                model=model,
+                timeout_seconds=timeout_seconds,
+            )
+        except (UnicodeDecodeError, OSError) as exc:
+            raise EngineUnavailableError(
+                "Ollama chat-prefix warm-up response was interrupted or invalid."
+            ) from exc
+        if not isinstance(result, dict):
+            raise EngineUnavailableError("Ollama returned invalid chat-prefix data.")
+        if result.get("error"):
+            self._raise_ollama_message_error(str(result["error"]), model or self._model)
+        if result.get("done") is not True:
+            raise EngineUnavailableError("Ollama did not confirm chat-prefix warm-up.")
+        return result
+
     # Legacy method kept for backwards compatibility with existing tests
     def _build_prompt(self, query: str, history: list | None) -> str:
         """Build a plain-text prompt. Kept for test compatibility."""

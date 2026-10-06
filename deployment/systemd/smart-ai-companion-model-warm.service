@@ -1,7 +1,7 @@
 [Unit]
 Description=Warm the Smart AI Companion primary Ollama model
-Wants=ollama.service
-After=ollama.service network.target
+Wants=ollama.service smart-ai-companion-network-mode.service
+After=ollama.service smart-ai-companion-network-mode.service network.target
 
 [Service]
 Type=oneshot
