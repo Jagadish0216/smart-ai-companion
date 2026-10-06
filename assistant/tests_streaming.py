@@ -22,6 +22,7 @@ from .ai_engine import (
     ModelUnavailableError,
 )
 from .ai_engine.local import LocalLLMEngine
+from .management.commands.warm_ai_model import _wait_for_ollama
 from .execution_policy import build_execution_plan
 from .online.base import OnlineRetrievalResult
 from .policy import Capability, build_runtime_capability_registry
@@ -280,6 +281,7 @@ class GenerationInstructionOrderingTests(TestCase):
             patch("knowledge_base.services.is_rag_available", return_value=True),
             patch("assistant.management.commands.warm_ai_model.get_ai_execution_plan", return_value=plan),
             patch("assistant.management.commands.warm_ai_model.LocalLLMEngine", return_value=engine),
+            patch("assistant.management.commands.warm_ai_model._wait_for_ollama"),
             patch.object(engine, "warm_model", return_value={"done": True}),
             patch.object(engine, "_call_ollama_chat", return_value={
                 "done": True, "message": {"content": "Answer."},
@@ -511,6 +513,13 @@ class StreamingAPITests(TestCase):
 
 
 class WarmModelCommandTests(TestCase):
+    def setUp(self):
+        wait_patcher = patch(
+            "assistant.management.commands.warm_ai_model._wait_for_ollama",
+        )
+        self.wait_for_ollama = wait_patcher.start()
+        self.addCleanup(wait_patcher.stop)
+
     @override_settings(OLLAMA_MODEL="configured:3b")
     @patch("assistant.management.commands.warm_ai_model.build_runtime_capability_registry")
     @patch("assistant.management.commands.warm_ai_model.get_ai_execution_plan")
@@ -536,7 +545,7 @@ class WarmModelCommandTests(TestCase):
 
         with patch(
             "assistant.management.commands.warm_ai_model.time.monotonic",
-            side_effect=[100.0, 110.0],
+            side_effect=[100.0, 100.0, 110.0],
         ):
             call_command("warm_ai_model", stdout=io.StringIO())
 
@@ -575,7 +584,7 @@ class WarmModelCommandTests(TestCase):
 
         with patch(
             "assistant.management.commands.warm_ai_model.time.monotonic",
-            side_effect=[100.0, 105.0],
+            side_effect=[100.0, 100.0, 105.0],
         ):
             call_command(
                 "warm_ai_model",
@@ -604,12 +613,54 @@ class WarmModelCommandTests(TestCase):
         with (
             patch(
                 "assistant.management.commands.warm_ai_model.time.monotonic",
-                side_effect=[100.0, 190.0],
+                side_effect=[100.0, 100.0, 190.0],
             ),
             self.assertRaisesRegex(CommandError, "warm-up timed out"),
         ):
             call_command("warm_ai_model", stdout=io.StringIO())
         warm_chat_prefix.assert_not_called()
+
+    @patch("assistant.management.commands.warm_ai_model.build_runtime_capability_registry")
+    @patch("assistant.management.commands.warm_ai_model.get_ai_execution_plan")
+    @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_chat_prefix")
+    @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_model")
+    def test_readiness_and_both_stages_share_one_budget(
+        self, warm_model, warm_chat_prefix, get_plan, build_registry,
+    ):
+        clock = [100.0]
+        self.wait_for_ollama.side_effect = lambda *_: clock.__setitem__(0, 103.0)
+
+        def load_model(**kwargs):
+            clock[0] = 107.0
+            return {"done": True}
+
+        warm_model.side_effect = load_model
+        warm_chat_prefix.return_value = {"done": True}
+        with patch(
+            "assistant.management.commands.warm_ai_model.time.monotonic",
+            side_effect=lambda: clock[0],
+        ):
+            call_command("warm_ai_model", timeout=10, stdout=io.StringIO())
+        self.assertEqual(self.wait_for_ollama.call_args.args[1], 110.0)
+        self.assertEqual(warm_model.call_args.kwargs["timeout_seconds"], 7.0)
+        self.assertEqual(warm_chat_prefix.call_args.kwargs["timeout_seconds"], 3.0)
+
+    @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_chat_prefix")
+    @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_model")
+    def test_genuine_model_errors_are_not_retried(self, warm_model, warm_chat_prefix):
+        for failure in (
+            ModelUnavailableError("model not found"),
+            EngineUnavailableError("runner failed"),
+        ):
+            with self.subTest(failure=type(failure).__name__):
+                warm_model.reset_mock()
+                self.wait_for_ollama.reset_mock()
+                warm_model.side_effect = failure
+                with self.assertRaises(CommandError):
+                    call_command("warm_ai_model", stdout=io.StringIO())
+                warm_model.assert_called_once()
+                self.wait_for_ollama.assert_called_once()
+                warm_chat_prefix.assert_not_called()
 
     @patch("assistant.management.commands.warm_ai_model.build_runtime_capability_registry")
     @patch("assistant.management.commands.warm_ai_model.get_ai_execution_plan")
@@ -656,6 +707,87 @@ class WarmModelCommandTests(TestCase):
                 "--timeout must be greater than 0 and at most 300 seconds",
             ):
                 call_command("warm_ai_model", timeout=timeout, stdout=io.StringIO())
+
+
+class OllamaReadinessTests(TestCase):
+    def setUp(self):
+        self.clock = 100.0
+        clock_patcher = patch(
+            "assistant.management.commands.warm_ai_model.time.monotonic",
+            side_effect=lambda: self.clock,
+        )
+        sleep_patcher = patch(
+            "assistant.management.commands.warm_ai_model.time.sleep",
+            side_effect=self.advance_clock,
+        )
+        clock_patcher.start()
+        self.sleep = sleep_patcher.start()
+        self.addCleanup(clock_patcher.stop)
+        self.addCleanup(sleep_patcher.stop)
+
+    def advance_clock(self, seconds):
+        self.clock += seconds
+
+    @patch("assistant.management.commands.warm_ai_model.urllib.request.urlopen")
+    def test_unavailable_then_ready_resolves_in_under_one_second(self, urlopen):
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = b'{"version":"0.34.2"}'
+        urlopen.side_effect = [urllib.error.URLError("connection refused"), response]
+        _wait_for_ollama("http://127.0.0.1:11434/", 110.0)
+        self.assertEqual(urlopen.call_count, 2)
+        self.assertLess(self.clock - 100.0, 1.0)
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, "http://127.0.0.1:11434/api/version")
+        self.assertEqual(request.get_method(), "GET")
+
+    @patch("assistant.management.commands.warm_ai_model.urllib.request.urlopen")
+    def test_never_ready_exhausts_budget_without_oversleeping(self, urlopen):
+        urlopen.side_effect = urllib.error.URLError("connection refused")
+        with self.assertRaises(EngineTimeoutError):
+            _wait_for_ollama("http://127.0.0.1:11434", 100.5)
+        self.assertAlmostEqual(self.clock, 100.5)
+        for call in urlopen.call_args_list:
+            self.assertGreater(call.kwargs["timeout"], 0)
+            self.assertLessEqual(call.kwargs["timeout"], 0.5)
+        self.assertAlmostEqual(sum(call.args[0] for call in self.sleep.call_args_list), 0.5)
+
+    @patch("assistant.management.commands.warm_ai_model.urllib.request.urlopen")
+    def test_http_503_readiness_failure_is_retried(self, urlopen):
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = b'{"version":"0.34.2"}'
+        urlopen.side_effect = [
+            urllib.error.HTTPError("http://localhost/api/version", 503, "Starting", {}, None),
+            response,
+        ]
+        _wait_for_ollama("http://localhost:11434", 110.0)
+        self.assertEqual(urlopen.call_count, 2)
+
+    @patch("assistant.management.commands.warm_ai_model.urllib.request.urlopen")
+    def test_genuine_http_errors_and_malformed_data_are_not_retried(self, urlopen):
+        for code in (401, 404, 500):
+            with self.subTest(code=code):
+                urlopen.reset_mock()
+                urlopen.side_effect = urllib.error.HTTPError(
+                    "http://localhost/api/version", code, "Error", {}, None,
+                )
+                with self.assertRaises(EngineUnavailableError):
+                    _wait_for_ollama("http://localhost:11434", 110.0)
+                urlopen.assert_called_once()
+                self.sleep.assert_not_called()
+        urlopen.side_effect = None
+        response = MagicMock()
+        response.__enter__.return_value = response
+        urlopen.return_value = response
+        for body in (b"not json", b'{"error":"not ready"}'):
+            with self.subTest(body=body):
+                urlopen.reset_mock()
+                response.read.return_value = body
+                with self.assertRaises(EngineUnavailableError):
+                    _wait_for_ollama("http://localhost:11434", 110.0)
+                urlopen.assert_called_once()
+                self.sleep.assert_not_called()
 
 
 class StreamingFrontendStructureTests(TestCase):

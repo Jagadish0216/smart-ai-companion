@@ -1,7 +1,10 @@
 """Explicitly load the configured Ollama model into memory."""
 
+import json
 import math
 import time
+import urllib.error
+import urllib.request
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
@@ -14,6 +17,38 @@ from assistant.ai_engine import (
 from assistant.ai_engine.local import LocalLLMEngine
 from assistant.execution_policy import get_ai_execution_plan
 from assistant.policy import build_runtime_capability_registry
+
+
+def _remaining_timeout(deadline: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise EngineTimeoutError("The shared warm-up timeout was exhausted.")
+    return remaining
+
+
+def _wait_for_ollama(host: str, deadline: float) -> None:
+    """Wait for the HTTP API, retrying only transient availability failures."""
+    request = urllib.request.Request(
+        f"{host.rstrip('/')}/api/version", method="GET",
+    )
+    while True:
+        remaining = _remaining_timeout(deadline)
+        try:
+            with urllib.request.urlopen(request, timeout=min(1.0, remaining)) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            if not isinstance(payload, dict) or not isinstance(payload.get("version"), str):
+                raise EngineUnavailableError("Ollama returned invalid readiness data.")
+            return
+        except urllib.error.HTTPError as exc:
+            if exc.code != 503:
+                raise EngineUnavailableError(
+                    f"Ollama readiness check failed (HTTP {exc.code})."
+                ) from exc
+        except (urllib.error.URLError, ConnectionError, TimeoutError):
+            pass
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise EngineUnavailableError("Ollama returned invalid readiness data.") from exc
+        time.sleep(min(0.2, _remaining_timeout(deadline)))
 
 
 class Command(BaseCommand):
@@ -31,7 +66,7 @@ class Command(BaseCommand):
             "--timeout",
             type=float,
             default=90.0,
-            help="Shared timeout for model and chat-prefix warm-up (default: 90 seconds).",
+            help="Shared timeout for API readiness, model and chat-prefix warm-up (default: 90 seconds).",
         )
 
     def handle(self, *args, **options):
@@ -51,22 +86,20 @@ class Command(BaseCommand):
         started = time.perf_counter()
         deadline = time.monotonic() + timeout
         try:
+            _wait_for_ollama(settings.OLLAMA_HOST, deadline)
             model_result = engine.warm_model(
                 model=model,
-                timeout_seconds=timeout,
+                timeout_seconds=_remaining_timeout(deadline),
             )
 
             execution_plan = get_ai_execution_plan()
             registry = build_runtime_capability_registry(
                 online_allowed=execution_plan.online_allowed,
             )
-            remaining_timeout = deadline - time.monotonic()
-            if remaining_timeout <= 0:
-                raise EngineTimeoutError("The shared warm-up timeout was exhausted.")
             prefix_result = engine.warm_chat_prefix(
                 system_instruction=registry.build_grounding_instruction(),
                 model=model,
-                timeout_seconds=remaining_timeout,
+                timeout_seconds=_remaining_timeout(deadline),
             )
         except ModelUnavailableError as exc:
             raise CommandError(
