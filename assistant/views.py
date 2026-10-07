@@ -34,6 +34,7 @@ def _public_assistant_metadata(metadata):
             "effective_model",
             "generation_budget",
             "max_output_tokens",
+            "num_predict",
             "local_ai_allowed",
             "online_allowed",
             "execution_ms",
