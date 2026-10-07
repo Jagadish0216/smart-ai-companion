@@ -19,7 +19,7 @@ A Raspberry Pi 5-based offline-first AI companion. The Django web application se
 | `dashboard` | Control center UI templates and views |
 | `assistant` | Chat API, Voice API, AI engine abstraction, STT/TTS providers |
 | `conversations` | Chat history persistence (Conversation + Message models) |
-| `knowledge_base` | Local text/Markdown ingestion, chunk storage, and lexical retrieval |
+| `knowledge_base` | Local text/Markdown/PDF ingestion, document management, chunk storage, and lexical retrieval |
 | `system` | Device metrics, companion state, settings, logging |
 
 ### AI Engine Architecture
@@ -71,9 +71,22 @@ The capability registry reflects configured, implemented components such as conv
 
 ### Local Knowledge / RAG
 
-The v1 local knowledge pipeline is offline and dependency-free. It reuses the existing `Document` model, stores deterministic child chunks in SQLite, and retrieves them with normalized lexical term coverage. Database-side term filtering prevents every chunk body from being loaded into Python, and the retriever keeps only the configured top results in memory. This is appropriate for a modest Pi-hosted project knowledge base and does not load an embedding model per request.
+The local knowledge pipeline reuses `Document`, `KnowledgeChunk`, and `KnowledgeIngestionService`. It stores deterministic chunks in SQLite and retrieves them with normalized lexical term coverage. Database-side term filtering prevents every chunk body from being loaded into Python. No embedding model or vector database is involved.
 
-Supported source formats are UTF-8 plain text (`.txt`) and Markdown (`.md` or `.markdown`). PDF, OCR, image extraction, semantic embeddings, and external vector databases are intentionally outside this milestone.
+Supported formats are UTF-8 plain text (`.txt`), Markdown (`.md`/`.markdown`), and text-layer PDFs. PDF text extraction uses the lightweight local `pypdf` package. Scanned/image-only PDFs and encrypted PDFs return an ERROR document with a useful diagnostic; no OCR is performed. Uploads are limited to 10 MiB. PDF extraction additionally limits page count to 200, each decoded page content stream to 2 MiB, and extracted text to two million characters. These guardrails reduce typical Pi memory pressure, but a hostile PDF parser input is not a sandbox: document writes require a trusted administrator.
+
+The `/knowledge/` page provides real file selection, drag/drop, upload progress, indexing state, reindexing and confirmed deletion. It retains the existing dashboard theme and describes the pipeline as Document Upload → Text Extraction → Chunking → Lexical Retrieval → Local AI Grounding. Sign in through the administrator link to manage files. List/read access follows the existing public dashboard; writes use staff session authentication and CSRF.
+
+Document APIs:
+
+| Operation | Endpoint | Result |
+|---|---|---|
+| List | `GET /api/knowledge/documents/` | `{"documents":[...]}` |
+| Upload | `POST /api/knowledge/documents/` | Multipart `file`; 201 with `{"document":...}` on success |
+| Reindex | `POST /api/knowledge/documents/<id>/reindex/` | 200 with updated document |
+| Delete | `DELETE /api/knowledge/documents/<id>/` | 204; removes stored file, document and child chunks |
+
+Send `X-CSRFToken` with each write after loading `/knowledge/`. Metadata includes ID, safe basename, MIME type, byte size, status, chunk count, upload/index timestamps and a safe error message; stored paths and source identifiers are excluded. Unsupported extensions are rejected before storage (400), oversized uploads return 413, and extraction/indexing failures return 422 with a retained ERROR document. Reindexing reuses the stored file and replaces chunks in a transaction; failed replacement preserves old chunks but marks the document ERROR so stale content is not retrieved. Uploads with the same basename remain separate records and use unique storage directories.
 
 Run migrations, ingest a source, and enable retrieval:
 
@@ -93,7 +106,15 @@ The command uses the resolved source path as its stable identifier by default. R
 python manage.py ingest_knowledge notes/relay-wiring.txt --source-id relay-wiring
 ```
 
-At request time, the retriever returns up to `RAG_TOP_K` chunks whose score meets `RAG_MIN_RELEVANCE`. Useful chunks are added only to the internal request instruction; the user query and conversation history are unchanged. The LLM is told to prefer this trusted local material, avoid unsupported details, and not mention filenames or retrieval internals unless asked. If nothing meets the threshold, generation follows the existing non-RAG path.
+At request time, the retriever returns up to `RAG_TOP_K` chunks whose score meets `RAG_MIN_RELEVANCE`. Higher-scoring chunks retain priority with deterministic ties, and aggregate chunk text is capped at `RAG_MAX_CONTEXT_CHARS` (1200 by default; instruction/source labels add a small fixed overhead). Pi defaults are 700-character chunks, 100-character overlap, and two retrieved results. Existing documents need reindexing to adopt the new chunk sizes.
+
+`LOCAL_RAG` selects installed `RAG_MODEL` (defaults to `AI_LIGHTWEIGHT_MODEL`, normally `llama3.2:1b`) for grounded synthesis. The Resource Manager still controls whether generation is permitted, output/context budgets and timeout. ECO/PROTECTIVE never upgrade to a larger configured RAG override. If the RAG model is absent or inventory is unavailable, the already-approved resource-selected model is retained. Metadata reports the actual `model`/`effective_model`, while `configured_model` remains the primary model. Normal `LOCAL` keeps the existing 3B path and incurs no new inventory preflight.
+
+Useful chunks are added only to the internal request instruction; user query and history remain unchanged. The shorter RAG instruction still treats local knowledge as factual reference data, ignores embedded instructions, prohibits invented missing facts, and hides retrieval details unless asked. No useful match follows the normal non-RAG path.
+
+To optionally warm the RAG model at boot, set `RAG_PREWARM_ENABLED=true` and `RAG_PREWARM_TIMEOUT_SECONDS=20`. The existing `warm_ai_model` command then attempts the installed RAG model/prefix first, within at most one third of the remaining overall timeout. Failure or absence is observable on stderr and does not prevent required primary warming. The primary model/prefix is always warmed last. No additional systemd service is required; the shared 90-second command budget and 120-second service limit remain. Leave optional warming disabled if residency/memory pressure or cold-load time makes it unsuitable for your Pi.
+
+Measured baseline: warm 3B LOCAL TTFT was ~836 ms; 3B LOCAL_RAG TTFT was ~9.5 seconds despite ~2 ms lexical retrieval. This milestone targets dynamic RAG prefill with less context and 1B synthesis. Separate SYSTEM messages and moving RAG into a USER turn did not solve prefill cost, so the committed prompt architecture is preserved. Rebenchmark RAG TTFT, total time, answer quality, token counts and memory on the Pi; Windows tests do not establish a new latency figure.
 
 `LOCAL_RAG` is reported unavailable when the local LLM is not selected, RAG is disabled, configuration is invalid, or no indexed chunks exist. This conservative empty-index behavior prevents the assistant from claiming it can search local knowledge before ingestion has succeeded.
 
@@ -287,9 +308,13 @@ Mock mode requires no external services and is useful for frontend development.
 | `CHAT_STREAM_IDLE_TIMEOUT_SECONDS` | `45` | Browser idle timeout reset whenever streamed bytes arrive; not a hard completion deadline |
 | `RAG_ENABLED` | `false` | Enable local retrieval with `AI_ENGINE=local` after knowledge has been ingested |
 | `RAG_RETRIEVER` | `lexical` | Local retriever implementation; v1 supports `lexical` |
-| `RAG_CHUNK_CHARS` | `1000` | Approximate source chunk size in characters |
-| `RAG_CHUNK_OVERLAP_CHARS` | `150` | Approximate overlap between adjacent chunks |
-| `RAG_TOP_K` | `4` | Maximum relevant chunks supplied to one request |
+| `RAG_MODEL` | `AI_LIGHTWEIGHT_MODEL` | Installed model for grounded synthesis, subject to resource policy |
+| `RAG_CHUNK_CHARS` | `700` | Approximate source chunk size in characters |
+| `RAG_CHUNK_OVERLAP_CHARS` | `100` | Approximate overlap between adjacent chunks |
+| `RAG_TOP_K` | `2` | Maximum relevant chunks supplied to one request |
+| `RAG_MAX_CONTEXT_CHARS` | `1200` | Maximum aggregate retrieved chunk content |
+| `RAG_PREWARM_ENABLED` | `false` | Optional best-effort RAG preload before required primary warm-up |
+| `RAG_PREWARM_TIMEOUT_SECONDS` | `20` | Optional stage cap; also capped by remaining overall warm-up budget |
 | `RAG_MIN_RELEVANCE` | `0.5` | Minimum lexical query-term coverage score from 0 to 1 |
 | `ONLINE_RETRIEVAL_ENABLED` | `false` | Enable online snippets only for requests routed to `ONLINE` |
 | `ONLINE_PROVIDER` | `searxng` | Online retriever implementation; v1 supports `searxng` |
@@ -499,7 +524,7 @@ during generation to confirm the threaded worker remains responsive.
 | Document Upload | ✅ Implemented |
 | Device Metrics (simulated) | ✅ Implemented |
 | Companion State Control | ✅ Implemented |
-| Local RAG Pipeline | ✅ Implemented (text/Markdown + lexical retrieval) |
+| Local RAG Pipeline | ✅ Text/Markdown/PDF + bounded lexical retrieval and lightweight synthesis |
 | Voice Input (STT - whisper.cpp) | ✅ Implemented (API & Browser Mic) |
 | Voice Output (TTS - Piper) | ✅ Implemented (API & Browser Playback) |
 | Online Retrieval | ✅ Optional SearXNG snippets + local Ollama generation |
@@ -512,7 +537,7 @@ during generation to confirm the threaded worker remains responsive.
 
 - The local LLM runs on **CPU only** (Raspberry Pi 5 has no GPU). Inference speed is limited by ARM CPU performance.
 - Local RAG uses lexical matching rather than semantic embeddings, so sources and questions should share meaningful terminology.
-- Only UTF-8 text and Markdown are indexed in v1; PDF/OCR support is not included.
+- Text-layer PDFs are supported; OCR and scanned/image-only PDF extraction are not included.
 - Online retrieval is opt-in and used only for `ONLINE` routes; all answer generation remains local through Ollama.
 - The system prompt establishes the companion persona but the model's behavior depends on its training.
 

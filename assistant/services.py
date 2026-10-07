@@ -15,7 +15,7 @@ from django.conf import settings
 from django.utils import timezone as django_timezone
 
 from conversations.models import Conversation, Message
-from knowledge_base.services import build_rag_instruction
+from knowledge_base.services import build_rag_instruction, select_rag_context
 from .ai_engine import (
     EngineTimeoutError,
     EngineUnavailableError,
@@ -34,7 +34,7 @@ from .devices.types import DeviceAction, DeviceCommand, SensorReading
 from .online.base import OnlineRetrievalError, OnlineRetrievalResult
 from .online.factory import get_online_retriever
 from .online.grounding import build_online_grounding_instruction
-from .execution_policy import AIExecutionPlan, get_ai_execution_plan
+from .execution_policy import AIExecutionPlan, get_ai_execution_plan, select_rag_model
 from .policy import (
     Capability,
     CapabilityRegistry,
@@ -237,12 +237,16 @@ def _prepare_message(
     Message.objects.create(conversation=conversation, sender="USER", text=query)
 
     planned_engine = None
+    inventory_models = None
 
     def local_model_inventory():
-        nonlocal planned_engine
+        nonlocal planned_engine, inventory_models
+        if inventory_models is not None:
+            return inventory_models
         planned_engine = get_engine()
         inventory = getattr(planned_engine, "available_models", None)
-        return inventory() if callable(inventory) else ()
+        inventory_models = set(inventory()) if callable(inventory) else set()
+        return inventory_models
 
     policy_started = time.perf_counter()
     execution_plan = get_ai_execution_plan(
@@ -342,6 +346,12 @@ def _prepare_message(
             stage_ms=stage_ms,
         )
 
+    if route_decision.route == QueryRoute.LOCAL_RAG:
+        try:
+            execution_plan = select_rag_model(execution_plan, local_model_inventory())
+        except EngineUnavailableError:
+            logger.warning("RAG model inventory unavailable; retaining the resource-selected model")
+
     online_results: list[OnlineRetrievalResult] = []
     online_instruction = None
     online_latency_ms = 0
@@ -388,7 +398,7 @@ def _prepare_message(
             )
     stage_ms["online_ms"] = online_latency_ms
 
-    rag_results = list(route_decision.rag_results)
+    rag_results = select_rag_context(list(route_decision.rag_results))
     effective_instruction = _build_generation_instruction(
         registry=registry,
         base_instruction=effective_instruction,

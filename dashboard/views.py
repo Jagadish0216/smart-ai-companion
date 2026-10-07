@@ -91,6 +91,7 @@ class ConversationsView(TemplateView):
 
 
 
+@method_decorator(ensure_csrf_cookie, name='dispatch')
 class KnowledgeBaseView(TemplateView):
 
     template_name = 'dashboard/knowledge.html'

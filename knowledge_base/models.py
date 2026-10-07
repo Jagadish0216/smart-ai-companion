@@ -1,8 +1,9 @@
 from django.db import models
 import os
+import uuid
 
 def document_upload_path(instance, filename):
-    return f'knowledge_base/{filename}'
+    return f'knowledge_base/{uuid.uuid4().hex}/{os.path.basename(filename)}'
 
 class Document(models.Model):
     STATUS_CHOICES = [
@@ -18,6 +19,8 @@ class Document(models.Model):
     uploaded_at = models.DateTimeField(auto_now_add=True)
     indexed_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING')
+    file_size = models.PositiveBigIntegerField(null=True, blank=True)
+    error_message = models.CharField(max_length=255, blank=True)
     
     def save(self, *args, **kwargs):
         if not self.filename and self.file:

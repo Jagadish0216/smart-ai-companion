@@ -87,6 +87,7 @@ class Command(BaseCommand):
         deadline = time.monotonic() + timeout
         try:
             _wait_for_ollama(settings.OLLAMA_HOST, deadline)
+            self._warm_optional_rag(engine, model, deadline)
             model_result = engine.warm_model(
                 model=model,
                 timeout_seconds=_remaining_timeout(deadline),
@@ -145,3 +146,40 @@ class Command(BaseCommand):
                 f"in {elapsed_ms} ms{suffix}; keep_alive is configured."
             )
         )
+
+    def _warm_optional_rag(self, engine, primary_model, deadline):
+        """Best effort only, with at most a third of the remaining boot budget."""
+        if not (
+            getattr(settings, "RAG_PREWARM_ENABLED", False)
+            and getattr(settings, "RAG_ENABLED", False)
+            and settings.AI_ENGINE == "local"
+        ):
+            return
+        rag_model = getattr(settings, "RAG_MODEL", settings.AI_LIGHTWEIGHT_MODEL)
+        if rag_model == primary_model:
+            return
+        try:
+            optional_seconds = float(getattr(settings, "RAG_PREWARM_TIMEOUT_SECONDS", 20))
+            if not math.isfinite(optional_seconds) or optional_seconds <= 0:
+                return
+            plan = get_ai_execution_plan()
+            if not plan.generation_allowed or not plan.local_ai_allowed:
+                return
+            # ECO/PROTECTIVE never preloads a larger configured RAG override.
+            if plan.resource_profile in {"ECO", "PROTECTIVE"} and rag_model != settings.AI_LIGHTWEIGHT_MODEL:
+                return
+            if rag_model not in engine.available_models():
+                self.stderr.write("Optional RAG model is not installed; primary warm-up will continue.")
+                return
+            seconds = min(optional_seconds, _remaining_timeout(deadline) / 3)
+            optional_deadline = time.monotonic() + seconds
+            engine.warm_model(model=rag_model, timeout_seconds=_remaining_timeout(optional_deadline))
+            registry = build_runtime_capability_registry(online_allowed=plan.online_allowed)
+            engine.warm_chat_prefix(
+                system_instruction=registry.build_grounding_instruction(),
+                model=rag_model,
+                timeout_seconds=_remaining_timeout(optional_deadline),
+            )
+            self.stderr.write("Optional RAG model and prefix warmed; warming the primary model last.")
+        except EngineUnavailableError:
+            self.stderr.write("Optional RAG warm-up failed or timed out; primary warm-up will continue.")

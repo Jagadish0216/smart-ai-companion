@@ -175,9 +175,13 @@ CHAT_STREAM_IDLE_TIMEOUT_SECONDS = int(os.environ.get('CHAT_STREAM_IDLE_TIMEOUT_
 # Offline local knowledge / RAG
 RAG_ENABLED = os.environ.get('RAG_ENABLED', 'false').lower() in ('1', 'true', 'yes', 'on')
 RAG_RETRIEVER = os.environ.get('RAG_RETRIEVER', 'lexical')
-RAG_CHUNK_CHARS = int(os.environ.get('RAG_CHUNK_CHARS', '1000'))
-RAG_CHUNK_OVERLAP_CHARS = int(os.environ.get('RAG_CHUNK_OVERLAP_CHARS', '150'))
-RAG_TOP_K = int(os.environ.get('RAG_TOP_K', '4'))
+RAG_CHUNK_CHARS = int(os.environ.get('RAG_CHUNK_CHARS', '700'))
+RAG_CHUNK_OVERLAP_CHARS = int(os.environ.get('RAG_CHUNK_OVERLAP_CHARS', '100'))
+RAG_TOP_K = int(os.environ.get('RAG_TOP_K', '2'))
+RAG_MODEL = os.environ.get('RAG_MODEL', AI_LIGHTWEIGHT_MODEL)
+RAG_MAX_CONTEXT_CHARS = int(os.environ.get('RAG_MAX_CONTEXT_CHARS', '1200'))
+RAG_PREWARM_ENABLED = os.environ.get('RAG_PREWARM_ENABLED', 'false').lower() in ('1', 'true', 'yes', 'on')
+RAG_PREWARM_TIMEOUT_SECONDS = float(os.environ.get('RAG_PREWARM_TIMEOUT_SECONDS', '20'))
 RAG_MIN_RELEVANCE = float(os.environ.get('RAG_MIN_RELEVANCE', '0.5'))
 
 # Optional online retrieval. Generation remains on the configured local LLM.

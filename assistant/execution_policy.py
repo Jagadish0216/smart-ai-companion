@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Callable, Iterable
 
 from django.conf import settings
@@ -238,3 +238,18 @@ def get_ai_execution_plan(
         available_models=available_models,
         resource_policy_available=policy_available,
     )
+
+
+def select_rag_model(plan: AIExecutionPlan, available_models: Iterable[str]) -> AIExecutionPlan:
+    """Select a grounded-synthesis model without relaxing any resource limits."""
+    if not plan.generation_allowed or not plan.local_ai_allowed:
+        return plan
+    lightweight = str(getattr(settings, "AI_LIGHTWEIGHT_MODEL", "llama3.2:1b"))
+    rag_model = str(getattr(settings, "RAG_MODEL", lightweight)).strip() or lightweight
+    if plan.resource_profile in {"ECO", "PROTECTIVE"} and rag_model not in {
+        lightweight, plan.effective_model,
+    }:
+        return plan
+    if rag_model not in set(available_models):
+        return plan
+    return replace(plan, effective_model=rag_model, model_reason="RAG_MODEL")
