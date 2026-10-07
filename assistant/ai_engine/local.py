@@ -325,7 +325,7 @@ class LocalLLMEngine(AIEngine):
 
         if history:
             for msg in history[-10:]:  # Last 10 messages for context window
-                role = "user" if msg.get("role") == "USER" else "assistant"
+                role = "user" if str(msg.get("role", "")).upper() == "USER" else "assistant"
                 content = msg.get("content", "")
                 if content:
                     messages.append({"role": role, "content": content})
@@ -555,7 +555,7 @@ class LocalLLMEngine(AIEngine):
         parts = []
         if history:
             for msg in history[-10:]:
-                role = "User" if msg.get("role") == "USER" else "Assistant"
+                role = "User" if str(msg.get("role", "")).upper() == "USER" else "Assistant"
                 parts.append(f"{role}: {msg.get('content', '')}")
         parts.append(f"User: {query}")
         parts.append("Assistant:")

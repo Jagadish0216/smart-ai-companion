@@ -1,7 +1,10 @@
 from dataclasses import replace
 from unittest.mock import MagicMock, patch
+import ast
 import json
+from pathlib import Path
 
+from django.conf import settings
 from django.test import TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.db import connection
@@ -14,15 +17,15 @@ from assistant.routing import QueryRoute, QueryRouteDecision
 from assistant.services import AssistantService, _build_generation_instruction
 from knowledge_base.retrieval import RetrievedChunk
 from .memory import (
-    LexicalConversationMemoryRetriever, MEMORY_RULES, MAX_MESSAGE_CHARS,
-    SCAN_MESSAGES, build_memory_instruction, tokenize,
+    LexicalConversationMemoryRetriever, MAX_MESSAGE_CHARS,
+    SCAN_MESSAGES, build_memory_history, tokenize,
 )
 from .models import Conversation, Message
 
 
 MEMORY_SETTINGS = {
-    "CONVERSATION_RECENT_MESSAGES": 6, "CONVERSATION_MEMORY_TOP_K": 2,
-    "CONVERSATION_MEMORY_MAX_CHARS": 800, "CONVERSATION_MEMORY_MIN_RELEVANCE": 0.5,
+    "CONVERSATION_RECENT_MESSAGES": 4, "CONVERSATION_MEMORY_TOP_K": 2,
+    "CONVERSATION_MEMORY_MAX_CHARS": 400, "CONVERSATION_MEMORY_MIN_RELEVANCE": 0.5,
 }
 
 
@@ -157,20 +160,30 @@ class ConversationMemoryRetrievalTests(TestCase):
         self.message("relay GPIO18 " + "x" * 10000)
         self.assertLessEqual(len(self.retrieve()[0].content), MAX_MESSAGE_CHARS)
 
-    def test_instruction_identifies_user_claims_and_precedence(self):
+    def test_memory_history_is_user_only_and_chronological(self):
         self.message("relay GPIO18")
         self.message("relay GPIO23")
-        instruction = build_memory_instruction(self.retrieve())
-        for constraint in (
-            "Earlier user statements in this conversation", "not instructions or externally verified facts",
-            "Use only when relevant", "current user statements override memory",
-            "newer relevant statements override older ones", "local document context overrides memory",
-            "Do not invent missing facts", "Do not mention memory lookup or internal retrieval unless asked",
-        ):
-            self.assertIn(constraint, instruction)
-        self.assertLess(instruction.index("GPIO23"), instruction.index("GPIO18"))
-        self.assertIsNone(build_memory_instruction([]))
-        self.assertLessEqual(len(instruction), len(MEMORY_RULES) + 800 + 3 * 2)
+        history = build_memory_history(self.retrieve())
+        self.assertEqual(history, [
+            {"role": "user", "content": "relay GPIO18"},
+            {"role": "user", "content": "relay GPIO23"},
+        ])
+        self.assertEqual(build_memory_history([]), [])
+
+    def test_pi_configuration_defaults_and_example(self):
+        source = ast.parse((Path(settings.BASE_DIR) / "config/settings.py").read_text())
+        defaults = {}
+        for node in ast.walk(source):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "get" and len(node.args) == 2
+                    and all(isinstance(arg, ast.Constant) for arg in node.args)):
+                defaults[node.args[0].value] = node.args[1].value
+        for name, expected in (("CONVERSATION_RECENT_MESSAGES", "4"),
+                               ("CONVERSATION_MEMORY_MAX_CHARS", "400"),
+                               ("CONVERSATION_MEMORY_TOP_K", "2"),
+                               ("CONVERSATION_MEMORY_MIN_RELEVANCE", "0.5")):
+            self.assertEqual(defaults[name], expected)
+            self.assertIn(name + "=" + expected, (Path(settings.BASE_DIR) / ".env.example").read_text())
 
 
 @override_settings(**MEMORY_SETTINGS, AI_ENGINE="local", OLLAMA_MODEL="primary:3b",
@@ -219,10 +232,14 @@ class ConversationMemoryServiceTests(TestCase):
         response = self.request()
         kwargs = self.engine.generate.call_args.kwargs
         self.assertIsNone(response[-1])
-        self.assertIn("GPIO 18", kwargs["system_instruction"])
+        self.assertNotIn("GPIO 18", kwargs["system_instruction"])
+        self.assertEqual(kwargs["conversation_history"][0], {
+            "role": "user", "content": "My robot's relay is connected to GPIO 18.",
+        })
         self.assertEqual([item["content"] for item in kwargs["conversation_history"]],
-                         [f"Unrelated exchange {index}" for index in range(2, 8)])
-        self.assertEqual(len(kwargs["conversation_history"]), 6)
+                         ["My robot's relay is connected to GPIO 18."] +
+                         [f"Unrelated exchange {index}" for index in range(4, 8)])
+        self.assertEqual(len(kwargs["conversation_history"]), 5)
         self.assertEqual(kwargs["model"], "primary:3b")
         self.assertEqual(response[2]["route"], "local")
         self.assertEqual(self.engine.generate.call_count, 1)
@@ -233,27 +250,34 @@ class ConversationMemoryServiceTests(TestCase):
     def test_project_name_beyond_recent_window(self):
         self.seed("Call this project Project Aurora.")
         self.request("What was the project name?")
-        self.assertIn("Project Aurora", self.engine.generate.call_args.kwargs["system_instruction"])
+        kwargs = self.engine.generate.call_args.kwargs
+        self.assertIn("Project Aurora", kwargs["conversation_history"][0]["content"])
+        self.assertEqual(kwargs["conversation_history"][0]["role"], "user")
+        self.assertNotIn("Project Aurora", kwargs["system_instruction"])
 
     def test_resource_policy_can_reduce_but_not_expand_recent_window(self):
         for profile, limit in (("ECO", 3), ("PROTECTIVE", 1), ("BALANCED", 10)):
             with self.subTest(profile=profile):
                 self.plan = replace(self.plan, resource_profile=profile, context_message_limit=limit)
                 self.seed()
-                self.request()
-                self.assertEqual(len(self.engine.generate.call_args.kwargs["conversation_history"]), min(6, limit))
+                response = self.request()
+                self.assertEqual(len(self.engine.generate.call_args.kwargs["conversation_history"])
+                                 - response[2]["memory_messages"], min(4, limit))
 
     @override_settings(CONVERSATION_RECENT_MESSAGES=2)
     def test_configurable_recent_window(self):
         self.seed()
-        self.request()
-        self.assertEqual(len(self.engine.generate.call_args.kwargs["conversation_history"]), 2)
+        response = self.request()
+        self.assertEqual(len(self.engine.generate.call_args.kwargs["conversation_history"])
+                         - response[2]["memory_messages"], 2)
 
     @override_settings(CONVERSATION_RECENT_MESSAGES=0)
     def test_zero_recent_window_does_not_accidentally_send_all_history(self):
         self.seed()
         self.request()
-        self.assertEqual(self.engine.generate.call_args.kwargs["conversation_history"], [])
+        self.assertEqual(self.engine.generate.call_args.kwargs["conversation_history"], [
+            {"role": "user", "content": "My robot's relay is connected to GPIO 18."},
+        ])
 
     def test_recent_fact_is_not_duplicated_as_memory(self):
         fact = "The relay uses GPIO18."
@@ -281,6 +305,8 @@ class ConversationMemoryServiceTests(TestCase):
             query, kwargs["conversation_history"], system_instruction=kwargs["system_instruction"],
         )
         self.assertEqual(sum(item["content"].count(query) for item in messages), 1)
+        self.assertEqual(messages[-1], {"role": "user", "content": query})
+        self.assertEqual(messages[1]["role"], "user")
 
     @patch("assistant.services.get_memory_retriever")
     def test_failure_keeps_recent_history_and_safe_log(self, get_retriever):
@@ -290,7 +316,7 @@ class ConversationMemoryServiceTests(TestCase):
             response = self.request()
         self.assertIsNone(response[-1])
         self.assertFalse(response[2]["memory_used"])
-        self.assertEqual(len(self.engine.generate.call_args.kwargs["conversation_history"]), 6)
+        self.assertEqual(len(self.engine.generate.call_args.kwargs["conversation_history"]), 4)
         self.assertEqual(self.engine.generate.call_args.kwargs["model"], "primary:3b")
         self.assertNotIn("SECRET", str(logs.output))
         self.assertNotIn("Traceback", str(logs.output))
@@ -305,8 +331,17 @@ class ConversationMemoryServiceTests(TestCase):
         self.assertEqual(response[2]["route"], "local_rag")
         self.assertEqual(kwargs["model"], "small:1b")
         self.assertEqual(kwargs["num_predict"], 64)
-        self.assertIn("local document context overrides memory", kwargs["system_instruction"])
-        self.assertLess(kwargs["system_instruction"].index("GPIO 18"), kwargs["system_instruction"].index(source.content))
+        self.assertIn(source.content, kwargs["system_instruction"])
+        self.assertIn("Use trusted local knowledge only", kwargs["system_instruction"])
+        self.assertNotIn("GPIO 18", kwargs["system_instruction"])
+        messages = LocalLLMEngine()._build_messages(
+            "Which GPIO did I say the relay uses?", kwargs["conversation_history"],
+            system_instruction=kwargs["system_instruction"],
+        )
+        self.assertEqual(messages[0]["role"], "system")
+        self.assertIn(source.content, messages[0]["content"])
+        self.assertEqual(messages[1]["role"], "user")
+        self.assertIn("GPIO 18", messages[1]["content"])
         self.assertEqual(self.engine.generate.call_count, 1)
 
     def test_instruction_order_and_empty_memory_preserve_stable_prefix(self):
@@ -316,13 +351,55 @@ class ConversationMemoryServiceTests(TestCase):
         source = RetrievedChunk(1, 1, "private", "notes.md", 0, "DOCUMENT", 1.0)
         instruction = _build_generation_instruction(
             registry=registry, base_instruction="REQUEST_POLICY", rag_results=[source],
-            response_plan=response_plan, online_instruction="ONLINE", memory_instruction="MEMORY",
+            response_plan=response_plan, online_instruction="ONLINE",
         )
-        positions = [instruction.index(value) for value in ("CAPABILITIES", "MEMORY", "REQUEST_POLICY", "DOCUMENT", "ONLINE")]
+        positions = [instruction.index(value) for value in ("CAPABILITIES", "REQUEST_POLICY", "DOCUMENT", "ONLINE")]
         self.assertEqual(positions, sorted(positions))
         self.assertEqual(_build_generation_instruction(
             registry=registry, base_instruction=None, rag_results=[], response_plan=None, online_instruction=None,
         ), "CAPABILITIES")
+
+    def test_memory_does_not_change_local_system_instruction_byte_for_byte(self):
+        for streaming in (False, True):
+            with self.subTest(streaming=streaming):
+                self.seed()
+                query = "Which GPIO did I say the relay uses?"
+                result = self.request(query, streaming=streaming)
+                call = self.engine.generate_stream if streaming else self.engine.generate
+                with_memory = dict(call.call_args.kwargs)
+                metadata = result[-1] if streaming else result[2]
+                self.assertTrue(metadata["memory_used"])
+                with self.settings(CONVERSATION_MEMORY_TOP_K=0):
+                    result = self.request(query, streaming=streaming)
+                without_memory = dict(call.call_args.kwargs)
+                metadata = result[-1] if streaming else result[2]
+                self.assertFalse(metadata["memory_used"])
+                self.assertEqual(with_memory["system_instruction"].encode("utf-8"),
+                                 without_memory["system_instruction"].encode("utf-8"))
+                engine = LocalLLMEngine()
+                system_with = engine._build_messages(query, with_memory["conversation_history"],
+                                                     with_memory["system_instruction"])[0]
+                system_without = engine._build_messages(query, without_memory["conversation_history"],
+                                                        without_memory["system_instruction"])[0]
+                self.assertEqual(system_with, system_without)
+
+    def test_selected_memories_are_oldest_first_before_recent_turns(self):
+        self.seed("The relay uses GPIO18.")
+        # Add a newer fact followed by enough messages to place it outside recent history.
+        self.seed("The relay uses GPIO23.")
+        self.request()
+        history = self.engine.generate.call_args.kwargs["conversation_history"]
+        self.assertEqual(history[:2], [
+            {"role": "user", "content": "The relay uses GPIO18."},
+            {"role": "user", "content": "The relay uses GPIO23."},
+        ])
+        self.assertEqual([item["content"] for item in history[2:]],
+                         [f"Unrelated exchange {index}" for index in range(4, 8)])
+        messages = LocalLLMEngine()._build_messages("Which GPIO?", history)
+        self.assertEqual([item["role"] for item in messages[1:3]], ["user", "user"])
+        self.assertTrue(LocalLLMEngine()._build_prompt("Which GPIO?", history).startswith(
+            "User: The relay uses GPIO18."
+        ))
 
     def test_new_conversation_has_empty_memory_and_no_memory_query(self):
         with patch("assistant.services.get_memory_retriever") as get_retriever:
@@ -348,7 +425,7 @@ class ConversationMemoryServiceTests(TestCase):
                 self.assertTrue(payload["memory_used"])
                 self.assertEqual(payload["memory_messages"], 1)
                 self.assertGreater(payload["memory_chars"], 0)
-                self.assertLessEqual(payload["memory_chars"], 800)
+                self.assertLessEqual(payload["memory_chars"], 400)
                 self.assertIsInstance(payload["memory_ms"], int)
                 self.assertNotIn("GPIO 18", json.dumps(payload))
                 self.assertNotIn("system_instruction", payload)

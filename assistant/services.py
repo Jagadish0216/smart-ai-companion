@@ -15,7 +15,7 @@ from django.conf import settings
 from django.utils import timezone as django_timezone
 
 from conversations.models import Conversation, Message
-from conversations.memory import build_memory_instruction, get_memory_retriever
+from conversations.memory import build_memory_history, get_memory_retriever
 from knowledge_base.services import build_rag_instruction, select_rag_context
 from .ai_engine import (
     EngineTimeoutError,
@@ -247,7 +247,7 @@ def _prepare_message(
     policy_ms = round((time.perf_counter() - policy_started) * 1000)
     # Limit in SQL, not just after loading history. Capture before the current row.
     history_started = time.perf_counter()
-    requested_history_limit = max(0, int(getattr(settings, "CONVERSATION_RECENT_MESSAGES", 6)))
+    requested_history_limit = max(0, int(getattr(settings, "CONVERSATION_RECENT_MESSAGES", 4)))
     recent_limit = min(requested_history_limit, max(0, execution_plan.context_message_limit))
     recent = _get_conversation_history(conversation, recent_limit, include_ids=True)
     history = [{"role": item["role"], "content": item["content"]} for item in recent]
@@ -404,6 +404,7 @@ def _prepare_message(
     stage_ms["online_ms"] = online_latency_ms
 
     memory_messages = []
+    memory_history = []
     memory_started = time.perf_counter()
     if conversation_id:
         try:
@@ -412,7 +413,9 @@ def _prepare_message(
                 recent_ids=[item["id"] for item in recent],
                 recent_texts=[item["content"] for item in recent],
             )
+            memory_history = build_memory_history(memory_messages)
         except Exception:
+            memory_messages = []
             # Memory is optional. Do not log user text, exception text or a traceback.
             logger.warning("Conversation memory retrieval unavailable; using recent history")
     stage_ms["memory_ms"] = round((time.perf_counter() - memory_started) * 1000)
@@ -421,6 +424,8 @@ def _prepare_message(
         "memory_messages": len(memory_messages),
         "memory_chars": sum(len(item.content) for item in memory_messages),
     })
+    # Earlier USER statements belong in chat history, never in SYSTEM content.
+    history = memory_history + history
 
     rag_results = select_rag_context(list(route_decision.rag_results))
     effective_instruction = _build_generation_instruction(
@@ -430,7 +435,6 @@ def _prepare_message(
         response_plan=response_plan,
         online_instruction=online_instruction,
         rag_detailed=route_decision.response_mode == ResponseMode.DETAILED,
-        memory_instruction=build_memory_instruction(memory_messages),
     )
     return PreparedAssistantRequest(
         conversation=conversation,
@@ -457,12 +461,10 @@ def _build_generation_instruction(
     response_plan: ResponsePlan | None,
     online_instruction: str | None,
     rag_detailed: bool = False,
-    memory_instruction: str | None = None,
 ) -> str:
     """Keep stable capability grounding before request-specific context."""
     return _combine_instructions(
         registry.build_grounding_instruction(),
-        memory_instruction,
         base_instruction,
         build_rag_instruction(rag_results, concise=not rag_detailed) if rag_results else None,
         (
