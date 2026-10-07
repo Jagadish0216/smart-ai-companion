@@ -38,6 +38,7 @@ from .execution_policy import AIExecutionPlan, get_ai_execution_plan, select_rag
 from .policy import (
     Capability,
     CapabilityRegistry,
+    ResponseMode,
     ResponsePlan,
     build_runtime_capability_registry,
 )
@@ -153,6 +154,7 @@ class AssistantService:
             "direct": False,
             "effective_model": prepared.execution_plan.effective_model,
             "route": prepared.route_decision.route.value,
+            "num_predict": prepared.num_predict,
         }
         complete_text = ""
         result = None
@@ -347,6 +349,11 @@ def _prepare_message(
         )
 
     if route_decision.route == QueryRoute.LOCAL_RAG:
+        if route_decision.response_mode != ResponseMode.DETAILED:
+            effective_num_predict = min(
+                effective_num_predict,
+                max(1, int(getattr(settings, "RAG_NUM_PREDICT", 64))),
+            )
         try:
             execution_plan = select_rag_model(execution_plan, local_model_inventory())
         except EngineUnavailableError:
@@ -405,6 +412,7 @@ def _prepare_message(
         rag_results=rag_results,
         response_plan=response_plan,
         online_instruction=online_instruction,
+        rag_detailed=route_decision.response_mode == ResponseMode.DETAILED,
     )
     return PreparedAssistantRequest(
         conversation=conversation,
@@ -430,12 +438,13 @@ def _build_generation_instruction(
     rag_results: list,
     response_plan: ResponsePlan | None,
     online_instruction: str | None,
+    rag_detailed: bool = False,
 ) -> str:
     """Keep stable capability grounding before request-specific context."""
     return _combine_instructions(
         registry.build_grounding_instruction(),
         base_instruction,
-        build_rag_instruction(rag_results) if rag_results else None,
+        build_rag_instruction(rag_results, concise=not rag_detailed) if rag_results else None,
         (
             response_plan.rag_system_instruction
             if rag_results and response_plan is not None
@@ -490,6 +499,7 @@ def _generation_metadata(prepared: PreparedAssistantRequest, result) -> dict:
         "latency_ms": result.latency_ms,
         "generation_ms": result.generation_ms or result.latency_ms,
         "ttft_ms": result.ttft_ms,
+        "num_predict": prepared.num_predict,
         "prompt_prepare_ms": result.prompt_prepare_ms,
         "rag_used": bool(prepared.rag_results),
         "rag_sources": [item.source_metadata() for item in prepared.rag_results],

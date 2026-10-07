@@ -257,7 +257,7 @@ class RagAssistantServiceTests(TemporaryMediaTestCase):
         self.assertEqual(call.args[0], query)
         self.assertEqual(
             call.kwargs["num_predict"],
-            min(plan.num_predict, settings.AI_GENERATION_NORMAL_NUM_PREDICT),
+            min(plan.num_predict, settings.AI_GENERATION_NORMAL_NUM_PREDICT, settings.RAG_NUM_PREDICT),
         )
         self.assertIn(plan.system_instruction, instruction)
         self.assertIn("Use this runtime capability state", instruction)
@@ -340,7 +340,7 @@ class RagAssistantServiceTests(TemporaryMediaTestCase):
         self.assertNotIn("one to three short spoken paragraphs", instruction)
         self.assertEqual(
             call.kwargs["num_predict"],
-            settings.AI_GENERATION_NORMAL_NUM_PREDICT,
+            min(settings.AI_GENERATION_NORMAL_NUM_PREDICT, settings.RAG_NUM_PREDICT),
         )
         self.assertTrue(metadata["rag_used"])
         self.assertEqual(metadata["rag_chunks"], 1)

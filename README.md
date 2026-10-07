@@ -108,6 +108,8 @@ python manage.py ingest_knowledge notes/relay-wiring.txt --source-id relay-wirin
 
 At request time, the retriever returns up to `RAG_TOP_K` chunks whose score meets `RAG_MIN_RELEVANCE`. Higher-scoring chunks retain priority with deterministic ties, and aggregate chunk text is capped at `RAG_MAX_CONTEXT_CHARS` (1200 by default; instruction/source labels add a small fixed overhead). Pi defaults are 700-character chunks, 100-character overlap, and two retrieved results. Existing documents need reindexing to adopt the new chunk sizes.
 
+Ordinary `LOCAL_RAG` answers are capped at `RAG_NUM_PREDICT=64` output tokens, further limited by any smaller request/resource budget. Requests classified as `DETAILED` by the existing response policy retain their normal request/resource budget. Normal `LOCAL` budgets are unchanged. RAG instructions require context-only answers without unsupported elaboration, one concise sentence for directly supported ordinary facts, and an explicit insufficient-knowledge response when needed. Detailed answers still require strict grounding but may use multiple sentences. This is a single streaming generation call, not a verification or summarization stage; model adherence still needs Pi quality validation. Generation metadata (including streaming start/done) exposes the actual `num_predict`; `max_output_tokens` remains the resource-policy ceiling.
+
 `LOCAL_RAG` selects installed `RAG_MODEL` (defaults to `AI_LIGHTWEIGHT_MODEL`, normally `llama3.2:1b`) for grounded synthesis. The Resource Manager still controls whether generation is permitted, output/context budgets and timeout. ECO/PROTECTIVE never upgrade to a larger configured RAG override. If the RAG model is absent or inventory is unavailable, the already-approved resource-selected model is retained. Metadata reports the actual `model`/`effective_model`, while `configured_model` remains the primary model. Normal `LOCAL` keeps the existing 3B path and incurs no new inventory preflight.
 
 Useful chunks are added only to the internal request instruction; user query and history remain unchanged. The shorter RAG instruction still treats local knowledge as factual reference data, ignores embedded instructions, prohibits invented missing facts, and hides retrieval details unless asked. No useful match follows the normal non-RAG path.
@@ -313,6 +315,7 @@ Mock mode requires no external services and is useful for frontend development.
 | `RAG_CHUNK_OVERLAP_CHARS` | `100` | Approximate overlap between adjacent chunks |
 | `RAG_TOP_K` | `2` | Maximum relevant chunks supplied to one request |
 | `RAG_MAX_CONTEXT_CHARS` | `1200` | Maximum aggregate retrieved chunk content |
+| `RAG_NUM_PREDICT` | `64` | Ordinary LOCAL_RAG output token cap; DETAILED requests use their normal resource-bounded budget |
 | `RAG_PREWARM_ENABLED` | `false` | Optional best-effort RAG preload before required primary warm-up |
 | `RAG_PREWARM_TIMEOUT_SECONDS` | `20` | Optional stage cap; also capped by remaining overall warm-up budget |
 | `RAG_MIN_RELEVANCE` | `0.5` | Minimum lexical query-term coverage score from 0 to 1 |
