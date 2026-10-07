@@ -257,6 +257,11 @@ TTS_PIPER_VOICE = os.environ.get('TTS_PIPER_VOICE', '/opt/piper/en_US-lessac-med
 TTS_TIMEOUT = int(os.environ.get('TTS_TIMEOUT', '30'))
 
 # Standalone Raspberry Pi voice loop
+COMPANION_DISPLAY_ENABLED = os.environ.get('COMPANION_DISPLAY_ENABLED', 'false').lower() in ('1', 'true', 'yes', 'on')
+COMPANION_DISPLAY_PORT = os.environ.get('COMPANION_DISPLAY_PORT', '')
+COMPANION_DISPLAY_BAUD = os.environ.get('COMPANION_DISPLAY_BAUD', '115200')
+COMPANION_DISPLAY_STARTUP_DELAY_SECONDS = os.environ.get('COMPANION_DISPLAY_STARTUP_DELAY_SECONDS', '1.5')
+
 VOICE_INPUT_SOURCE = os.environ.get('VOICE_INPUT_SOURCE', '')
 VOICE_RECORD_SECONDS = os.environ.get('VOICE_RECORD_SECONDS', '5')
 VOICE_INPUT_WARMUP_SECONDS = os.environ.get('VOICE_INPUT_WARMUP_SECONDS', '1.0')

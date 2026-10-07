@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import math
 import os
 import re
@@ -16,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from typing import Callable
 import wave
 
 
@@ -32,6 +34,7 @@ django.setup()
 from django.conf import settings  # noqa: E402
 
 from assistant.services import AssistantService  # noqa: E402
+from assistant.display import DisplayState, get_companion_display  # noqa: E402
 from assistant.policy import AssistantResponsePolicy  # noqa: E402
 from assistant.voice.factory import get_stt_provider, get_tts_provider  # noqa: E402
 
@@ -39,6 +42,16 @@ CAPTURE_SAMPLE_RATE = 16000
 CAPTURE_SAMPLE_WIDTH = 2
 CAPTURE_CHUNK_SECONDS = 0.02
 CAPTURE_PREROLL_SECONDS = 0.3
+logger = logging.getLogger(__name__)
+
+
+def _set_display_state(display, state):
+    """Keep even unexpected display-provider failures out of the voice path."""
+    if display is not None:
+        try:
+            display.set_state(state)
+        except Exception:
+            logger.warning("Companion display update failed; voice interaction continues")
 
 
 class VoiceLoopError(Exception):
@@ -568,6 +581,7 @@ def speak_speech_chunks(
     temp_path: Path,
     leading_silence_seconds: float,
     timings: dict[str, float],
+    on_playback_start: Callable[[], None] | None = None,
 ) -> None:
     """Pipeline one future synthesis while playing the current chunk."""
     chunk_count = len(speech_chunks)
@@ -612,6 +626,11 @@ def speak_speech_chunks(
                     f"could not save playback WAV ({exc})."
                 ) from exc
             try:
+                if chunk_number == 1 and on_playback_start is not None:
+                    try:
+                        on_playback_start()
+                    except Exception:
+                        logger.warning("Companion display playback update failed; audio continues")
                 _timed_call(timings, "playback", play_audio, playback_path)
             except Exception as exc:
                 raise VoiceLoopError(
@@ -629,7 +648,17 @@ def speak_speech_chunks(
 def run_voice_cycle(
     config: VoiceLoopConfig,
     conversation_id: int | None = None,
+    display=None,
 ) -> int | None:
+    """Run a cycle; hardware display failures are isolated from voice failures."""
+    try:
+        return _run_voice_cycle(config, conversation_id, display)
+    except (Exception, KeyboardInterrupt):
+        _set_display_state(display, DisplayState.ERROR)
+        raise
+
+
+def _run_voice_cycle(config, conversation_id, display):
     """Run one record/transcribe/respond/speak cycle."""
     cycle_started = time.perf_counter()
     timings = {}
@@ -638,6 +667,7 @@ def run_voice_cycle(
         recorded_path = temp_path / "recorded.wav"
         normalized_path = temp_path / "normalized.wav"
 
+        _set_display_state(display, DisplayState.LISTENING)
         if config.capture_vad_enabled:
             print(
                 f"Preparing microphone ({config.input_warmup_seconds:g}s warm-up, "
@@ -691,8 +721,9 @@ def run_voice_cycle(
         print(f"You: {transcript}")
         response_plan = AssistantResponsePolicy.plan_voice_response(transcript)
 
+        _set_display_state(display, DisplayState.THINKING)
         try:
-            conversation, response_text, _metadata, error = (
+            conversation, response_text, metadata, error = (
                 _timed_call(
                     timings,
                     "ai",
@@ -722,6 +753,7 @@ def run_voice_cycle(
             temp_path,
             config.leading_silence_seconds,
             timings,
+            on_playback_start=lambda: _set_display_state(display, DisplayState.SPEAKING),
         )
 
         next_conversation_id = (
@@ -730,6 +762,9 @@ def run_voice_cycle(
 
     timings["total"] = time.perf_counter() - cycle_started
     _print_timing_summary(timings)
+    profile = (metadata or {}).get("resource_profile")
+    idle = {"ECO": DisplayState.ECO, "PROTECTIVE": DisplayState.PROTECTIVE}.get(profile, DisplayState.READY)
+    _set_display_state(display, idle)
     return next_conversation_id
 
 
@@ -744,29 +779,36 @@ def main() -> int:
     print(f"Input source: {config.input_source}")
     print("Press Enter to record, or type q and press Enter to quit.")
     conversation_id = None
+    display = get_companion_display()
+    try:
+        _set_display_state(display, DisplayState.READY)
+        while True:
+            try:
+                command = input("\n[Enter=record, q=quit] > ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print("\nExiting voice loop.")
+                return 0
 
-    while True:
+            if command == "q":
+                print("Exiting voice loop.")
+                return 0
+            if command:
+                print("Type q to quit, or press Enter to start recording.")
+                continue
+
+            try:
+                conversation_id = run_voice_cycle(config, conversation_id, display=display)
+            except VoiceLoopError as exc:
+                print(f"Voice cycle error: {exc}", file=sys.stderr)
+            except KeyboardInterrupt:
+                print("\nVoice cycle cancelled.", file=sys.stderr)
+            except Exception as exc:
+                print(f"Voice cycle error: unexpected failure ({exc}).", file=sys.stderr)
+    finally:
         try:
-            command = input("\n[Enter=record, q=quit] > ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            print("\nExiting voice loop.")
-            return 0
-
-        if command == "q":
-            print("Exiting voice loop.")
-            return 0
-        if command:
-            print("Type q to quit, or press Enter to start recording.")
-            continue
-
-        try:
-            conversation_id = run_voice_cycle(config, conversation_id)
-        except VoiceLoopError as exc:
-            print(f"Voice cycle error: {exc}", file=sys.stderr)
-        except KeyboardInterrupt:
-            print("\nVoice cycle cancelled.", file=sys.stderr)
-        except Exception as exc:
-            print(f"Voice cycle error: unexpected failure ({exc}).", file=sys.stderr)
+            display.close()
+        except Exception:
+            logger.warning("Companion display cleanup failed")
 
 
 if __name__ == "__main__":

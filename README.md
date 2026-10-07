@@ -160,6 +160,51 @@ Retrieved snippets are treated as untrusted reference data. The request-scoped i
 
 Online latency and local generation latency are separate: `online_latency_ms` measures the provider request, while `latency_ms` remains the local generation measurement. Total perceived latency is approximately their sum plus application overhead. On a Pi, network response time varies independently from Ollama CPU inference time; the provider uses one explicit timeout and no indefinite retries.
 
+### ESP32 Companion Display USB Serial Bridge
+
+The optional physical face uses Raspberry Pi → USB/CP2102 UART → existing ESP32 companion-display firmware → TFT. `assistant/display/` supplies the firmware-state enum, no-op controller, settings-driven factory and persistent pyserial transport. This is separate from MQTT actions/sensing: it does not alter routing, models, RAG, memory, response policy or display firmware. `scripts/voice_loop.py` creates one controller in `main()`, reuses it across cycles and closes it on exit. Django imports do not open hardware; only the voice loop and explicit manual command create a controller.
+
+Install the updated requirements (`pyserial==3.5`). Development defaults keep the bridge disabled:
+
+```ini
+COMPANION_DISPLAY_ENABLED=false
+COMPANION_DISPLAY_PORT=
+COMPANION_DISPLAY_BAUD=115200
+COMPANION_DISPLAY_STARTUP_DELAY_SECONDS=1.5
+```
+
+On the deployed Pi, enable support and set **your device's** stable `/dev/serial/by-id/...` path instead of `/dev/ttyUSB0`, which can change with enumeration. For example, the validated CP2102 adapter uses:
+
+```ini
+COMPANION_DISPLAY_ENABLED=true
+COMPANION_DISPLAY_PORT=/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
+```
+
+This is an example, not a universal identifier or source-code default. Check `ls -l /dev/serial/by-id/` on your Pi and ensure the runtime user belongs to `dialout`. Use one process to own the adapter; stop the voice loop and other serial monitors before manual tests. For a service, configure serial-device permissions in that service's deployment policy if needed; existing unit security restrictions are not changed by this milestone.
+
+The supported states exactly match firmware: `BOOTING`, `SETUP`, `CONNECTING`, `READY`, `LISTENING`, `THINKING`, `SPEAKING`, `OFFLINE`, `ECO`, `PROTECTIVE`, `ERROR`. The controller also supports `set_text()`/`clear_text()`: labels become a single printable ASCII line, capped at the firmware's 40 characters; blank text clears the label. Application code never builds raw protocol commands.
+
+Voice lifecycle: initialization → READY; immediately before capture → LISTENING (through recording, normalization and STT); valid transcript, immediately before AI → THINKING; immediately before first audio playback → SPEAKING exactly once, not at TTS synthesis; successful final playback → ECO/PROTECTIVE for those exact metadata profiles, otherwise READY. Recording/STT/AI/TTS/playback or unexpected cycle failures → ERROR, retained until the next attempt starts LISTENING. Display failures never turn voice success into an error.
+
+The port stays open across transitions. Writes are locked and newline-terminated, with a 50 ms write timeout, non-blocking read configuration and **no acknowledgment wait or flush**. DTR/RTS are set inactive before opening, with no per-state reset toggles. Some OS/drivers may still glitch reset lines on open; see the [pyserial API documentation](https://pyserial.readthedocs.io/en/latest/pyserial_api.html#serial.Serial.open). A configurable startup delay (0–10 seconds) runs once at initial connection, before READY, not on every state change.
+
+Missing ports, permissions, unplugging and failed/partial writes produce concise safe warnings without user-visible tracebacks or raw text. Failed connections are closed; a later command may reconnect after a five-second cooldown, with no tight retry loop. Reconnection settling is non-blocking: commands during the configured delay are skipped, and a later update sends the latest state after settling. There is no background retry service, stale-state replay or delivery guarantee while disconnected. Initial setup errors also fall back safely; disabled/misconfigured development machines need no hardware.
+
+Manual Pi validation (each command opens once, waits for startup settling, sends and closes):
+
+```bash
+python -m pip install -r requirements.txt
+ls -l /dev/serial/by-id/
+python manage.py companion_display_state READY
+python manage.py companion_display_state LISTENING
+python manage.py companion_display_state THINKING
+python manage.py companion_display_state SPEAKING
+python manage.py companion_display_state ERROR
+python scripts/voice_loop.py
+```
+
+Unknown states are rejected. Manual success means bytes were sent, **not** that firmware acknowledged or the TFT was visually verified. Disabled support and transport failure return clear command errors. Physically verify stage order, first-playback timing, ERROR recovery on the next attempt, ECO/PROTECTIVE idle states, unplug/replug recovery across later updates, and unchanged AI/voice timing on the Pi. Automated tests mock serial/audio and require neither ESP32 nor microphone; no new hardware acceptance result is claimed.
+
 ### ESP32 MQTT Actions and Temperature
 
 The first physical-device milestone uses a local Mosquitto broker and a small versioned JSON request/response protocol. The `ACTION` route maps only explicit LED commands and temperature reads to a transport-independent `DeviceController`; the MQTT implementation is kept out of `AssistantService`. Successful acknowledgments produce deterministic replies such as “The LED is on.” or “The current temperature is 28.4 °C.” without invoking the LLM. A timeout, broker failure, malformed/mismatched response, or ESP32 rejection never produces a success claim.
