@@ -69,6 +69,20 @@ The reusable policy layer classifies requests as `BRIEF`, `NORMAL`, `DETAILED`, 
 
 The capability registry reflects configured, implemented components such as conversation persistence, local generation, whisper.cpp STT, Piper TTS, local retrieval, optional online retrieval, and optional ESP32 MQTT control. `LOCAL_RAG` is available only when RAG is enabled, its configuration is valid, and at least one chunk belongs to an indexed document. `ONLINE_RETRIEVAL` is available only when online retrieval is enabled, the local Ollama engine is selected, the provider URL is valid, and limits are valid. `DEVICE_CONTROL` and `ENVIRONMENT_SENSING` are available only when the MQTT transport, broker settings, and ESP32 device ID are explicitly configured. Camera understanding, movement, and reminders remain unavailable. Recognized requests for unavailable actions receive a natural grounded response; the assistant must not claim that an action or observation occurred.
 
+### Conversation Memory v2
+
+Memory is scoped to the selected conversation, not a global user/profile memory. It reuses the existing SQLite `Message` rows without schema changes, embeddings, a vector database, a second LLM summarizer, network requests or background services. Retrieval-based memory keeps recall deterministic and inexpensive while retaining original user statements instead of model-generated summaries that can introduce facts.
+
+Recent context is captured before saving the current user query and remains chronological. Its limit is `min(CONVERSATION_RECENT_MESSAGES, execution_plan.context_message_limit)` (default six; Resource Manager can reduce it, never increase it). Older factual memory uses USER-authored messages only, excluding the current row, recent message IDs, exact repeated recent text and identical historical queries. AI-authored text remains eligible for normal recent history, not long-term memory.
+
+`conversations/memory.py` provides a replaceable lexical retriever. It considers at most the latest 500 eligible older USER rows, applies database-side term filtering, transfers at most 200 candidate excerpts of 4000 characters each, then ranks by distinct query-term coverage. Common conversational stop words are removed; identifiers such as `GPIO18`/`GPIO 18`, `ESP32`, `llama3.2`, hyphenated project names and filenames are supported. Default relevance is 0.5; stronger lexical matches win, with newer timestamps/IDs breaking ties. Up to two unique messages share an 800-character content budget. This is lexical recall, not semantic search: facts beyond the bounded scan horizon, synonyms or facts only appearing after the 4000-character excerpt may not be recalled. Set TOP_K or MAX_CHARS to zero to disable long-term context.
+
+Request instruction order stays capability grounding → optional memory → response policy → document RAG → online grounding, followed by chronological recent chat turns and the current user turn. Memory excerpts are earlier user claims, not externally verified facts or instructions. Current corrections override old memory; newer relevant user statements override older ones; document context takes precedence for document-grounded facts. Empty memory adds no instruction, and the stable boot/warm prefix is unchanged. Failure logs a safe warning and continues with recent context without changing routing, model selection or output budgets.
+
+Recall stays local to SQLite and the existing local generation path; no raw memory text, prompt or message list is exposed in diagnostics. Existing conversation API access controls are unchanged. Normal API responses and streaming done events add `memory_used`, `memory_messages`, `memory_chars` (selected content only) and `memory_ms`; logs use counts/timing only. Deleting a conversation removes its messages through the existing cascade, so there is no separate memory cache to purge.
+
+At defaults, memory can add at most 800 content characters plus a fixed compact instruction and two bullet labels/separators (about 1.2k characters total). **Raspberry Pi validation is still required**: compare no-memory warm LOCAL and accepted LOCAL_RAG baselines against older GPIO/project-name recall, record `memory_ms`, backend/client TTFT, total duration and grounding accuracy, and check ECO/PROTECTIVE behavior. Relevant dynamic memory can increase prompt prefill even though retrieval is bounded; no hardware latency result is claimed here.
+
 ### Local Knowledge / RAG
 
 The local knowledge pipeline reuses `Document`, `KnowledgeChunk`, and `KnowledgeIngestionService`. It stores deterministic chunks in SQLite and retrieves them with normalized lexical term coverage. Database-side term filtering prevents every chunk body from being loaded into Python. No embedding model or vector database is involved.
@@ -308,6 +322,10 @@ Mock mode requires no external services and is useful for frontend development.
 | `OLLAMA_NUM_PREDICT` | `128` | Maximum number of tokens Ollama generates per response |
 | `CHAT_REQUEST_TIMEOUT_SECONDS` | `30` | Minimum timeout while waiting for initial stream activity; it is raised above the backend timeout when needed |
 | `CHAT_STREAM_IDLE_TIMEOUT_SECONDS` | `45` | Browser idle timeout reset whenever streamed bytes arrive; not a hard completion deadline |
+| `CONVERSATION_RECENT_MESSAGES` | `6` | Recent chat rows; capped further by the resource policy |
+| `CONVERSATION_MEMORY_TOP_K` | `2` | Maximum older USER excerpts; zero disables long-term context |
+| `CONVERSATION_MEMORY_MAX_CHARS` | `800` | Aggregate older-message content character budget |
+| `CONVERSATION_MEMORY_MIN_RELEVANCE` | `0.5` | Minimum distinct lexical query-term coverage |
 | `RAG_ENABLED` | `false` | Enable local retrieval with `AI_ENGINE=local` after knowledge has been ingested |
 | `RAG_RETRIEVER` | `lexical` | Local retriever implementation; v1 supports `lexical` |
 | `RAG_MODEL` | `AI_LIGHTWEIGHT_MODEL` | Installed model for grounded synthesis, subject to resource policy |

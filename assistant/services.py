@@ -15,6 +15,7 @@ from django.conf import settings
 from django.utils import timezone as django_timezone
 
 from conversations.models import Conversation, Message
+from conversations.memory import build_memory_instruction, get_memory_retriever
 from knowledge_base.services import build_rag_instruction, select_rag_context
 from .ai_engine import (
     EngineTimeoutError,
@@ -227,17 +228,6 @@ def _prepare_message(
     else:
         conversation = Conversation.objects.create(title=query[:50])
 
-    # Identity/state boundary: history is captured before the current row exists.
-    history_started = time.perf_counter()
-    requested_history_limit = max(
-        getattr(settings, "AI_CONTEXT_NORMAL_MESSAGES", 10),
-        getattr(settings, "AI_CONTEXT_REDUCED_MESSAGES", 6),
-        getattr(settings, "AI_CONTEXT_MINIMAL_MESSAGES", 3),
-    )
-    history = _get_conversation_history(conversation, requested_history_limit)
-    history_ms = round((time.perf_counter() - history_started) * 1000)
-    Message.objects.create(conversation=conversation, sender="USER", text=query)
-
     planned_engine = None
     inventory_models = None
 
@@ -255,7 +245,14 @@ def _prepare_message(
         model_inventory_provider=local_model_inventory,
     )
     policy_ms = round((time.perf_counter() - policy_started) * 1000)
-    history = history[-execution_plan.context_message_limit:]
+    # Limit in SQL, not just after loading history. Capture before the current row.
+    history_started = time.perf_counter()
+    requested_history_limit = max(0, int(getattr(settings, "CONVERSATION_RECENT_MESSAGES", 6)))
+    recent_limit = min(requested_history_limit, max(0, execution_plan.context_message_limit))
+    recent = _get_conversation_history(conversation, recent_limit, include_ids=True)
+    history = [{"role": item["role"], "content": item["content"]} for item in recent]
+    history_ms = round((time.perf_counter() - history_started) * 1000)
+    current_message = Message.objects.create(conversation=conversation, sender="USER", text=query)
 
     effective_instruction = system_instruction
     effective_num_predict = num_predict
@@ -291,6 +288,7 @@ def _prepare_message(
         "policy_ms": policy_ms,
         "routing_ms": routing_ms,
         "rag_ms": getattr(route_decision, "rag_latency_ms", 0),
+        "memory_ms": 0,
     }
 
     direct_response = _direct_response_for_route(
@@ -405,6 +403,25 @@ def _prepare_message(
             )
     stage_ms["online_ms"] = online_latency_ms
 
+    memory_messages = []
+    memory_started = time.perf_counter()
+    if conversation_id:
+        try:
+            memory_messages = get_memory_retriever().retrieve(
+                query, conversation_id=conversation.id, before_id=current_message.id,
+                recent_ids=[item["id"] for item in recent],
+                recent_texts=[item["content"] for item in recent],
+            )
+        except Exception:
+            # Memory is optional. Do not log user text, exception text or a traceback.
+            logger.warning("Conversation memory retrieval unavailable; using recent history")
+    stage_ms["memory_ms"] = round((time.perf_counter() - memory_started) * 1000)
+    stage_ms.update({
+        "memory_used": bool(memory_messages),
+        "memory_messages": len(memory_messages),
+        "memory_chars": sum(len(item.content) for item in memory_messages),
+    })
+
     rag_results = select_rag_context(list(route_decision.rag_results))
     effective_instruction = _build_generation_instruction(
         registry=registry,
@@ -413,6 +430,7 @@ def _prepare_message(
         response_plan=response_plan,
         online_instruction=online_instruction,
         rag_detailed=route_decision.response_mode == ResponseMode.DETAILED,
+        memory_instruction=build_memory_instruction(memory_messages),
     )
     return PreparedAssistantRequest(
         conversation=conversation,
@@ -439,10 +457,12 @@ def _build_generation_instruction(
     response_plan: ResponsePlan | None,
     online_instruction: str | None,
     rag_detailed: bool = False,
+    memory_instruction: str | None = None,
 ) -> str:
     """Keep stable capability grounding before request-specific context."""
     return _combine_instructions(
         registry.build_grounding_instruction(),
+        memory_instruction,
         base_instruction,
         build_rag_instruction(rag_results, concise=not rag_detailed) if rag_results else None,
         (
@@ -524,6 +544,7 @@ def _log_request_performance(prepared: PreparedAssistantRequest, metadata: dict)
             "execution_ms", "policy_ms", "routing_ms", "rag_ms", "online_ms",
             "prompt_prepare_ms", "ttft_ms", "generation_ms", "route",
             "resource_profile", "effective_model",
+            "memory_used", "memory_messages", "memory_chars", "memory_ms",
         )
     }
     logger.info(
@@ -648,6 +669,10 @@ def _persist_direct_response(
         "online_sources": [],
         "online_results": 0,
         "online_latency_ms": online_latency_ms,
+        "memory_used": False,
+        "memory_messages": 0,
+        "memory_chars": 0,
+        "memory_ms": 0,
     }
     if metadata_updates:
         metadata.update(metadata_updates)
@@ -830,7 +855,8 @@ def _combine_instructions(*instructions: str | None) -> str:
     )
 
 
-def _get_conversation_history(conversation: Conversation, limit: int = 10) -> list[dict]:
+def _get_conversation_history(conversation: Conversation, limit: int = 10,
+                              *, include_ids: bool = False) -> list[dict]:
     """
     Fetch recent messages for the conversation to provide context.
     Returns a list of dicts compatible with AIEngine.generate().
@@ -841,7 +867,7 @@ def _get_conversation_history(conversation: Conversation, limit: int = 10) -> li
     )
     # Reverse to chronological order
     history = [
-        {"role": msg.sender, "content": msg.text}
+        {"role": msg.sender, "content": msg.text, **({"id": msg.id} if include_ids else {})}
         for msg in reversed(messages)
     ]
     return history

@@ -172,6 +172,12 @@ CHAT_REQUEST_TIMEOUT_SECONDS = int(os.environ.get('CHAT_REQUEST_TIMEOUT_SECONDS'
 CHAT_BACKEND_TIMEOUT_MARGIN_SECONDS = int(os.environ.get('CHAT_BACKEND_TIMEOUT_MARGIN_SECONDS', '15'))
 CHAT_STREAM_IDLE_TIMEOUT_SECONDS = int(os.environ.get('CHAT_STREAM_IDLE_TIMEOUT_SECONDS', '45'))
 
+# Conversation-scoped, local lexical memory; zero limits disable memory context.
+CONVERSATION_RECENT_MESSAGES = int(os.environ.get('CONVERSATION_RECENT_MESSAGES', '6'))
+CONVERSATION_MEMORY_TOP_K = int(os.environ.get('CONVERSATION_MEMORY_TOP_K', '2'))
+CONVERSATION_MEMORY_MAX_CHARS = int(os.environ.get('CONVERSATION_MEMORY_MAX_CHARS', '800'))
+CONVERSATION_MEMORY_MIN_RELEVANCE = float(os.environ.get('CONVERSATION_MEMORY_MIN_RELEVANCE', '0.5'))
+
 # Offline local knowledge / RAG
 RAG_ENABLED = os.environ.get('RAG_ENABLED', 'false').lower() in ('1', 'true', 'yes', 'on')
 RAG_RETRIEVER = os.environ.get('RAG_RETRIEVER', 'lexical')
