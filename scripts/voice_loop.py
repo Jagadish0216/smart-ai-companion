@@ -13,10 +13,11 @@ from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from queue import Empty, Full, Queue
 import subprocess
 import sys
 import tempfile
-from threading import Timer
+from threading import Event, Timer
 import time
 from typing import Callable
 import wave
@@ -37,7 +38,10 @@ from django.conf import settings  # noqa: E402
 from assistant.services import AssistantService  # noqa: E402
 from assistant.display import DisplayState, get_companion_display  # noqa: E402
 from assistant.policy import AssistantResponsePolicy  # noqa: E402
+from assistant.execution_policy import CONSTRAINED_RESOURCE_STATUS, REDUCED_RESOURCE_STATUS  # noqa: E402
 from assistant.voice.factory import get_stt_provider, get_tts_provider  # noqa: E402
+from assistant.voice.processes import run_cancellable  # noqa: E402
+from assistant.voice.tts import TextToSpeechProvider  # noqa: E402
 
 CAPTURE_SAMPLE_RATE = 16000
 CAPTURE_SAMPLE_WIDTH = 2
@@ -79,6 +83,7 @@ class VoiceLoopConfig:
     alsa_capture_device: str = "hw:CARD=sndrpigooglevoi,DEV=0"
     alsa_playback_device: str = "hw:CARD=sndrpigooglevoi,DEV=0"
     playback_gain: float = 4.0
+    stream_tts_target_chars: int = 180
 
     @classmethod
     def from_settings(cls) -> "VoiceLoopConfig":
@@ -118,6 +123,7 @@ class VoiceLoopConfig:
                 getattr(settings, "VOICE_ALSA_PLAYBACK_DEVICE", "hw:CARD=sndrpigooglevoi,DEV=0")
             ).strip(),
             playback_gain=float(getattr(settings, "VOICE_PLAYBACK_GAIN", 4.0)),
+            stream_tts_target_chars=int(getattr(settings, "VOICE_STREAM_TTS_TARGET_CHARS", 180)),
         )
         config.validate()
         return config
@@ -151,6 +157,8 @@ class VoiceLoopConfig:
             )
         if self.tts_chunk_chars <= 0:
             raise VoiceLoopError("VOICE_TTS_CHUNK_CHARS must be greater than zero.")
+        if self.stream_tts_target_chars <= 0:
+            raise VoiceLoopError("VOICE_STREAM_TTS_TARGET_CHARS must be greater than zero.")
         if self.tts_max_total_chars < 0:
             raise VoiceLoopError("VOICE_TTS_MAX_TOTAL_CHARS cannot be negative.")
         if self.input_warmup_seconds < 0:
@@ -618,6 +626,199 @@ def prepare_speech_chunks(
     return chunk_text_for_speech(limited, chunk_chars)
 
 
+class StreamingSpeechBuffer:
+    """Keep incomplete words/punctuation/Markdown links until safe to speak.
+
+    A sentence end needs one character of look-ahead (normally whitespace), so
+    a closing quote/bracket arriving in the next delta stays with its sentence.
+    """
+
+    def __init__(self, target_chars=180):
+        self.target_chars = target_chars
+        self.pending = ""
+
+    def feed(self, text, *, final=False):
+        self.pending += text
+        units = []
+        while self.pending:
+            protected = [match.span() for match in re.finditer(r"!?\[[^\]]*\]\([^)]*\)", self.pending)]
+            # Do not split a Markdown link whose label/URL is still arriving.
+            for match in re.finditer(r"!?\[", self.pending):
+                if not any(start <= match.start() < end for start, end in protected):
+                    if "]" not in self.pending[match.end():] or re.search(r"\]\([^)]*$", self.pending[match.end():]):
+                        protected.append((match.start(), len(self.pending)))
+
+            def safe(position):
+                return not any(start < position < end for start, end in protected)
+
+            boundary = None
+            for match in re.finditer(r'''[.!?](?:["'’”)\]}*_`]+)?(?=\s|$)''', self.pending):
+                if safe(match.start()) and safe(match.end()) and (final or match.end() < len(self.pending)):
+                    boundary = match.end()
+                    break
+            if boundary is None and len(self.pending) > self.target_chars:
+                spaces = [match.start() for match in re.finditer(r"\s+", self.pending)
+                          if match.start() >= min(40, self.target_chars / 2) and safe(match.start())]
+                before = [position for position in spaces if position <= self.target_chars]
+                boundary = before[-1] if before else (spaces[0] if spaces else None)
+            if boundary is None:
+                if not final:
+                    break
+                boundary = len(self.pending)
+            raw_unit, self.pending = self.pending[:boundary], self.pending[boundary:].lstrip()
+            spoken = sanitize_text_for_speech(raw_unit)
+            if spoken:
+                units.extend(_split_words(spoken, self.target_chars))
+        return units
+
+
+def speak_stream_response(events, tts_provider, temp_path, config, timings, cycle_started,
+                          on_playback_start=None):
+    """Consume service events on the caller thread; one bounded audio worker.
+
+    The service retains ownership of routing, budgets, canonical text and DB
+    persistence. Only this voice copy omits a known initial resource notice.
+    """
+    pending = Queue(maxsize=2)
+    stopped = Event()
+    finish = object()
+    errors = []
+    spoken_count = 0
+    stream_started = time.perf_counter()
+    buffer = StreamingSpeechBuffer(config.stream_tts_target_chars)
+
+    def audio_worker():
+        nonlocal spoken_count
+        try:
+            while not stopped.is_set():
+                try:
+                    text = pending.get(timeout=0.05)
+                except Empty:
+                    continue
+                if text is finish or stopped.is_set():
+                    return
+                number = spoken_count + 1
+                try:
+                    synthesize = (
+                        tts_provider.synthesize_cancellable
+                        if isinstance(tts_provider, TextToSpeechProvider) else tts_provider.synthesize
+                    )
+                    args = (text, stopped) if isinstance(tts_provider, TextToSpeechProvider) else (text,)
+                    audio = _timed_call(timings, "tts", synthesize, *args)
+                except Exception as exc:
+                    raise VoiceLoopError(f"TTS failed on streaming chunk {number}: {exc}") from exc
+                if stopped.is_set():
+                    return
+                if number == 1:
+                    audio = prepend_leading_silence(audio, config.leading_silence_seconds)
+                playback_path = temp_path / "stream-playback.wav"
+                playback_path.write_bytes(audio)
+                operation, args = play_audio, (playback_path,)
+                if config.audio_backend == "alsa":
+                    speaker_path = temp_path / "stream-speaker.wav"
+                    _timed_call(timings, "playback", prepare_alsa_playback, playback_path, speaker_path,
+                                config.playback_gain, cancel_event=stopped)
+                    operation, args = play_audio_alsa, (speaker_path, config.alsa_playback_device)
+                if stopped.is_set():
+                    return
+                if number == 1:
+                    if on_playback_start is not None:
+                        try:
+                            on_playback_start()
+                        except Exception:
+                            logger.warning("Companion display playback update failed; audio continues")
+                    timings["first_speech"] = time.perf_counter() - cycle_started
+                _timed_call(timings, "playback", operation, *args, cancel_event=stopped)
+                spoken_count += 1
+        except BaseException as exc:
+            errors.append(exc if isinstance(exc, VoiceLoopError) else VoiceLoopError(f"Streaming audio failed: {exc}"))
+            stopped.set()
+
+    def enqueue(unit):
+        while not stopped.is_set():
+            try:
+                pending.put(unit, timeout=0.05)
+                return
+            except Full:
+                pass
+        raise errors[0] if errors else VoiceLoopError("Voice stream cancelled.")
+
+    iterator = iter(events)
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="voice-stream-audio")
+    worker = executor.submit(audio_worker)  # Exactly one job, not one Future per delta/chunk.
+    done = None
+    start = None
+    first_delta = True
+    canonical_parts = []
+    try:
+        for event in iterator:
+            if stopped.is_set():
+                raise errors[0] if errors else VoiceLoopError("Voice stream cancelled.")
+            if not isinstance(event, dict):
+                raise VoiceLoopError("AI response failed: malformed stream event.")
+            kind = event.get("type")
+            if kind == "error":
+                raise VoiceLoopError(f"AI response failed: {event.get('detail') or event.get('error') or 'stream interrupted.'}")
+            if kind == "start":
+                if start is not None:
+                    raise VoiceLoopError("AI response failed: duplicate stream start.")
+                start = event
+            elif kind == "delta":
+                text = event.get("text", "")
+                if not isinstance(text, str):
+                    raise VoiceLoopError("AI response failed: malformed text delta.")
+                if not text:
+                    continue
+                canonical_parts.append(text)
+                is_notice = (first_delta and start and not start.get("direct") and text in {
+                    REDUCED_RESOURCE_STATUS + "\n\n", CONSTRAINED_RESOURCE_STATUS + "\n\n",
+                })
+                first_delta = False
+                if is_notice:
+                    continue
+                if "ai_ttft" not in timings:
+                    timings["ai_ttft"] = time.perf_counter() - stream_started
+                for unit in buffer.feed(text):
+                    enqueue(unit)
+            elif kind == "done":
+                done = event
+                if event.get("response") != "".join(canonical_parts):
+                    raise VoiceLoopError("AI response failed: stream text did not match its final response.")
+                timings["ai_total"] = time.perf_counter() - stream_started
+                timings["ai"] = timings["ai_total"]  # Retain the existing metric.
+                for unit in buffer.feed("", final=True):
+                    enqueue(unit)
+                break
+            else:
+                raise VoiceLoopError("AI response failed: unexpected stream event.")
+        if done is None:
+            raise VoiceLoopError("AI response failed: stream ended before completion.")
+        enqueue(finish)
+        while not worker.done():
+            try:
+                worker.result(timeout=0.05)
+            except TimeoutError:
+                pass
+        if errors:
+            raise errors[0]
+        if not spoken_count:
+            raise VoiceLoopError("TTS failed: AI response contained no speakable text.")
+        print(f"Assistant: {done['response']}")
+        print(f"TTS chunks: {spoken_count}")
+        return done.get("conversation_id") or (start or {}).get("conversation_id"), done
+    except (Exception, KeyboardInterrupt):
+        stopped.set()
+        raise
+    finally:
+        stopped.set()
+        try:
+            close = getattr(iterator, "close", None)
+            if close is not None:
+                close()
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)
+
+
 def is_no_speech_transcription(text: str) -> bool:
     """Return whether an STT result is a known placeholder rather than speech."""
     normalized = text.strip().lower()
@@ -637,18 +838,23 @@ def _timed_call(timings: dict[str, float], stage: str, operation, *args, **kwarg
 
 
 def _print_timing_summary(timings: dict[str, float]) -> None:
-    order = ("record", "normalize", "stt", "ai", "tts", "playback", "total")
-    summary = " ".join(f"{stage}={timings[stage]:.1f}s" for stage in order)
+    order = ("record", "normalize", "stt", "ai", "ai_ttft", "first_speech",
+             "ai_total", "tts", "playback", "total")
+    summary = " ".join(f"{stage}={timings[stage]:.3f}s" for stage in order if stage in timings)
     print(f"Timing: {summary}")
 
 
-def play_audio(audio_path: Path) -> None:
+def _run_audio_subprocess(command, *, timeout, cancel_event=None):
+    if cancel_event is None:
+        return subprocess.run(command, capture_output=True, timeout=timeout)
+    return run_cancellable(command, timeout=timeout, cancel_event=cancel_event)
+
+
+def play_audio(audio_path: Path, *, cancel_event=None) -> None:
     """Play a WAV through the current PulseAudio/PipeWire default sink."""
     try:
-        result = subprocess.run(
-            ["paplay", str(audio_path)],
-            capture_output=True,
-            timeout=300,
+        result = _run_audio_subprocess(
+            ["paplay", str(audio_path)], timeout=300, cancel_event=cancel_event,
         )
     except FileNotFoundError as exc:
         raise VoiceLoopError("Playback failed: paplay was not found on PATH.") from exc
@@ -665,13 +871,13 @@ def play_audio(audio_path: Path) -> None:
         )
 
 
-def prepare_alsa_playback(input_path: Path, output_path: Path, gain: float) -> None:
+def prepare_alsa_playback(input_path: Path, output_path: Path, gain: float, *, cancel_event=None) -> None:
     """Convert a Piper chunk (including first-chunk silence) to native speaker PCM."""
     command = ["ffmpeg", "-y", "-i", str(input_path), "-af",
                f"volume={gain},alimiter=limit=0.98:level=false",
                "-ar", "48000", "-ac", "2", "-c:a", "pcm_s32le", str(output_path)]
     try:
-        result = subprocess.run(command, capture_output=True, timeout=60)
+        result = _run_audio_subprocess(command, timeout=60, cancel_event=cancel_event)
     except FileNotFoundError as exc:
         raise VoiceLoopError("Speaker conversion failed: ffmpeg was not found on PATH.") from exc
     except subprocess.TimeoutExpired as exc:
@@ -686,10 +892,10 @@ def prepare_alsa_playback(input_path: Path, output_path: Path, gain: float) -> N
         raise VoiceLoopError("Speaker conversion failed: ffmpeg produced no WAV file.")
 
 
-def play_audio_alsa(audio_path: Path, device: str) -> None:
+def play_audio_alsa(audio_path: Path, device: str, *, cancel_event=None) -> None:
     try:
-        result = subprocess.run(
-            ["aplay", "-D", device, str(audio_path)], capture_output=True, timeout=300
+        result = _run_audio_subprocess(
+            ["aplay", "-D", device, str(audio_path)], timeout=300, cancel_event=cancel_event,
         )
     except FileNotFoundError as exc:
         raise VoiceLoopError("Playback failed: aplay was not found on PATH.") from exc
@@ -863,43 +1069,18 @@ def _run_voice_cycle(config, conversation_id, display):
 
         _set_display_state(display, DisplayState.THINKING)
         try:
-            conversation, response_text, metadata, error = (
-                _timed_call(
-                    timings,
-                    "ai",
-                    AssistantService.process_message,
-                    transcript,
-                    conversation_id=conversation_id,
-                    response_plan=response_plan,
-                )
+            events = AssistantService.process_message_stream(
+                transcript, conversation_id=conversation_id, response_plan=response_plan,
             )
+            returned_id, metadata = speak_stream_response(
+                events, get_tts_provider(), temp_path, config, timings, cycle_started,
+                on_playback_start=lambda: _set_display_state(display, DisplayState.SPEAKING),
+            )
+        except VoiceLoopError:
+            raise
         except Exception as exc:
             raise VoiceLoopError(f"AI response failed: {exc}") from exc
-        if error or not response_text:
-            raise VoiceLoopError(f"AI response failed: {error or 'empty response.'}")
-        print(f"Assistant: {response_text}")
-
-        speech_chunks = prepare_speech_chunks(
-            response_text,
-            config.tts_chunk_chars,
-            config.tts_max_total_chars,
-        )
-        if not speech_chunks:
-            raise VoiceLoopError("TTS failed: AI response contained no speakable text.")
-        print(f"TTS chunks: {len(speech_chunks)}")
-        speak_speech_chunks(
-            speech_chunks,
-            get_tts_provider(),
-            temp_path,
-            config.leading_silence_seconds,
-            timings,
-            on_playback_start=lambda: _set_display_state(display, DisplayState.SPEAKING),
-            audio_config=config,
-        )
-
-        next_conversation_id = (
-            conversation.id if conversation is not None else conversation_id
-        )
+        next_conversation_id = returned_id if returned_id is not None else conversation_id
 
     timings["total"] = time.perf_counter() - cycle_started
     _print_timing_summary(timings)

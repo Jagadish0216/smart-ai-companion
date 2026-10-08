@@ -10,6 +10,7 @@ import wave
 from django.test import SimpleTestCase, override_settings
 
 from assistant.policy import AssistantResponsePolicy, ResponseMode
+from assistant.tests_voice_stream import stream_events
 from scripts.voice_loop import (
     VoiceLoopConfig,
     VoiceLoopError,
@@ -527,7 +528,7 @@ class VoiceLoopTests(SimpleTestCase):
         self.assertFalse(is_no_speech_transcription("Explain blank audio detection."))
         self.assertFalse(is_no_speech_transcription("Hello, can you hear me?"))
 
-    @patch("scripts.voice_loop.AssistantService.process_message")
+    @patch("scripts.voice_loop.AssistantService.process_message_stream")
     @patch("scripts.voice_loop.get_stt_provider")
     @patch("scripts.voice_loop.normalize_audio")
     @patch("scripts.voice_loop.record_audio")
@@ -550,7 +551,7 @@ class VoiceLoopTests(SimpleTestCase):
     @patch("scripts.voice_loop.normalize_audio")
     @patch("scripts.voice_loop.record_audio")
     @patch("scripts.voice_loop.record_audio_with_capture_vad")
-    @patch("scripts.voice_loop.AssistantService.process_message")
+    @patch("scripts.voice_loop.AssistantService.process_message_stream")
     @patch("scripts.voice_loop.get_tts_provider")
     @patch("scripts.voice_loop.get_stt_provider")
     def test_voice_cycle_reuses_existing_providers_and_service(
@@ -566,31 +567,12 @@ class VoiceLoopTests(SimpleTestCase):
     ):
         mock_get_stt.return_value.transcribe.return_value = "What time is it?"
         mock_get_tts.return_value.synthesize.return_value = _make_wav()
-        conversation = SimpleNamespace(id=42)
         original_response = "**It is test time.**\n- Details are `ready`."
-        mock_process_message.return_value = (
-            conversation,
-            original_response,
-            {"engine": "mock"},
-            None,
-        )
+        mock_process_message.return_value = stream_events(original_response, conversation_id=42, engine="mock")
         config = VoiceLoopConfig("bluez_input.test", 5, 0.7, 500)
         self.assertFalse(config.capture_vad_enabled)
 
-        clock_values = [
-            0.0,
-            0.0, 5.0,
-            5.0, 6.0,
-            6.0, 9.4,
-            9.4, 17.5,
-            17.5, 19.7,
-            19.7, 23.7,
-            23.9,
-        ]
-        with patch(
-            "scripts.voice_loop.time.perf_counter",
-            side_effect=clock_values,
-        ), patch("builtins.print") as mock_print:
+        with patch("builtins.print") as mock_print:
             conversation_id = run_voice_cycle(config, conversation_id=12)
 
         self.assertEqual(conversation_id, 42)
@@ -610,24 +592,22 @@ class VoiceLoopTests(SimpleTestCase):
         self.assertEqual(response_plan.mode, ResponseMode.NORMAL)
         self.assertIn("concise but sufficient", response_plan.system_instruction)
         self.assertIn("Do not use Markdown", response_plan.system_instruction)
-        mock_get_tts.return_value.synthesize.assert_called_once_with(
-            "It is test time. Details are ready."
-        )
-        self.assertEqual(mock_process_message.return_value[1], original_response)
+        self.assertEqual(mock_get_tts.return_value.synthesize.call_args_list,
+                         [call("It is test time."), call("Details are ready.")])
+        self.assertEqual(mock_process_message.return_value[-1]["response"], original_response)
         mock_print.assert_any_call(f"Assistant: {original_response}")
-        mock_print.assert_any_call(
-            "Timing: record=5.0s normalize=1.0s stt=3.4s ai=8.1s "
-            "tts=2.2s playback=4.0s total=23.9s"
-        )
+        summary = next(args[0] for args, _ in mock_print.call_args_list if args and str(args[0]).startswith("Timing:"))
+        for metric in ("record", "normalize", "stt", "ai", "ai_ttft", "first_speech", "ai_total", "tts", "playback", "total"):
+            self.assertIn(metric + "=", summary)
         mock_prepend.assert_called_once_with(_make_wav(), 0.7)
-        mock_play.assert_called_once()
+        self.assertEqual(mock_play.call_count, 2)
         self.assertFalse(Path(mock_play.call_args.args[0]).exists())
 
     @patch("scripts.voice_loop.play_audio")
     @patch("scripts.voice_loop.prepend_leading_silence")
     @patch("scripts.voice_loop.normalize_audio")
     @patch("scripts.voice_loop.record_audio")
-    @patch("scripts.voice_loop.AssistantService.process_message")
+    @patch("scripts.voice_loop.AssistantService.process_message_stream")
     @patch("scripts.voice_loop.get_tts_provider")
     @patch("scripts.voice_loop.get_stt_provider")
     def test_voice_cycle_synthesizes_and_plays_all_chunks_sequentially(
@@ -646,12 +626,7 @@ class VoiceLoopTests(SimpleTestCase):
             "Second sentence provides more context. "
             "Third sentence completes the explanation."
         )
-        mock_process_message.return_value = (
-            SimpleNamespace(id=7),
-            original_response,
-            {},
-            None,
-        )
+        mock_process_message.return_value = stream_events(original_response, conversation_id=7)
         wav_bytes = _make_wav()
         mock_get_tts.return_value.synthesize.return_value = wav_bytes
         mock_prepend.return_value = b"first chunk with silence"
@@ -675,13 +650,13 @@ class VoiceLoopTests(SimpleTestCase):
         )
         self.assertEqual(mock_play.call_count, 3)
         mock_prepend.assert_called_once_with(wav_bytes, 0.7)
-        self.assertEqual(mock_process_message.return_value[1], original_response)
+        self.assertEqual(mock_process_message.return_value[-1]["response"], original_response)
 
     @patch("scripts.voice_loop.play_audio")
     @patch("scripts.voice_loop.prepend_leading_silence", return_value=b"first")
     @patch("scripts.voice_loop.normalize_audio")
     @patch("scripts.voice_loop.record_audio")
-    @patch("scripts.voice_loop.AssistantService.process_message")
+    @patch("scripts.voice_loop.AssistantService.process_message_stream")
     @patch("scripts.voice_loop.get_tts_provider")
     @patch("scripts.voice_loop.get_stt_provider")
     def test_voice_cycle_reports_later_chunk_failure(
@@ -695,12 +670,8 @@ class VoiceLoopTests(SimpleTestCase):
         mock_play,
     ):
         mock_get_stt.return_value.transcribe.return_value = "Explain fully."
-        mock_process_message.return_value = (
-            SimpleNamespace(id=7),
-            "First complete sentence. Second complete sentence.",
-            {},
-            None,
-        )
+        mock_process_message.return_value = stream_events(
+            "First complete sentence. Second complete sentence.", conversation_id=7)
         mock_get_tts.return_value.synthesize.side_effect = [
             _make_wav(),
             RuntimeError("Piper stopped"),
@@ -709,7 +680,7 @@ class VoiceLoopTests(SimpleTestCase):
 
         with patch("builtins.print"), self.assertRaisesRegex(
             VoiceLoopError,
-            "TTS failed on chunk 2/2",
+            "TTS failed on streaming chunk 2",
         ):
             run_voice_cycle(config)
 
@@ -746,7 +717,7 @@ class VoiceLoopTests(SimpleTestCase):
             ("bluez_input.test", 1.25, 0.03, 0.9, 12, 6),
         )
 
-    @patch("scripts.voice_loop.AssistantService.process_message")
+    @patch("scripts.voice_loop.AssistantService.process_message_stream")
     @patch("scripts.voice_loop.get_stt_provider")
     @patch("scripts.voice_loop.normalize_audio")
     @patch("scripts.voice_loop.record_audio")
@@ -758,12 +729,7 @@ class VoiceLoopTests(SimpleTestCase):
         mock_process_message,
     ):
         mock_get_stt.return_value.transcribe.return_value = "Hello"
-        mock_process_message.return_value = (
-            SimpleNamespace(id=1),
-            None,
-            None,
-            "AI engine unavailable.",
-        )
+        mock_process_message.return_value = [{"type": "error", "detail": "AI engine unavailable."}]
 
         with self.assertRaisesRegex(VoiceLoopError, "AI response failed"):
             run_voice_cycle(VoiceLoopConfig("bluez_input.test"))

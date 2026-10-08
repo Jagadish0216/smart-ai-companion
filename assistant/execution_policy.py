@@ -6,10 +6,16 @@ from dataclasses import asdict, dataclass, replace
 from typing import Callable, Iterable
 
 from django.conf import settings
-
 from system.control_plane.network import get_internet_status
 from system.control_plane.resource_manager import get_resource_manager_report
 
+
+# Shared canonical generated-response notices; direct unavailability answers
+# remain meaningful user-facing responses and must not be filtered from speech.
+REDUCED_RESOURCE_STATUS = "Running in reduced-resource mode."
+CONSTRAINED_RESOURCE_STATUS = (
+    "System resources are constrained, so a lightweight response mode is active."
+)
 
 RESOURCE_PROFILES = {"PERFORMANCE", "BALANCED", "ECO", "PROTECTIVE"}
 GENERATION_BUDGETS = {"NORMAL", "REDUCED", "MINIMAL"}
@@ -122,7 +128,7 @@ def build_execution_plan(
     model_reason = "CONFIGURED_MODEL"
     status_message = None
     if profile == "ECO":
-        status_message = "Running in reduced-resource mode."
+        status_message = REDUCED_RESOURCE_STATUS
         if installed is not None and lightweight_model in installed:
             effective_model = lightweight_model
             model_reason = policy_reason or "RESOURCE_PRESSURE"
@@ -141,10 +147,7 @@ def build_execution_plan(
         elif installed is not None and lightweight_model in installed:
             effective_model = lightweight_model
             model_reason = policy_reason or "RESOURCE_PRESSURE"
-            status_message = (
-                "System resources are constrained, so a lightweight response "
-                "mode is active."
-            )
+            status_message = CONSTRAINED_RESOURCE_STATUS
         else:
             effective_model = None
             generation_allowed = False

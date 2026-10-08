@@ -268,14 +268,16 @@ class AlsaLifecycleTests(SimpleTestCase):
         self.mocks = {}
         for name in ("record_audio", "record_audio_alsa", "record_audio_with_capture_vad",
                      "normalize_audio", "get_stt_provider", "get_tts_provider",
-                     "AssistantService.process_message", "prepare_alsa_playback", "play_audio_alsa", "play_audio"):
+                     "AssistantService.process_message_stream", "prepare_alsa_playback", "play_audio_alsa", "play_audio"):
             patcher = patch("scripts.voice_loop." + name)
             self.mocks[name] = patcher.start()
             self.addCleanup(patcher.stop)
         self.mocks["get_stt_provider"].return_value.transcribe.return_value = "Explain local AI."
         self.mocks["get_tts_provider"].return_value.synthesize.return_value = piper_wav()
-        self.mocks["AssistantService.process_message"].return_value = (
-            SimpleNamespace(id=42), "First sentence. Second sentence.", {"resource_profile": "BALANCED"}, None)
+        text = "First sentence. Second sentence."
+        self.mocks["AssistantService.process_message_stream"].return_value = [
+            {"type": "start", "conversation_id": 42, "direct": False}, {"type": "delta", "text": text},
+            {"type": "done", "conversation_id": 42, "response": text, "resource_profile": "BALANCED"}]
         for operation, event in (("record_audio_alsa", "capture"), ("normalize_audio", "normalize"),
                                  ("prepare_alsa_playback", "convert"), ("play_audio_alsa", "play")):
             self.mocks[operation].side_effect = lambda *args, _event=event, **kwargs: self.events.append(_event)
@@ -297,7 +299,7 @@ class AlsaLifecycleTests(SimpleTestCase):
                                          self.mocks["play_audio_alsa"].call_args_list):
             self.assertEqual(conversion.args[2], 4)
             self.assertEqual(playback.args, (conversion.args[1], DEVICE))
-        self.assertEqual(self.mocks["AssistantService.process_message"].call_args.kwargs["conversation_id"], 12)
+        self.assertEqual(self.mocks["AssistantService.process_message_stream"].call_args.kwargs["conversation_id"], 12)
 
     def test_vad_cycle_selects_native_left_channel_backend(self):
         config = voice_loop.VoiceLoopConfig("", audio_backend="alsa", capture_vad_enabled=True)
@@ -350,7 +352,9 @@ class AlsaLifecycleTests(SimpleTestCase):
     def test_resource_idle_states_are_preserved(self):
         for profile in ("ECO", "PROTECTIVE"):
             with self.subTest(profile=profile):
-                self.mocks["AssistantService.process_message"].return_value = (
-                    SimpleNamespace(id=42), "A short answer.", {"resource_profile": profile}, None)
+                self.mocks["AssistantService.process_message_stream"].return_value = [
+                    {"type": "start", "conversation_id": 42, "direct": False},
+                    {"type": "delta", "text": "A short answer."},
+                    {"type": "done", "conversation_id": 42, "response": "A short answer.", "resource_profile": profile}]
                 self.cycle()
                 self.assertEqual(self.events[-1], profile)

@@ -8,6 +8,7 @@ using Piper.
 import logging
 import subprocess
 import os
+from .processes import AudioCancelledError, run_cancellable
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,11 @@ class TextToSpeechProvider:
         """
         raise NotImplementedError
 
+    def synthesize_cancellable(self, text, cancel_event):
+        if cancel_event.is_set():
+            raise TTSError("TTS synthesis cancelled.")
+        return self.synthesize(text)
+
 
 class PiperProvider(TextToSpeechProvider):
     """
@@ -44,6 +50,12 @@ class PiperProvider(TextToSpeechProvider):
         self.timeout = timeout
 
     def synthesize(self, text: str) -> bytes:
+        return self._synthesize(text)
+
+    def synthesize_cancellable(self, text, cancel_event):
+        return self._synthesize(text, cancel_event=cancel_event)
+
+    def _synthesize(self, text, cancel_event=None):
         if not text or not text.strip():
             raise TTSError("Cannot synthesize empty text.")
         if not os.path.exists(self.binary_path):
@@ -61,12 +73,14 @@ class PiperProvider(TextToSpeechProvider):
 
         try:
             # We pipe the text to stdin and read WAV from stdout
-            result = subprocess.run(
-                cmd,
-                input=text.encode("utf-8"),
-                capture_output=True,
-                timeout=self.timeout
-            )
+            if cancel_event is None:
+                result = subprocess.run(
+                    cmd, input=text.encode("utf-8"), capture_output=True, timeout=self.timeout,
+                )
+            else:
+                result = run_cancellable(
+                    cmd, input=text.encode("utf-8"), timeout=self.timeout, cancel_event=cancel_event,
+                )
 
             if result.returncode != 0:
                 logger.error("Piper TTS failed. stderr: %s", result.stderr.decode("utf-8", errors="ignore"))
@@ -79,6 +93,8 @@ class PiperProvider(TextToSpeechProvider):
 
             return wav_bytes
 
+        except AudioCancelledError as exc:
+            raise TTSError("TTS synthesis cancelled.") from exc
         except subprocess.TimeoutExpired as exc:
             logger.error("Piper TTS timed out after %s seconds.", self.timeout)
             raise TTSError("TTS synthesis timed out.") from exc

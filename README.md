@@ -421,8 +421,9 @@ Mock mode requires no external services and is useful for frontend development.
 | `VOICE_CAPTURE_VAD_MAX_SECONDS` | `10` | Maximum speech capture duration after speech starts |
 | `VOICE_CAPTURE_VAD_START_TIMEOUT_SECONDS` | `5` | Maximum time to wait for speech after `Speak now...` |
 | `VOICE_LEADING_SILENCE_SECONDS` | `0.7` | Digital silence on the first playback chunk only; set `0.5` for Pi I2S |
-| `VOICE_TTS_CHUNK_CHARS` | `300` | Approximate sentence-aware Piper chunk size |
-| `VOICE_TTS_MAX_TOTAL_CHARS` | `0` | Optional spoken-response safety limit; `0` speaks the full sanitized response |
+| `VOICE_STREAM_TTS_TARGET_CHARS` | `180` | Streaming fallback word-boundary target for unusually long sentences/unpunctuated text |
+| `VOICE_TTS_CHUNK_CHARS` | `300` | Legacy batch speech-helper chunk size; streaming uses the setting above |
+| `VOICE_TTS_MAX_TOTAL_CHARS` | `0` | Legacy batch speech-helper safety limit; streaming speaks the full answer without truncation |
 | `VOICE_LLM_BRIEF_NUM_PREDICT` | `96` | Request-scoped Ollama budget for brief voice responses |
 | `VOICE_LLM_NORMAL_NUM_PREDICT` | `160` | Request-scoped Ollama budget for normal voice responses |
 | `VOICE_LLM_DETAILED_NUM_PREDICT` | `384` | Request-scoped Ollama budget for detailed voice responses |
@@ -446,8 +447,8 @@ ALSA capture uses native 48 kHz stereo S32_LE, then FFmpeg explicitly selects LE
 ```bash
 arecord -D hw:CARD=sndrpigooglevoi,DEV=0 -c 2 -r 48000 -f S32_LE -t wav recorded.wav
 ffmpeg -y -i recorded.wav -af 'pan=mono|c0=FL' -ar 16000 -ac 1 -c:a pcm_s16le normalized.wav
-ffmpeg -y -i playback-001.wav -af 'volume=4.0,alimiter=limit=0.98:level=false' -ar 48000 -ac 2 -c:a pcm_s32le speaker-001.wav
-aplay -D hw:CARD=sndrpigooglevoi,DEV=0 speaker-001.wav
+ffmpeg -y -i stream-playback.wav -af 'volume=4.0,alimiter=limit=0.98:level=false' -ar 48000 -ac 2 -c:a pcm_s32le stream-speaker.wav
+aplay -D hw:CARD=sndrpigooglevoi,DEV=0 stream-speaker.wav
 ```
 
 The loop bounds fixed capture in Python (warm-up plus `VOICE_RECORD_SECONDS`, followed by terminate/kill and reap), rather than adding `-d` to `arecord`. Optional live capture uses the same native format with `-t raw`, computes RMS directly from signed 32-bit LEFT samples, and writes a native WAV for the same final normalization. No per-chunk FFmpeg process is used for VAD. A wall-clock watchdog also kills a stalled ALSA pipe; normal pre-roll, start timeout, silence stop, and maximum speech duration remain in effect.
@@ -487,6 +488,7 @@ VOICE_CAPTURE_VAD_MAX_SECONDS=10
 VOICE_CAPTURE_VAD_START_TIMEOUT_SECONDS=5
 VOICE_TTS_CHUNK_CHARS=300
 VOICE_TTS_MAX_TOTAL_CHARS=0
+VOICE_STREAM_TTS_TARGET_CHARS=180
 VOICE_LLM_BRIEF_NUM_PREDICT=96
 VOICE_LLM_NORMAL_NUM_PREDICT=160
 VOICE_LLM_DETAILED_NUM_PREDICT=384
@@ -502,7 +504,15 @@ Press Enter to record one cycle, wait for `Speak now...`, or type `q` and press 
 
 The voice loop applies the assistant response policy before generation. Brief requests stay direct, normal requests remain concise but sufficient, and explicit requests for detail, steps, examples, or comparisons can use the larger detailed budget and produce complete answers. Ambiguous commands ask for clarification. Recognized actions that require an unavailable sensor, device, camera, retrieval source, or scheduler are answered honestly instead of being presented as completed.
 
-The terminal and conversation retain the original AI response. The TTS copy has Markdown removed and is split at sentence boundaries into approximately `VOICE_TTS_CHUNK_CHARS` characters. All chunks are synthesized and played sequentially, so detailed answers are spoken in full by default. Set `VOICE_TTS_MAX_TOTAL_CHARS` to a nonzero value only when an explicit safety limit is needed; truncation then occurs at a complete sentence boundary. Real digital silence is prepended only to the first chunk, before ALSA conversion, never implemented as a playback sleep. The display changes to SPEAKING exactly once, after conversion and immediately before the first playback, so the face is visible during the 0.5-second Pi startup margin. The timing summary totals synthesis and playback across every chunk (including ALSA speaker conversion), and the loop also reports the number of TTS chunks. ALSA uses `arecord`, `ffmpeg`, and `aplay`; Pulse uses the existing `parecord`, `ffmpeg`, and `paplay` path. Missing tools, conversion failures, and playback failures report a voice-loop error and display ERROR; the next interaction starts at LISTENING. Wake-word detection is not implemented.
+The voice loop consumes `AssistantService.process_message_stream()` directly: `start` selects the conversation ID, `delta` feeds a sentence-aware speech buffer, `done` flushes the final unfinished sentence and supplies the canonical response/metadata, and `error` cancels audio and reports ERROR. Routing, grounding, memory, model selection, response budgets and persistence remain owned by the service; there is no additional AI call or browser endpoint change. The terminal and conversation retain the complete canonical response, including resource notices. Only known initial generated-response resource-status notices are omitted from the voice copy; direct resource-unavailability answers are still spoken.
+
+Completed sentences are released as they arrive, including closing quotes/brackets. A character of look-ahead keeps punctuation split across deltas together. Unusually long/unpunctuated text falls back to safe word boundaries near `VOICE_STREAM_TTS_TARGET_CHARS`. Markdown sanitization is reused, text order is preserved, and the remaining speakable text is flushed at `done`. Streaming does not truncate the answer; the old batch-helper chunk/total limits remain available to batch callers, not the streaming loop. Request/resource generation budgets still apply normally.
+
+The main thread consumes generation and performs service persistence. One audio worker sequentially synthesizes, converts, and plays each unit, with at most two queued text units plus the active one. Generation continues during playback, with backpressure when this small queue fills. No concurrent Piper jobs or per-token jobs are created. On a stream error, queued audio is discarded, active Piper/FFmpeg/aplay/paplay processes are cancelled and reaped, the service generator is closed, and the worker is joined before temporary files are removed. An audio failure is surfaced when the bounded service stream next yields or times out. The next interaction starts at LISTENING.
+
+Real digital silence is prepended only to the first chunk, before ALSA conversion, never implemented as a playback sleep. The display changes to SPEAKING exactly once, after conversion and immediately before the first playback, remains SPEAKING throughout the response, then returns to READY/ECO/PROTECTIVE after final playback. ALSA uses `arecord`, `ffmpeg`, and `aplay`; Pulse retains `parecord`, `ffmpeg`, and `paplay`. Wake-word detection is not implemented.
+
+Timing values are seconds, printed to millisecond precision. `record`, `normalize` and `stt` retain their stage durations. `ai_ttft` measures service-stream consumption start to the first actual answer delta (not a status notice). `ai_total` measures that same start to `done`, including service preparation and queue backpressure; `ai` remains an alias for compatibility. `first_speech` measures voice-cycle start through first playback launch, including capture/STT/AI/TTS/conversion/display setup and excluding the following digital silence. `tts` totals synthesis; `playback` totals speaker conversion and playback; `total` covers the full cycle. These stages overlap, so their sum is not the wall-clock total.
 
 ## Error Handling
 
@@ -521,7 +531,7 @@ python manage.py makemigrations --check
 python manage.py test
 ```
 
-The suite includes local knowledge chunking/ingestion/retrieval tests plus mocked Ollama, voice-provider, and standalone voice-loop coverage. Tests run without real Ollama, Whisper, Piper, PulseAudio services, or ALSA audio hardware. Focused voice/display tests: `python manage.py test assistant.tests_voice_loop assistant.tests_alsa_audio assistant.tests_display`. Run only the RAG coverage with:
+The suite includes local knowledge chunking/ingestion/retrieval tests plus mocked Ollama, voice-provider, and standalone voice-loop coverage. Tests run without real Ollama, Whisper, Piper, PulseAudio services, or ALSA audio hardware. Focused voice/display tests: `python manage.py test assistant.tests_voice_loop assistant.tests_voice_stream assistant.tests_alsa_audio assistant.tests_display assistant.tests_voice`. Run only the RAG coverage with:
 
 ```bash
 python manage.py test knowledge_base.tests knowledge_base.tests_rag

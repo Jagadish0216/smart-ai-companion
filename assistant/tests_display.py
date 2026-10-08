@@ -252,7 +252,7 @@ class DisplayVoiceLifecycleTests(SimpleTestCase):
         self.display.set_state.side_effect = lambda state: self.events.append(state.value)
         self.mocks = {}
         targets = ("record_audio", "record_audio_with_capture_vad", "normalize_audio", "get_stt_provider",
-                   "get_tts_provider", "AssistantService.process_message", "play_audio", "prepend_leading_silence")
+                   "get_tts_provider", "AssistantService.process_message_stream", "play_audio", "prepend_leading_silence")
         for name in targets:
             patcher = patch("scripts.voice_loop." + name)
             self.mocks[name] = patcher.start()
@@ -265,13 +265,16 @@ class DisplayVoiceLifecycleTests(SimpleTestCase):
         self.tts = self.mocks["get_tts_provider"].return_value
         self.tts.synthesize.side_effect = lambda *args: self.events.append("tts") or b"audio"
         self.mocks["prepend_leading_silence"].return_value = b"prepared audio"
-        self.mocks["play_audio"].side_effect = lambda *args: self.events.append("play")
+        self.mocks["play_audio"].side_effect = lambda *args, **kwargs: self.events.append("play")
         self.profile = "BALANCED"
-        self.mocks["AssistantService.process_message"].side_effect = self.generate
+        self.mocks["AssistantService.process_message_stream"].side_effect = self.generate
 
     def generate(self, *args, **kwargs):
         self.events.append("ai")
-        return SimpleNamespace(id=42), "First sentence. Second sentence. Third sentence.", {"resource_profile": self.profile}, None
+        text = "First sentence. Second sentence. Third sentence."
+        return [{"type": "start", "conversation_id": 42, "direct": False},
+                {"type": "delta", "text": text},
+                {"type": "done", "conversation_id": 42, "response": text, "resource_profile": self.profile}]
 
     def cycle(self, **kwargs):
         return voice_loop.run_voice_cycle(voice_loop.VoiceLoopConfig("source", tts_chunk_chars=17, **kwargs),
@@ -303,7 +306,7 @@ class DisplayVoiceLifecycleTests(SimpleTestCase):
 
     def test_voice_stage_failures_set_error_without_ready_overwrite(self):
         operations = [self.mocks["record_audio"], self.mocks["normalize_audio"], self.stt.transcribe,
-                      self.mocks["AssistantService.process_message"], self.tts.synthesize, self.mocks["play_audio"]]
+                      self.mocks["AssistantService.process_message_stream"], self.tts.synthesize, self.mocks["play_audio"]]
         for operation in operations:
             with self.subTest(operation=operation):
                 original = operation.side_effect
@@ -320,9 +323,9 @@ class DisplayVoiceLifecycleTests(SimpleTestCase):
         with self.assertRaises(voice_loop.VoiceLoopError):
             self.cycle()
         self.assertEqual(self.events[-1], "ERROR")
-        self.mocks["AssistantService.process_message"].assert_not_called()
+        self.mocks["AssistantService.process_message_stream"].assert_not_called()
         self.stt.transcribe.side_effect = lambda *args: "Explain local AI."
-        self.mocks["AssistantService.process_message"].side_effect = lambda *args, **kwargs: (None, None, None, "offline")
+        self.mocks["AssistantService.process_message_stream"].side_effect = lambda *args, **kwargs: [{"type": "error", "detail": "offline"}]
         with self.assertRaises(voice_loop.VoiceLoopError):
             self.cycle()
         self.assertEqual(self.events[-1], "ERROR")
