@@ -408,15 +408,19 @@ Mock mode requires no external services and is useful for frontend development.
 | `TTS_ENGINE` | `mock` | Text-to-Speech: `mock` or `piper` |
 | `TTS_PIPER_BIN` | `/opt/piper/piper` | Path to Piper binary |
 | `TTS_PIPER_VOICE` | `/opt/piper/en_US-lessac-medium.onnx` | Path to Piper ONNX model |
-| `VOICE_INPUT_SOURCE` | _(required)_ | PipeWire/PulseAudio microphone source used by the standalone voice loop |
+| `VOICE_AUDIO_BACKEND` | `pulse` | Standalone audio backend: `alsa` for Pi I2S, `pulse` for optional development audio |
+| `VOICE_ALSA_CAPTURE_DEVICE` | `hw:CARD=sndrpigooglevoi,DEV=0` | Stable named ALSA capture device (not a numeric card index) |
+| `VOICE_ALSA_PLAYBACK_DEVICE` | `hw:CARD=sndrpigooglevoi,DEV=0` | Stable named ALSA speaker device |
+| `VOICE_PLAYBACK_GAIN` | `4.0` | Positive, finite ALSA speaker gain before a 0.98 limiter |
+| `VOICE_INPUT_SOURCE` | _(required for pulse only)_ | PipeWire/PulseAudio microphone source used by the standalone voice loop |
 | `VOICE_RECORD_SECONDS` | `5` | Speech window after microphone warm-up for each standalone voice cycle |
-| `VOICE_INPUT_WARMUP_SECONDS` | `1.0` | Delay after opening the Bluetooth microphone before prompting the user to speak |
+| `VOICE_INPUT_WARMUP_SECONDS` | `1.0` | Delay after opening the microphone before prompting the user to speak |
 | `VOICE_CAPTURE_VAD_ENABLED` | `false` | Enable speech-driven capture using a lightweight live RMS gate |
 | `VOICE_CAPTURE_VAD_START_THRESHOLD` | `0.02` | Normalized PCM RMS level (0–1) that starts speech capture |
 | `VOICE_CAPTURE_VAD_SILENCE_SECONDS` | `0.8` | Trailing silence that ends speech-driven capture |
 | `VOICE_CAPTURE_VAD_MAX_SECONDS` | `10` | Maximum speech capture duration after speech starts |
 | `VOICE_CAPTURE_VAD_START_TIMEOUT_SECONDS` | `5` | Maximum time to wait for speech after `Speak now...` |
-| `VOICE_LEADING_SILENCE_SECONDS` | `0.7` | Silence prepended before Bluetooth playback |
+| `VOICE_LEADING_SILENCE_SECONDS` | `0.7` | Digital silence on the first playback chunk only; set `0.5` for Pi I2S |
 | `VOICE_TTS_CHUNK_CHARS` | `300` | Approximate sentence-aware Piper chunk size |
 | `VOICE_TTS_MAX_TOTAL_CHARS` | `0` | Optional spoken-response safety limit; `0` speaks the full sanitized response |
 | `VOICE_LLM_BRIEF_NUM_PREDICT` | `96` | Request-scoped Ollama budget for brief voice responses |
@@ -425,7 +429,28 @@ Mock mode requires no external services and is useful for frontend development.
 
 ## Standalone Raspberry Pi Voice Loop
 
-The standalone loop reuses the configured Whisper, AI engine, and Piper providers. It records from a named PipeWire/PulseAudio source and plays through the current default sink; it does not change the browser voice API.
+The standalone loop reuses the configured Whisper, AI engine, and Piper providers; it does not change the browser voice API. Raspberry Pi production audio uses the INMP441 microphone and MAX98357A speaker amplifier directly through ALSA. PulseAudio/PipeWire (including Bluetooth earbuds) remains an optional development backend and the default for backwards compatibility.
+
+For the verified Pi 5 I2S setup (`dtparam=i2s=on`, `dtoverlay=googlevoicehat-soundcard`), install `alsa-utils` and `ffmpeg` if needed. The INMP441 L/R pin is grounded, so only LEFT contains microphone audio. Use these deployment values in `.env`:
+
+```env
+VOICE_AUDIO_BACKEND=alsa
+VOICE_ALSA_CAPTURE_DEVICE=hw:CARD=sndrpigooglevoi,DEV=0
+VOICE_ALSA_PLAYBACK_DEVICE=hw:CARD=sndrpigooglevoi,DEV=0
+VOICE_PLAYBACK_GAIN=4.0
+VOICE_LEADING_SILENCE_SECONDS=0.5
+```
+
+ALSA capture uses native 48 kHz stereo S32_LE, then FFmpeg explicitly selects LEFT with `pan=mono|c0=FL` and produces mono 16 kHz `pcm_s16le` for Whisper. It does not average the silent RIGHT channel into speech. Each Piper chunk is converted to 48 kHz stereo `pcm_s32le` with `volume=4.0,alimiter=limit=0.98:level=false` (the gain is configurable), then played on the named ALSA device. Numeric card indices are intentionally not used. The commands are:
+
+```bash
+arecord -D hw:CARD=sndrpigooglevoi,DEV=0 -c 2 -r 48000 -f S32_LE -t wav recorded.wav
+ffmpeg -y -i recorded.wav -af 'pan=mono|c0=FL' -ar 16000 -ac 1 -c:a pcm_s16le normalized.wav
+ffmpeg -y -i playback-001.wav -af 'volume=4.0,alimiter=limit=0.98:level=false' -ar 48000 -ac 2 -c:a pcm_s32le speaker-001.wav
+aplay -D hw:CARD=sndrpigooglevoi,DEV=0 speaker-001.wav
+```
+
+The loop bounds fixed capture in Python (warm-up plus `VOICE_RECORD_SECONDS`, followed by terminate/kill and reap), rather than adding `-d` to `arecord`. Optional live capture uses the same native format with `-t raw`, computes RMS directly from signed 32-bit LEFT samples, and writes a native WAV for the same final normalization. No per-chunk FFmpeg process is used for VAD. A wall-clock watchdog also kills a stalled ALSA pipe; normal pre-roll, start timeout, silence stop, and maximum speech duration remain in effect.
 
 Optional Silero VAD runs inside whisper.cpp after the fixed-duration recording. To enable it, set `STT_VAD_ENABLED=true` and copy the exact Silero model path on the Pi into `STT_VAD_MODEL`; leave it disabled to preserve the original Whisper command and behavior.
 
@@ -438,14 +463,21 @@ STT_VAD_MIN_SILENCE_MS=700
 STT_VAD_SPEECH_PAD_MS=100
 ```
 
-Find the Realme Buds microphone source and add it to `.env`:
+For optional Pulse development audio only, find the microphone source and add it to `.env`:
 
 ```bash
 pactl list short sources
 ```
 
 ```env
+VOICE_AUDIO_BACKEND=pulse
 VOICE_INPUT_SOURCE=
+VOICE_LEADING_SILENCE_SECONDS=0.7
+```
+
+Copy the exact source returned by `pactl list short sources` into `VOICE_INPUT_SOURCE`. ALSA does not require that setting. Shared voice-loop tuning (keep the Pi's `0.5` silence setting above):
+
+```env
 VOICE_RECORD_SECONDS=5
 VOICE_INPUT_WARMUP_SECONDS=1.0
 VOICE_CAPTURE_VAD_ENABLED=false
@@ -453,7 +485,6 @@ VOICE_CAPTURE_VAD_START_THRESHOLD=0.02
 VOICE_CAPTURE_VAD_SILENCE_SECONDS=0.8
 VOICE_CAPTURE_VAD_MAX_SECONDS=10
 VOICE_CAPTURE_VAD_START_TIMEOUT_SECONDS=5
-VOICE_LEADING_SILENCE_SECONDS=0.7
 VOICE_TTS_CHUNK_CHARS=300
 VOICE_TTS_MAX_TOTAL_CHARS=0
 VOICE_LLM_BRIEF_NUM_PREDICT=96
@@ -461,7 +492,7 @@ VOICE_LLM_NORMAL_NUM_PREDICT=160
 VOICE_LLM_DETAILED_NUM_PREDICT=384
 ```
 
-Copy the exact source returned by `pactl list short sources` into `VOICE_INPUT_SOURCE`, then run:
+With the chosen backend configured, run:
 
 ```bash
 python scripts/voice_loop.py
@@ -471,7 +502,7 @@ Press Enter to record one cycle, wait for `Speak now...`, or type `q` and press 
 
 The voice loop applies the assistant response policy before generation. Brief requests stay direct, normal requests remain concise but sufficient, and explicit requests for detail, steps, examples, or comparisons can use the larger detailed budget and produce complete answers. Ambiguous commands ask for clarification. Recognized actions that require an unavailable sensor, device, camera, retrieval source, or scheduler are answered honestly instead of being presented as completed.
 
-The terminal and conversation retain the original AI response. The TTS copy has Markdown removed and is split at sentence boundaries into approximately `VOICE_TTS_CHUNK_CHARS` characters. All chunks are synthesized and played sequentially, so detailed answers are spoken in full by default. Set `VOICE_TTS_MAX_TOTAL_CHARS` to a nonzero value only when an explicit safety limit is needed; truncation then occurs at a complete sentence boundary. Bluetooth leading silence is applied only to the first chunk. The timing summary totals synthesis and playback across every chunk, and the loop also reports the number of TTS chunks. The loop uses `parecord`, `ffmpeg`, and `paplay`; wake-word detection is not implemented.
+The terminal and conversation retain the original AI response. The TTS copy has Markdown removed and is split at sentence boundaries into approximately `VOICE_TTS_CHUNK_CHARS` characters. All chunks are synthesized and played sequentially, so detailed answers are spoken in full by default. Set `VOICE_TTS_MAX_TOTAL_CHARS` to a nonzero value only when an explicit safety limit is needed; truncation then occurs at a complete sentence boundary. Real digital silence is prepended only to the first chunk, before ALSA conversion, never implemented as a playback sleep. The display changes to SPEAKING exactly once, after conversion and immediately before the first playback, so the face is visible during the 0.5-second Pi startup margin. The timing summary totals synthesis and playback across every chunk (including ALSA speaker conversion), and the loop also reports the number of TTS chunks. ALSA uses `arecord`, `ffmpeg`, and `aplay`; Pulse uses the existing `parecord`, `ffmpeg`, and `paplay` path. Missing tools, conversion failures, and playback failures report a voice-loop error and display ERROR; the next interaction starts at LISTENING. Wake-word detection is not implemented.
 
 ## Error Handling
 
@@ -490,7 +521,7 @@ python manage.py makemigrations --check
 python manage.py test
 ```
 
-The suite includes local knowledge chunking/ingestion/retrieval tests plus mocked Ollama, voice-provider, and standalone voice-loop coverage. Tests run without real Ollama, Whisper, Piper, or PulseAudio services. Run only the RAG coverage with:
+The suite includes local knowledge chunking/ingestion/retrieval tests plus mocked Ollama, voice-provider, and standalone voice-loop coverage. Tests run without real Ollama, Whisper, Piper, PulseAudio services, or ALSA audio hardware. Focused voice/display tests: `python manage.py test assistant.tests_voice_loop assistant.tests_alsa_audio assistant.tests_display`. Run only the RAG coverage with:
 
 ```bash
 python manage.py test knowledge_base.tests knowledge_base.tests_rag

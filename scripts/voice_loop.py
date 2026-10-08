@@ -16,6 +16,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from threading import Timer
 import time
 from typing import Callable
 import wave
@@ -42,6 +43,9 @@ CAPTURE_SAMPLE_RATE = 16000
 CAPTURE_SAMPLE_WIDTH = 2
 CAPTURE_CHUNK_SECONDS = 0.02
 CAPTURE_PREROLL_SECONDS = 0.3
+ALSA_SAMPLE_RATE = 48000
+ALSA_SAMPLE_WIDTH = 4
+ALSA_CHANNELS = 2
 logger = logging.getLogger(__name__)
 
 
@@ -71,6 +75,10 @@ class VoiceLoopConfig:
     capture_vad_silence_seconds: float = 0.8
     capture_vad_max_seconds: float = 10.0
     capture_vad_start_timeout_seconds: float = 5.0
+    audio_backend: str = "pulse"
+    alsa_capture_device: str = "hw:CARD=sndrpigooglevoi,DEV=0"
+    alsa_playback_device: str = "hw:CARD=sndrpigooglevoi,DEV=0"
+    playback_gain: float = 4.0
 
     @classmethod
     def from_settings(cls) -> "VoiceLoopConfig":
@@ -102,12 +110,35 @@ class VoiceLoopConfig:
             capture_vad_start_timeout_seconds=float(
                 getattr(settings, "VOICE_CAPTURE_VAD_START_TIMEOUT_SECONDS", 5)
             ),
+            audio_backend=str(getattr(settings, "VOICE_AUDIO_BACKEND", "pulse")).strip().lower(),
+            alsa_capture_device=str(
+                getattr(settings, "VOICE_ALSA_CAPTURE_DEVICE", "hw:CARD=sndrpigooglevoi,DEV=0")
+            ).strip(),
+            alsa_playback_device=str(
+                getattr(settings, "VOICE_ALSA_PLAYBACK_DEVICE", "hw:CARD=sndrpigooglevoi,DEV=0")
+            ).strip(),
+            playback_gain=float(getattr(settings, "VOICE_PLAYBACK_GAIN", 4.0)),
         )
         config.validate()
         return config
 
     def validate(self) -> None:
-        if not self.input_source:
+        if self.audio_backend not in {"pulse", "alsa"}:
+            raise VoiceLoopError("VOICE_AUDIO_BACKEND must be pulse or alsa.")
+        if self.audio_backend == "alsa" and (
+            not self.alsa_capture_device or not self.alsa_playback_device
+        ):
+            raise VoiceLoopError("ALSA capture and playback devices must be configured.")
+        if not math.isfinite(self.playback_gain) or self.playback_gain <= 0:
+            raise VoiceLoopError("VOICE_PLAYBACK_GAIN must be finite and greater than zero.")
+        for name in (
+            "record_seconds", "leading_silence_seconds", "input_warmup_seconds",
+            "capture_vad_start_threshold", "capture_vad_silence_seconds",
+            "capture_vad_max_seconds", "capture_vad_start_timeout_seconds",
+        ):
+            if not math.isfinite(getattr(self, name)):
+                raise VoiceLoopError(f"Voice setting {name} must be finite.")
+        if self.audio_backend == "pulse" and not self.input_source:
             raise VoiceLoopError(
                 "VOICE_INPUT_SOURCE is not configured. Use 'pactl list short sources' "
                 "to find the PipeWire/PulseAudio source name."
@@ -184,6 +215,23 @@ def record_audio(
         "--file-format=wav",
         str(output_path),
     ]
+    _record_audio_command(command, output_path, duration_seconds, warmup_seconds)
+
+
+def record_audio_alsa(
+    output_path: Path, device: str, duration_seconds: float,
+    warmup_seconds: float = 1.0,
+) -> None:
+    """Capture the native INMP441 stereo S32_LE format without channel mixing."""
+    command = ["arecord", "-D", device, "-c", "2", "-r", "48000", "-f", "S32_LE",
+               "-t", "wav", str(output_path)]
+    _record_audio_command(command, output_path, duration_seconds, warmup_seconds)
+
+
+def _record_audio_command(
+    command: list[str], output_path: Path, duration_seconds: float, warmup_seconds: float,
+) -> None:
+    binary = command[0]
 
     try:
         process = subprocess.Popen(
@@ -193,7 +241,7 @@ def record_audio(
         )
     except FileNotFoundError as exc:
         raise VoiceLoopError(
-            "Recording failed: parecord was not found on PATH."
+            f"Recording failed: {binary} was not found on PATH."
         ) from exc
     except OSError as exc:
         raise VoiceLoopError(f"Recording failed: {exc}") from exc
@@ -223,12 +271,12 @@ def record_audio(
         if process.returncode != 0:
             detail = _stderr_text(stderr)
             raise VoiceLoopError(
-                f"Recording failed (parecord exit {process.returncode})"
+                f"Recording failed ({binary} exit {process.returncode})"
                 + (f": {detail}" if detail else ".")
             )
 
     if not output_path.exists() or output_path.stat().st_size == 0:
-        raise VoiceLoopError("Recording failed: parecord produced no audio file.")
+        raise VoiceLoopError(f"Recording failed: {binary} produced no audio file.")
 
 
 def _normalized_pcm_rms(chunk: bytes) -> float:
@@ -242,6 +290,16 @@ def _normalized_pcm_rms(chunk: bytes) -> float:
     return math.sqrt(square_sum / sample_count) / 32768.0
 
 
+def _normalized_alsa_left_rms(chunk: bytes) -> float:
+    """Normalize signed 32-bit LEFT samples; the silent/right channel is ignored."""
+    frame_bytes = ALSA_SAMPLE_WIDTH * ALSA_CHANNELS
+    length = len(chunk) - len(chunk) % frame_bytes
+    if not length:
+        return 0.0
+    squares = sum(left * left for left, _right in struct.iter_unpack("<ii", chunk[:length]))
+    return math.sqrt(squares / (length // frame_bytes)) / 2147483648.0
+
+
 def record_audio_with_capture_vad(
     output_path: Path,
     source: str,
@@ -250,8 +308,10 @@ def record_audio_with_capture_vad(
     silence_seconds: float,
     max_seconds: float,
     start_timeout_seconds: float,
+    *, backend: str = "pulse",
 ) -> None:
     """Record raw PCM until speech ends, retaining a short pre-roll buffer."""
+    sample_rate, sample_width, channels = CAPTURE_SAMPLE_RATE, CAPTURE_SAMPLE_WIDTH, 1
     command = [
         "parecord",
         f"--device={source}",
@@ -260,6 +320,12 @@ def record_audio_with_capture_vad(
         f"--rate={CAPTURE_SAMPLE_RATE}",
         "--channels=1",
     ]
+    if backend == "alsa":
+        sample_rate, sample_width, channels = ALSA_SAMPLE_RATE, ALSA_SAMPLE_WIDTH, ALSA_CHANNELS
+        command = ["arecord", "-D", source, "-c", "2", "-r", "48000", "-f", "S32_LE", "-t", "raw"]
+    elif backend != "pulse":
+        raise VoiceLoopError("Unsupported capture audio backend.")
+    binary = command[0]
     try:
         process = subprocess.Popen(
             command,
@@ -268,14 +334,14 @@ def record_audio_with_capture_vad(
         )
     except FileNotFoundError as exc:
         raise VoiceLoopError(
-            "Recording failed: parecord was not found on PATH."
+            f"Recording failed: {binary} was not found on PATH."
         ) from exc
     except OSError as exc:
         raise VoiceLoopError(f"Recording failed: {exc}") from exc
 
     chunk_bytes = round(
-        CAPTURE_SAMPLE_RATE
-        * CAPTURE_SAMPLE_WIDTH
+        sample_rate
+        * sample_width * channels
         * CAPTURE_CHUNK_SECONDS
     )
     preroll_chunks = max(
@@ -288,23 +354,43 @@ def record_audio_with_capture_vad(
     capture_elapsed = 0.0
     silence_elapsed = 0.0
     speech_started = False
+    watchdog = None
+    if backend == "alsa":
+        # A stalled arecord pipe must not block forever waiting for PCM. Killing
+        # closes stdout; the main thread performs the normal terminate/reap path.
+        def stop_stalled_capture():
+            try:
+                process.kill()
+            except OSError:
+                pass
+        watchdog = Timer(
+            warmup_seconds + start_timeout_seconds + max_seconds + 1.0,
+            stop_stalled_capture,
+        )
+        watchdog.daemon = True
 
     try:
+        if watchdog is not None:
+            watchdog.start()
         time.sleep(warmup_seconds)
         print("Speak now...")
         if process.stdout is None:
-            raise VoiceLoopError("Recording failed: parecord audio stream is unavailable.")
+            raise VoiceLoopError(f"Recording failed: {binary} audio stream is unavailable.")
 
         while True:
             chunk = process.stdout.read(chunk_bytes)
             if not chunk:
                 raise VoiceLoopError(
-                    "Recording failed: parecord stopped before capture completed."
+                    f"Recording failed: {binary} stopped before capture completed or timed out."
                 )
             chunk_duration = (
-                len(chunk) / CAPTURE_SAMPLE_WIDTH / CAPTURE_SAMPLE_RATE
+                len(chunk) / (sample_width * channels) / sample_rate
             )
-            has_speech = _normalized_pcm_rms(chunk) >= start_threshold
+            rms = (
+                _normalized_alsa_left_rms(chunk)
+                if backend == "alsa" else _normalized_pcm_rms(chunk)
+            )
+            has_speech = rms >= start_threshold
 
             if not speech_started:
                 preroll.append(chunk)
@@ -354,31 +440,35 @@ def record_audio_with_capture_vad(
             _terminate_and_reap(process)
         except Exception as exc:
             raise VoiceLoopError(f"Recording cleanup failed: {exc}") from exc
+    finally:
+        if watchdog is not None:
+            watchdog.cancel()
 
     try:
         with wave.open(str(output_path), "wb") as wav_file:
-            wav_file.setnchannels(1)
-            wav_file.setsampwidth(CAPTURE_SAMPLE_WIDTH)
-            wav_file.setframerate(CAPTURE_SAMPLE_RATE)
+            wav_file.setnchannels(channels)
+            wav_file.setsampwidth(sample_width)
+            wav_file.setframerate(sample_rate)
             wav_file.writeframes(b"".join(frames))
     except (OSError, wave.Error) as exc:
         raise VoiceLoopError(f"Recording failed: could not save WAV ({exc}).") from exc
 
     if not output_path.exists() or output_path.stat().st_size == 0:
-        raise VoiceLoopError("Recording failed: parecord produced no audio file.")
+        raise VoiceLoopError(f"Recording failed: {binary} produced no audio file.")
     captured_audio_seconds = sum(len(frame) for frame in frames) / (
-        CAPTURE_SAMPLE_RATE * CAPTURE_SAMPLE_WIDTH
+        sample_rate * sample_width * channels
     )
     print(f"Capture complete: {captured_audio_seconds:.1f}s audio.")
 
 
-def normalize_audio(input_path: Path, output_path: Path) -> None:
+def normalize_audio(input_path: Path, output_path: Path, *, left_channel: bool = False) -> None:
     """Convert the recording to the mono 16 kHz PCM format whisper.cpp expects."""
     command = [
         "ffmpeg",
         "-y",
         "-i",
         str(input_path),
+        *(["-af", "pan=mono|c0=FL"] if left_channel else []),
         "-ar",
         "16000",
         "-ac",
@@ -575,6 +665,42 @@ def play_audio(audio_path: Path) -> None:
         )
 
 
+def prepare_alsa_playback(input_path: Path, output_path: Path, gain: float) -> None:
+    """Convert a Piper chunk (including first-chunk silence) to native speaker PCM."""
+    command = ["ffmpeg", "-y", "-i", str(input_path), "-af",
+               f"volume={gain},alimiter=limit=0.98:level=false",
+               "-ar", "48000", "-ac", "2", "-c:a", "pcm_s32le", str(output_path)]
+    try:
+        result = subprocess.run(command, capture_output=True, timeout=60)
+    except FileNotFoundError as exc:
+        raise VoiceLoopError("Speaker conversion failed: ffmpeg was not found on PATH.") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise VoiceLoopError("Speaker conversion failed: ffmpeg timed out.") from exc
+    except OSError as exc:
+        raise VoiceLoopError(f"Speaker conversion failed: {exc}") from exc
+    if result.returncode != 0:
+        raise VoiceLoopError(
+            f"Speaker conversion failed (ffmpeg exit {result.returncode}): {_stderr_text(result.stderr)}"
+        )
+    if not output_path.exists() or output_path.stat().st_size == 0:
+        raise VoiceLoopError("Speaker conversion failed: ffmpeg produced no WAV file.")
+
+
+def play_audio_alsa(audio_path: Path, device: str) -> None:
+    try:
+        result = subprocess.run(
+            ["aplay", "-D", device, str(audio_path)], capture_output=True, timeout=300
+        )
+    except FileNotFoundError as exc:
+        raise VoiceLoopError("Playback failed: aplay was not found on PATH.") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise VoiceLoopError("Playback failed: aplay timed out.") from exc
+    except OSError as exc:
+        raise VoiceLoopError(f"Playback failed: {exc}") from exc
+    if result.returncode != 0:
+        raise VoiceLoopError(f"Playback failed (aplay exit {result.returncode}): {_stderr_text(result.stderr)}")
+
+
 def speak_speech_chunks(
     speech_chunks: list[str],
     tts_provider,
@@ -582,6 +708,7 @@ def speak_speech_chunks(
     leading_silence_seconds: float,
     timings: dict[str, float],
     on_playback_start: Callable[[], None] | None = None,
+    *, audio_config: VoiceLoopConfig | None = None,
 ) -> None:
     """Pipeline one future synthesis while playing the current chunk."""
     chunk_count = len(speech_chunks)
@@ -626,12 +753,22 @@ def speak_speech_chunks(
                     f"could not save playback WAV ({exc})."
                 ) from exc
             try:
+                playback_operation = play_audio
+                playback_args = (playback_path,)
+                if audio_config is not None and audio_config.audio_backend == "alsa":
+                    speaker_path = temp_path / f"speaker-{chunk_number:03d}.wav"
+                    _timed_call(
+                        timings, "playback", prepare_alsa_playback, playback_path,
+                        speaker_path, audio_config.playback_gain,
+                    )
+                    playback_operation = play_audio_alsa
+                    playback_args = (speaker_path, audio_config.alsa_playback_device)
                 if chunk_number == 1 and on_playback_start is not None:
                     try:
                         on_playback_start()
                     except Exception:
                         logger.warning("Companion display playback update failed; audio continues")
-                _timed_call(timings, "playback", play_audio, playback_path)
+                _timed_call(timings, "playback", playback_operation, *playback_args)
             except Exception as exc:
                 raise VoiceLoopError(
                     f"Playback failed on chunk {chunk_number}/{chunk_count}: {exc}"
@@ -668,6 +805,7 @@ def _run_voice_cycle(config, conversation_id, display):
         normalized_path = temp_path / "normalized.wav"
 
         _set_display_state(display, DisplayState.LISTENING)
+        source = config.alsa_capture_device if config.audio_backend == "alsa" else config.input_source
         if config.capture_vad_enabled:
             print(
                 f"Preparing microphone ({config.input_warmup_seconds:g}s warm-up, "
@@ -678,12 +816,13 @@ def _run_voice_cycle(config, conversation_id, display):
                 "record",
                 record_audio_with_capture_vad,
                 recorded_path,
-                config.input_source,
+                source,
                 config.input_warmup_seconds,
                 config.capture_vad_start_threshold,
                 config.capture_vad_silence_seconds,
                 config.capture_vad_max_seconds,
                 config.capture_vad_start_timeout_seconds,
+                **({"backend": "alsa"} if config.audio_backend == "alsa" else {}),
             )
         else:
             print(
@@ -693,9 +832,9 @@ def _run_voice_cycle(config, conversation_id, display):
             _timed_call(
                 timings,
                 "record",
-                record_audio,
+                record_audio_alsa if config.audio_backend == "alsa" else record_audio,
                 recorded_path,
-                config.input_source,
+                source,
                 config.record_seconds,
                 config.input_warmup_seconds,
             )
@@ -705,6 +844,7 @@ def _run_voice_cycle(config, conversation_id, display):
             normalize_audio,
             recorded_path,
             normalized_path,
+            **({"left_channel": True} if config.audio_backend == "alsa" else {}),
         )
 
         try:
@@ -754,6 +894,7 @@ def _run_voice_cycle(config, conversation_id, display):
             config.leading_silence_seconds,
             timings,
             on_playback_start=lambda: _set_display_state(display, DisplayState.SPEAKING),
+            audio_config=config,
         )
 
         next_conversation_id = (
@@ -776,7 +917,8 @@ def main() -> int:
         return 1
 
     print("Smart AI Companion voice loop")
-    print(f"Input source: {config.input_source}")
+    print(f"Audio backend: {config.audio_backend}")
+    print(f"Input source: {config.alsa_capture_device if config.audio_backend == 'alsa' else config.input_source}")
     print("Press Enter to record, or type q and press Enter to quit.")
     conversation_id = None
     display = get_companion_display()
