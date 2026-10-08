@@ -17,7 +17,7 @@ from queue import Empty, Full, Queue
 import subprocess
 import sys
 import tempfile
-from threading import Event, Timer
+from threading import Event, Lock, Timer
 import time
 from typing import Callable
 import wave
@@ -672,32 +672,110 @@ class StreamingSpeechBuffer:
         return units
 
 
+class LeadingResourceNoticeFilter:
+    """Presentation-only removal of repeated, exact notices at the answer start.
+
+    Model-generated repeats may span deltas. Hold only a possible leading
+    notice until it is recognized or disproved; never delete interior text.
+    """
+
+    def __init__(self):
+        self.pending = ""
+        self.leading = True
+        self.removed_notice = False
+
+    def feed(self, text, *, final=False):
+        if not self.leading:
+            return text, []
+        self.pending += text
+        notices = []
+        prefixes = (REDUCED_RESOURCE_STATUS, CONSTRAINED_RESOURCE_STATUS)
+        while True:
+            candidate = self.pending.lstrip()
+            for prefix in prefixes:
+                if candidate.startswith(prefix):
+                    suffix = candidate[len(prefix):]
+                    if (suffix and suffix[0].isspace()) or (not suffix and final):
+                        self.pending = suffix
+                        self.removed_notice = True
+                        notices.append(prefix)
+                        break
+            else:
+                if not final and (not candidate or any(prefix.startswith(candidate) for prefix in prefixes)):
+                    return "", notices
+                answer = self.pending.lstrip() if self.removed_notice else self.pending
+                self.pending = ""
+                self.leading = False
+                return answer, notices
+
+
+@dataclass(frozen=True)
+class PreparedAudio:
+    number: int
+    path: Path
+
+
 def speak_stream_response(events, tts_provider, temp_path, config, timings, cycle_started,
                           on_playback_start=None):
-    """Consume service events on the caller thread; one bounded audio worker.
-
-    The service retains ownership of routing, budgets, canonical text and DB
-    persistence. Only this voice copy omits a known initial resource notice.
-    """
+    """Service producer -> bounded text -> one preparer -> bounded audio -> one player."""
     pending = Queue(maxsize=2)
+    ready_audio = Queue(maxsize=2)
     stopped = Event()
     finish = object()
     errors = []
+    error_lock = Lock()
     spoken_count = 0
     stream_started = time.perf_counter()
     buffer = StreamingSpeechBuffer(config.stream_tts_target_chars)
+    notice_filter = LeadingResourceNoticeFilter()
+    printed_notices = set()
+    terminal_open = False
 
-    def audio_worker():
-        nonlocal spoken_count
+    def fail(exc):
+        with error_lock:
+            if not stopped.is_set():
+                errors.append(exc if isinstance(exc, VoiceLoopError) else VoiceLoopError(f"Streaming audio failed: {exc}"))
+            stopped.set()
+
+    def enqueue(queue, unit):
+        while not stopped.is_set():
+            try:
+                queue.put(unit, timeout=0.05)
+                return
+            except Full:
+                pass
+        raise errors[0] if errors else VoiceLoopError("Voice stream cancelled.")
+
+    def receive(queue):
+        while not stopped.is_set():
+            try:
+                return queue.get(timeout=0.05)
+            except Empty:
+                pass
+        return finish
+
+    def prepare_audio(audio, number):
+        if number == 1:
+            audio = prepend_leading_silence(audio, config.leading_silence_seconds)
+        playback_path = temp_path / f"stream-playback-{number:03d}.wav"
+        playback_path.write_bytes(audio)
+        if config.audio_backend == "alsa":
+            speaker_path = temp_path / f"stream-speaker-{number:03d}.wav"
+            prepare_alsa_playback(playback_path, speaker_path, config.playback_gain, cancel_event=stopped)
+            playback_path = speaker_path
+        return PreparedAudio(number, playback_path)
+
+    def preparation_worker():
+        number = 0
         try:
             while not stopped.is_set():
-                try:
-                    text = pending.get(timeout=0.05)
-                except Empty:
-                    continue
-                if text is finish or stopped.is_set():
+                text = receive(pending)
+                if stopped.is_set():
                     return
-                number = spoken_count + 1
+                if text is finish:
+                    enqueue(ready_audio, finish)
+                    return
+                number += 1
                 try:
                     synthesize = (
                         tts_provider.synthesize_cancellable
@@ -709,48 +787,74 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                     raise VoiceLoopError(f"TTS failed on streaming chunk {number}: {exc}") from exc
                 if stopped.is_set():
                     return
-                if number == 1:
-                    audio = prepend_leading_silence(audio, config.leading_silence_seconds)
-                playback_path = temp_path / "stream-playback.wav"
-                playback_path.write_bytes(audio)
-                operation, args = play_audio, (playback_path,)
-                if config.audio_backend == "alsa":
-                    speaker_path = temp_path / "stream-speaker.wav"
-                    _timed_call(timings, "playback", prepare_alsa_playback, playback_path, speaker_path,
-                                config.playback_gain, cancel_event=stopped)
-                    operation, args = play_audio_alsa, (speaker_path, config.alsa_playback_device)
-                if stopped.is_set():
+                try:
+                    prepared = _timed_call(timings, "audio_prepare", prepare_audio, audio, number)
+                except Exception as exc:
+                    raise VoiceLoopError(f"Audio preparation failed on streaming chunk {number}: {exc}") from exc
+                enqueue(ready_audio, prepared)
+        except BaseException as exc:
+            fail(exc)
+
+    def playback_worker():
+        nonlocal spoken_count
+        try:
+            while not stopped.is_set():
+                prepared = receive(ready_audio)
+                if prepared is finish or stopped.is_set():
                     return
-                if number == 1:
+                if prepared.number == 1:
                     if on_playback_start is not None:
                         try:
                             on_playback_start()
                         except Exception:
                             logger.warning("Companion display playback update failed; audio continues")
-                    timings["first_speech"] = time.perf_counter() - cycle_started
-                _timed_call(timings, "playback", operation, *args, cancel_event=stopped)
+                    playback_started = time.perf_counter()
+                    timings["first_speech"] = playback_started - cycle_started
+                    timings["ai_to_first_speech"] = playback_started - stream_started
+                operation, args = play_audio, (prepared.path,)
+                if config.audio_backend == "alsa":
+                    operation, args = play_audio_alsa, (prepared.path, config.alsa_playback_device)
+                try:
+                    _timed_call(timings, "playback", operation, *args, cancel_event=stopped)
+                except Exception as exc:
+                    raise VoiceLoopError(f"Playback failed on streaming chunk {prepared.number}: {exc}") from exc
                 spoken_count += 1
         except BaseException as exc:
-            errors.append(exc if isinstance(exc, VoiceLoopError) else VoiceLoopError(f"Streaming audio failed: {exc}"))
-            stopped.set()
+            fail(exc)
 
-    def enqueue(unit):
-        while not stopped.is_set():
-            try:
-                pending.put(unit, timeout=0.05)
-                return
-            except Full:
-                pass
-        raise errors[0] if errors else VoiceLoopError("Voice stream cancelled.")
+    def present(text, *, final=False):
+        nonlocal terminal_open
+        answer, notices = notice_filter.feed(text, final=final)
+        for notice in notices:
+            if notice not in printed_notices:
+                print(f"Status: {notice}", flush=True)
+                printed_notices.add(notice)
+        if answer:
+            if "ai_ttft" not in timings and answer.strip():
+                timings["ai_ttft"] = time.perf_counter() - stream_started
+            if not terminal_open:
+                print("Assistant: ", end="", flush=True)
+                terminal_open = True
+            print(answer, end="", flush=True)
+        for unit in buffer.feed(answer, final=final):
+            enqueue(pending, unit)
+
+    def finish_terminal_line():
+        nonlocal terminal_open
+        if terminal_open:
+            terminal_open = False
+            print(flush=True)
 
     iterator = iter(events)
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="voice-stream-audio")
-    worker = executor.submit(audio_worker)  # Exactly one job, not one Future per delta/chunk.
+    executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="voice-stream-audio")
+    # Two long-lived jobs, never a Future/process per delta or concurrent Piper jobs.
+    workers = []
     done = None
     start = None
-    first_delta = True
     canonical_parts = []
     try:
+        workers.append(executor.submit(preparation_worker))
+        workers.append(executor.submit(playback_worker))
         for event in iterator:
             if stopped.is_set():
                 raise errors[0] if errors else VoiceLoopError("Voice stream cancelled.")
@@ -770,40 +874,33 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                 if not text:
                     continue
                 canonical_parts.append(text)
-                is_notice = (first_delta and start and not start.get("direct") and text in {
-                    REDUCED_RESOURCE_STATUS + "\n\n", CONSTRAINED_RESOURCE_STATUS + "\n\n",
-                })
-                first_delta = False
-                if is_notice:
-                    continue
-                if "ai_ttft" not in timings:
-                    timings["ai_ttft"] = time.perf_counter() - stream_started
-                for unit in buffer.feed(text):
-                    enqueue(unit)
+                present(text)
             elif kind == "done":
                 done = event
                 if event.get("response") != "".join(canonical_parts):
                     raise VoiceLoopError("AI response failed: stream text did not match its final response.")
                 timings["ai_total"] = time.perf_counter() - stream_started
                 timings["ai"] = timings["ai_total"]  # Retain the existing metric.
-                for unit in buffer.feed("", final=True):
-                    enqueue(unit)
+                present("", final=True)
+                finish_terminal_line()
                 break
             else:
                 raise VoiceLoopError("AI response failed: unexpected stream event.")
         if done is None:
             raise VoiceLoopError("AI response failed: stream ended before completion.")
-        enqueue(finish)
-        while not worker.done():
-            try:
-                worker.result(timeout=0.05)
-            except TimeoutError:
-                pass
+        enqueue(pending, finish)
+        for worker in workers:
+            while not worker.done():
+                if errors:
+                    raise errors[0]
+                try:
+                    worker.result(timeout=0.05)
+                except TimeoutError:
+                    pass
         if errors:
             raise errors[0]
         if not spoken_count:
             raise VoiceLoopError("TTS failed: AI response contained no speakable text.")
-        print(f"Assistant: {done['response']}")
         print(f"TTS chunks: {spoken_count}")
         return done.get("conversation_id") or (start or {}).get("conversation_id"), done
     except (Exception, KeyboardInterrupt):
@@ -812,9 +909,14 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
     finally:
         stopped.set()
         try:
-            close = getattr(iterator, "close", None)
-            if close is not None:
-                close()
+            try:
+                finish_terminal_line()
+            except OSError:
+                pass  # A closed terminal must not prevent process/worker cleanup.
+            finally:
+                close = getattr(iterator, "close", None)
+                if close is not None:
+                    close()
         finally:
             executor.shutdown(wait=True, cancel_futures=True)
 
@@ -838,8 +940,8 @@ def _timed_call(timings: dict[str, float], stage: str, operation, *args, **kwarg
 
 
 def _print_timing_summary(timings: dict[str, float]) -> None:
-    order = ("record", "normalize", "stt", "ai", "ai_ttft", "first_speech",
-             "ai_total", "tts", "playback", "total")
+    order = ("record", "normalize", "stt", "ai", "ai_ttft", "ai_to_first_speech", "first_speech",
+             "ai_total", "tts", "audio_prepare", "playback", "total")
     summary = " ".join(f"{stage}={timings[stage]:.3f}s" for stage in order if stage in timings)
     print(f"Timing: {summary}")
 
@@ -964,7 +1066,7 @@ def speak_speech_chunks(
                 if audio_config is not None and audio_config.audio_backend == "alsa":
                     speaker_path = temp_path / f"speaker-{chunk_number:03d}.wav"
                     _timed_call(
-                        timings, "playback", prepare_alsa_playback, playback_path,
+                        timings, "audio_prepare", prepare_alsa_playback, playback_path,
                         speaker_path, audio_config.playback_gain,
                     )
                     playback_operation = play_audio_alsa

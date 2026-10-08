@@ -289,8 +289,14 @@ class AlsaLifecycleTests(SimpleTestCase):
 
     def test_cycle_selects_alsa_and_speaking_once_after_conversion_before_playback(self):
         self.assertEqual(self.cycle(), 42)
-        self.assertEqual(self.events, ["LISTENING", "capture", "normalize", "THINKING",
-                                      "convert", "SPEAKING", "play", "convert", "play", "READY"])
+        self.assertEqual(self.events[:4], ["LISTENING", "capture", "normalize", "THINKING"])
+        self.assertEqual([event for event in self.events if event not in {"convert", "play"}],
+                         ["LISTENING", "capture", "normalize", "THINKING", "SPEAKING", "READY"])
+        self.assertLess(self.events.index("convert"), self.events.index("SPEAKING"))
+        without_conversion = [event for event in self.events if event != "convert"]
+        self.assertEqual(without_conversion[without_conversion.index("SPEAKING") + 1], "play")
+        self.assertEqual(self.events.count("play"), 2)
+        self.assertEqual(self.events[-1], "READY")
         self.mocks["record_audio"].assert_not_called()
         self.mocks["play_audio"].assert_not_called()
         self.assertEqual(self.mocks["record_audio_alsa"].call_args.args[1:], (DEVICE, 5, 1))

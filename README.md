@@ -447,8 +447,8 @@ ALSA capture uses native 48 kHz stereo S32_LE, then FFmpeg explicitly selects LE
 ```bash
 arecord -D hw:CARD=sndrpigooglevoi,DEV=0 -c 2 -r 48000 -f S32_LE -t wav recorded.wav
 ffmpeg -y -i recorded.wav -af 'pan=mono|c0=FL' -ar 16000 -ac 1 -c:a pcm_s16le normalized.wav
-ffmpeg -y -i stream-playback.wav -af 'volume=4.0,alimiter=limit=0.98:level=false' -ar 48000 -ac 2 -c:a pcm_s32le stream-speaker.wav
-aplay -D hw:CARD=sndrpigooglevoi,DEV=0 stream-speaker.wav
+ffmpeg -y -i stream-playback-001.wav -af 'volume=4.0,alimiter=limit=0.98:level=false' -ar 48000 -ac 2 -c:a pcm_s32le stream-speaker-001.wav
+aplay -D hw:CARD=sndrpigooglevoi,DEV=0 stream-speaker-001.wav
 ```
 
 The loop bounds fixed capture in Python (warm-up plus `VOICE_RECORD_SECONDS`, followed by terminate/kill and reap), rather than adding `-d` to `arecord`. Optional live capture uses the same native format with `-t raw`, computes RMS directly from signed 32-bit LEFT samples, and writes a native WAV for the same final normalization. No per-chunk FFmpeg process is used for VAD. A wall-clock watchdog also kills a stalled ALSA pipe; normal pre-roll, start timeout, silence stop, and maximum speech duration remain in effect.
@@ -504,15 +504,41 @@ Press Enter to record one cycle, wait for `Speak now...`, or type `q` and press 
 
 The voice loop applies the assistant response policy before generation. Brief requests stay direct, normal requests remain concise but sufficient, and explicit requests for detail, steps, examples, or comparisons can use the larger detailed budget and produce complete answers. Ambiguous commands ask for clarification. Recognized actions that require an unavailable sensor, device, camera, retrieval source, or scheduler are answered honestly instead of being presented as completed.
 
-The voice loop consumes `AssistantService.process_message_stream()` directly: `start` selects the conversation ID, `delta` feeds a sentence-aware speech buffer, `done` flushes the final unfinished sentence and supplies the canonical response/metadata, and `error` cancels audio and reports ERROR. Routing, grounding, memory, model selection, response budgets and persistence remain owned by the service; there is no additional AI call or browser endpoint change. The terminal and conversation retain the complete canonical response, including resource notices. Only known initial generated-response resource-status notices are omitted from the voice copy; direct resource-unavailability answers are still spoken.
+The voice loop consumes `AssistantService.process_message_stream()` directly: `start` selects the conversation ID, `delta` feeds a sentence-aware speech buffer, `done` flushes the final unfinished sentence and supplies the canonical response/metadata, and `error` cancels audio and reports ERROR. Routing, grounding, memory, model selection, response budgets and persistence remain owned by the service; there is no additional AI call or browser endpoint change. The service still persists the complete canonical response, including any resource notices.
+
+The terminal prints `Assistant: ` once, then prints actual answer deltas immediately with `flush=True`, preserving their spaces/newlines and Markdown. It finishes the line at `done` (or on failure) and never reprints the full final answer. Terminal presentation runs on the producer; neither audio worker performs terminal writes or waits for them. Known initial resource notices appear once per distinct notice as `Status: ...`, not as assistant text or speech. A small leading-only filter handles notices split across deltas and repeated initial notices; it does not delete matching text inside an actual answer. Genuine direct answers, including resource-unavailability explanations, remain visible and spoken.
+
+The service adds one resource prefix before engine deltas and verifies the final response against that prefix plus the engine result. Thus a second copy inside the canonical answer is model-generated, not a second service insertion. Voice presentation suppresses these initial repeats without rewriting persisted history or web output; fixing their underlying model/history cause is outside this audio change.
 
 Completed sentences are released as they arrive, including closing quotes/brackets. A character of look-ahead keeps punctuation split across deltas together. Unusually long/unpunctuated text falls back to safe word boundaries near `VOICE_STREAM_TTS_TARGET_CHARS`. Markdown sanitization is reused, text order is preserved, and the remaining speakable text is flushed at `done`. Streaming does not truncate the answer; the old batch-helper chunk/total limits remain available to batch callers, not the streaming loop. Request/resource generation budgets still apply normally.
 
-The main thread consumes generation and performs service persistence. One audio worker sequentially synthesizes, converts, and plays each unit, with at most two queued text units plus the active one. Generation continues during playback, with backpressure when this small queue fills. No concurrent Piper jobs or per-token jobs are created. On a stream error, queued audio is discarded, active Piper/FFmpeg/aplay/paplay processes are cancelled and reaped, the service generator is closed, and the worker is joined before temporary files are removed. An audio failure is surfaced when the bounded service stream next yields or times out. The next interaction starts at LISTENING.
+The main thread consumes generation and performs service persistence. The audio pipeline has exactly two workers:
+
+```text
+AI deltas -> sentence buffer -> text queue (2)
+    -> one Piper/WAV/FFmpeg preparation worker -> ready-audio queue (2)
+    -> one sequential aplay/paplay worker
+```
+
+Preparation of chunk N+1 overlaps playback of N while generation continues. Each chunk uses unique temporary filenames (`stream-playback-001.wav`, `stream-speaker-001.wav`, etc.), so preparation cannot overwrite a file in use. The next ready chunk launches directly after current playback, with no inter-chunk sleeps or added silence. First-sentence release and the existing sentence/fallback rules are unchanged; no artificial wait is imposed to coalesce sentences. Queue backpressure bounds pending work. There is never more than one Piper/FFmpeg preparation process or one playback process active.
+
+On AI/TTS/preparation/playback failure, shared cancellation discards queued work, cancels/reaps active Piper/FFmpeg/aplay/paplay processes, unblocks both queues through cancellation-aware waits, closes the service generator, and joins both workers before temporary files are removed. The original failure is retained instead of being replaced by secondary cancellation errors. An audio failure is surfaced when the bounded service stream next yields or times out. The next interaction starts at LISTENING.
 
 Real digital silence is prepended only to the first chunk, before ALSA conversion, never implemented as a playback sleep. The display changes to SPEAKING exactly once, after conversion and immediately before the first playback, remains SPEAKING throughout the response, then returns to READY/ECO/PROTECTIVE after final playback. ALSA uses `arecord`, `ffmpeg`, and `aplay`; Pulse retains `parecord`, `ffmpeg`, and `paplay`. Wake-word detection is not implemented.
 
-Timing values are seconds, printed to millisecond precision. `record`, `normalize` and `stt` retain their stage durations. `ai_ttft` measures service-stream consumption start to the first actual answer delta (not a status notice). `ai_total` measures that same start to `done`, including service preparation and queue backpressure; `ai` remains an alias for compatibility. `first_speech` measures voice-cycle start through first playback launch, including capture/STT/AI/TTS/conversion/display setup and excluding the following digital silence. `tts` totals synthesis; `playback` totals speaker conversion and playback; `total` covers the full cycle. These stages overlap, so their sum is not the wall-clock total.
+Timing values are seconds, printed to millisecond precision:
+
+- `record`, `normalize`, `stt`: existing capture, normalization and transcription durations.
+- `ai_ttft`: AI stream consumption start to first actual answer text, excluding resource notices.
+- `ai_to_first_speech`: AI stream consumption start to first playback launch, after display setup.
+- `first_speech`: voice-cycle start to that same playback launch (includes capture/STT).
+- `ai_total`: stream consumption start to `done`, including service preparation and queue backpressure; `ai` remains an alias.
+- `tts`: accumulated Piper synthesis time.
+- `audio_prepare`: accumulated first-chunk silence/WAV saving/ALSA FFmpeg conversion time, excluding queue waits and playback.
+- `playback`: accumulated physical playback-command time only; FFmpeg conversion is not included.
+- `total`: complete voice-cycle wall time through final playback and cleanup.
+
+Playback-launch metrics exclude the following 0.5-second first-chunk digital silence and do not measure speaker-driver/acoustic latency. Stages overlap, so their sum is not the wall-clock total. For sufficiently long streamed responses, compare `ai_to_first_speech < ai_total` to confirm speech began before AI completion.
 
 ## Error Handling
 

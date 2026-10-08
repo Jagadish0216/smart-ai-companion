@@ -595,9 +595,11 @@ class VoiceLoopTests(SimpleTestCase):
         self.assertEqual(mock_get_tts.return_value.synthesize.call_args_list,
                          [call("It is test time."), call("Details are ready.")])
         self.assertEqual(mock_process_message.return_value[-1]["response"], original_response)
-        mock_print.assert_any_call(f"Assistant: {original_response}")
+        mock_print.assert_any_call("Assistant: ", end="", flush=True)
+        mock_print.assert_any_call(original_response, end="", flush=True)
         summary = next(args[0] for args, _ in mock_print.call_args_list if args and str(args[0]).startswith("Timing:"))
-        for metric in ("record", "normalize", "stt", "ai", "ai_ttft", "first_speech", "ai_total", "tts", "playback", "total"):
+        for metric in ("record", "normalize", "stt", "ai", "ai_ttft", "ai_to_first_speech", "first_speech",
+                       "ai_total", "tts", "audio_prepare", "playback", "total"):
             self.assertIn(metric + "=", summary)
         mock_prepend.assert_called_once_with(_make_wav(), 0.7)
         self.assertEqual(mock_play.call_count, 2)
@@ -684,7 +686,9 @@ class VoiceLoopTests(SimpleTestCase):
         ):
             run_voice_cycle(config)
 
-        mock_play.assert_called_once()
+        # A preparation failure can cancel the first prepared item before it
+        # launches; it must never play the failed second chunk.
+        self.assertLessEqual(mock_play.call_count, 1)
 
     @patch("scripts.voice_loop.get_stt_provider")
     @patch("scripts.voice_loop.normalize_audio")
