@@ -86,6 +86,8 @@ class VoiceLoopConfig:
     playback_gain: float = 4.0
     stream_tts_target_chars: int = 180
     stream_inter_chunk_silence_seconds: float = 0.12
+    stream_first_chunk_min_chars: int = 60
+    stream_first_chunk_target_chars: int = 100
 
     @classmethod
     def from_settings(cls) -> "VoiceLoopConfig":
@@ -129,6 +131,8 @@ class VoiceLoopConfig:
             stream_inter_chunk_silence_seconds=float(
                 getattr(settings, "VOICE_STREAM_INTER_CHUNK_SILENCE_SECONDS", 0.12)
             ),
+            stream_first_chunk_min_chars=int(getattr(settings, "VOICE_STREAM_FIRST_CHUNK_MIN_CHARS", 60)),
+            stream_first_chunk_target_chars=int(getattr(settings, "VOICE_STREAM_FIRST_CHUNK_TARGET_CHARS", 100)),
         )
         config.validate()
         return config
@@ -166,6 +170,8 @@ class VoiceLoopConfig:
             raise VoiceLoopError("VOICE_STREAM_TTS_TARGET_CHARS must be greater than zero.")
         if not math.isfinite(self.stream_inter_chunk_silence_seconds) or not 0 <= self.stream_inter_chunk_silence_seconds <= 1:
             raise VoiceLoopError("VOICE_STREAM_INTER_CHUNK_SILENCE_SECONDS must be finite and between 0 and 1.")
+        if self.stream_first_chunk_min_chars <= 0 or self.stream_first_chunk_target_chars < self.stream_first_chunk_min_chars:
+            raise VoiceLoopError("VOICE_STREAM_FIRST_CHUNK_MIN_CHARS must be positive and no greater than VOICE_STREAM_FIRST_CHUNK_TARGET_CHARS.")
         if self.tts_max_total_chars < 0:
             raise VoiceLoopError("VOICE_TTS_MAX_TOTAL_CHARS cannot be negative.")
         if self.input_warmup_seconds < 0:
@@ -640,9 +646,45 @@ class StreamingSpeechBuffer:
     a closing quote/bracket arriving in the next delta stays with its sentence.
     """
 
-    def __init__(self, target_chars=180):
+    def __init__(self, target_chars=180, *, first_min_chars=60, first_target_chars=100):
         self.target_chars = target_chars
+        self.first_min_chars = first_min_chars
+        self.first_target_chars = first_target_chars
+        self.first_unit_emitted = False
         self.pending = ""
+
+    def _outside_groups(self, position, protected):
+        """Conservative first-unit punctuation safety, not a general NLP parser."""
+        stack, quote = [], None
+        pairs = {"(": ")", "[": "]", "{": "}"}
+        quotes = {'"': '"', "'": "'", "“": "”", "‘": "’"}
+        for index, char in enumerate(self.pending[:position]):
+            if any(start <= index < end for start, end in protected):
+                continue
+            before = self.pending[index - 1] if index else ""
+            after = self.pending[index + 1:index + 2]
+            if char in {"'", "’"} and before.isalnum() and after.isalnum():
+                continue  # Apostrophes in words are not quotation marks.
+            if quote:
+                if char == quote:
+                    quote = None
+                continue
+            if char in quotes and not (char == "'" and before.isalnum()):
+                quote = quotes[char]
+            elif char in pairs:
+                stack.append(pairs[char])
+            elif stack and char == stack[-1]:
+                stack.pop()
+        return not quote and not stack
+
+    def _first_abbreviation(self, period_position):
+        token = re.search(r"([A-Za-z][A-Za-z.]*)\.$", self.pending[:period_position + 1])
+        if token is None:
+            return False
+        word = token.group(1).lower()
+        return word in {"mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "etc", "e.g", "i.e"} or bool(
+            re.fullmatch(r"[a-z](?:\.[a-z])*", word)
+        )
 
     def feed(self, text, *, final=False):
         self.pending += text
@@ -661,8 +703,35 @@ class StreamingSpeechBuffer:
             boundary = None
             for match in re.finditer(r'''[.!?](?:["'’”)\]}*_`]+)?(?=\s|$)''', self.pending):
                 if safe(match.start()) and safe(match.end()) and (final or match.end() < len(self.pending)):
+                    if not self.first_unit_emitted:
+                        if self.pending[match.start()] == "." and self._first_abbreviation(match.start()):
+                            continue
+                        if not self._outside_groups(match.end(), protected):
+                            continue
                     boundary = match.end()
                     break
+            if not self.first_unit_emitted and (
+                boundary is None or len(sanitize_text_for_speech(self.pending[:boundary])) > self.first_target_chars
+            ):
+                # Prefer the latest already-available safe clause within a
+                # small target grace window. Never wait just to reach target.
+                clauses = []
+                for match in re.finditer(r'''[,;:](?:["'’”)\]}*_`]+)?(?=\s|$)''', self.pending):
+                    if boundary is not None and match.end() >= boundary:
+                        break
+                    if not (final or match.end() < len(self.pending)) or not safe(match.start()) or not safe(match.end()):
+                        continue
+                    if not self._outside_groups(match.end(), protected):
+                        continue
+                    before = self.pending[match.start() - 1:match.start()]
+                    after = self.pending[match.end():].lstrip()[:1]
+                    if before.isdigit() and after.isdigit():
+                        continue  # Numeric commas/ratios are not clauses.
+                    length = len(sanitize_text_for_speech(self.pending[:match.end()]))
+                    if self.first_min_chars <= length <= self.first_target_chars + 20:
+                        clauses.append(match.end())
+                if clauses:
+                    boundary = clauses[-1]
             if boundary is None and len(self.pending) > self.target_chars:
                 spaces = [match.start() for match in re.finditer(r"\s+", self.pending)
                           if match.start() >= min(40, self.target_chars / 2) and safe(match.start())]
@@ -676,6 +745,7 @@ class StreamingSpeechBuffer:
             spoken = sanitize_text_for_speech(raw_unit)
             if spoken:
                 units.extend(_split_words(spoken, self.target_chars))
+                self.first_unit_emitted = True
         return units
 
 
@@ -735,7 +805,10 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
     error_lock = Lock()
     spoken_count = 0
     stream_started = time.perf_counter()
-    buffer = StreamingSpeechBuffer(config.stream_tts_target_chars)
+    buffer = StreamingSpeechBuffer(
+        config.stream_tts_target_chars, first_min_chars=config.stream_first_chunk_min_chars,
+        first_target_chars=config.stream_first_chunk_target_chars,
+    )
     notice_filter = LeadingResourceNoticeFilter()
     printed_notices = set()
     terminal_open = False
@@ -787,6 +860,8 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                     enqueue(ready_audio, finish)
                     return
                 number += 1
+                if number == 1:
+                    timings["first_tts_chars"] = len(text)
                 try:
                     synthesize = (
                         tts_provider.synthesize_cancellable
@@ -893,7 +968,10 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                 terminal_open = True
             print(answer, end="", flush=True)
         for unit in buffer.feed(answer, final=final):
+            first_ready = time.perf_counter() - stream_started if "first_tts_unit_ready" not in timings else None
             enqueue(pending, unit)
+            if first_ready is not None:
+                timings["first_tts_unit_ready"] = first_ready
 
     def finish_terminal_line():
         nonlocal terminal_open
@@ -996,10 +1074,10 @@ def _timed_call(timings: dict[str, float], stage: str, operation, *args, **kwarg
 
 
 def _print_timing_summary(timings: dict[str, float]) -> None:
-    order = ("record", "normalize", "stt", "ai", "ai_ttft", "ai_to_first_speech", "first_speech",
+    order = ("record", "normalize", "stt", "ai", "ai_ttft", "first_tts_unit_ready", "ai_to_first_speech", "first_speech",
              "ai_total", "tts", "audio_prepare", "playback", "total")
     summary = " ".join(f"{stage}={timings[stage]:.3f}s" for stage in order if stage in timings)
-    for metric in ("playback_chunks", "playback_starvation_ms", "max_playback_starvation_ms"):
+    for metric in ("first_tts_chars", "playback_chunks", "playback_starvation_ms", "max_playback_starvation_ms"):
         if metric in timings:
             summary += f" {metric}={timings[metric]:.3f}" if metric.endswith("_ms") else f" {metric}={timings[metric]}"
     print(f"Timing: {summary}")

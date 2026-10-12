@@ -32,6 +32,137 @@ def stream_events(text, conversation_id=42, direct=False, **metadata):
             {"type": "done", "conversation_id": conversation_id, "response": text, **metadata}]
 
 
+FIRST_CLAUSE = "Solar panels convert sunlight into electricity by using photovoltaic cells,"
+
+
+class FirstClauseBufferTests(SimpleTestCase):
+    def test_short_full_sentence_emits_even_below_minimum(self):
+        buffer = voice_loop.StreamingSpeechBuffer()
+        self.assertEqual(buffer.feed("Panels make electricity. "), ["Panels make electricity."])
+
+    def test_first_long_sentence_emits_a_useful_comma_clause_before_completion(self):
+        buffer = voice_loop.StreamingSpeechBuffer()
+        self.assertEqual(buffer.feed(FIRST_CLAUSE[:-1]), [])
+        self.assertEqual(buffer.feed(", "), [FIRST_CLAUSE])
+        self.assertTrue(buffer.first_unit_emitted)
+        self.assertGreaterEqual(len(FIRST_CLAUSE), 60)
+
+    def test_semicolon_and_colon_are_supported(self):
+        for punctuation in (";", ":"):
+            with self.subTest(punctuation=punctuation):
+                clause = FIRST_CLAUSE[:-1] + punctuation
+                buffer = voice_loop.StreamingSpeechBuffer()
+                self.assertEqual(buffer.feed(clause + " "), [clause])
+
+    def test_punctuation_before_minimum_does_not_emit_a_tiny_fragment(self):
+        buffer = voice_loop.StreamingSpeechBuffer()
+        self.assertEqual(buffer.feed("In short, "), [])
+        self.assertEqual(buffer.feed(FIRST_CLAUSE + " "), ["In short, " + FIRST_CLAUSE])
+
+    def test_latest_available_clause_in_target_grace_window_is_preferred(self):
+        text = "This explanation begins with enough meaningful words to describe the process, with useful details; and context:"
+        buffer = voice_loop.StreamingSpeechBuffer()
+        self.assertEqual(len(text), 111)
+        self.assertEqual(buffer.feed(text + " a much more distant clause with several words, "), [text])
+
+    def test_complete_sentence_before_target_wins_over_clause(self):
+        sentence = FIRST_CLAUSE + " safely."
+        buffer = voice_loop.StreamingSpeechBuffer()
+        self.assertLess(len(sentence), 100)
+        self.assertEqual(buffer.feed(sentence + " "), [sentence])
+
+    def test_long_completed_sentence_can_use_shorter_first_clause(self):
+        remainder = "which are made of semiconductor materials that respond to incoming sunlight."
+        buffer = voice_loop.StreamingSpeechBuffer()
+        self.assertEqual(buffer.feed(FIRST_CLAUSE + " " + remainder + " "), [FIRST_CLAUSE, remainder])
+
+    def test_boundary_waits_for_lookahead_and_never_cuts_words_at_target(self):
+        buffer = voice_loop.StreamingSpeechBuffer()
+        self.assertEqual(buffer.feed(FIRST_CLAUSE), [])
+        self.assertEqual(buffer.feed(" which"), [FIRST_CLAUSE])
+        buffer = voice_loop.StreamingSpeechBuffer()
+        words = "usefulword " * 10  # Already past 100; no forced cut.
+        self.assertEqual(buffer.feed(words), [])
+        self.assertEqual(buffer.feed("", final=True), [words.strip()])
+
+    def test_later_sentences_do_not_release_small_clauses(self):
+        buffer = voice_loop.StreamingSpeechBuffer()
+        self.assertEqual(buffer.feed(FIRST_CLAUSE + " "), [FIRST_CLAUSE])
+        continuation = "which use semiconductor materials to transfer absorbed energy into current,"
+        self.assertEqual(buffer.feed(continuation + " "), [])
+        self.assertEqual(buffer.feed("rather than heat alone. "), [continuation + " rather than heat alone."])
+
+    def test_link_labels_urls_and_markdown_length_are_protected(self):
+        buffer = voice_loop.StreamingSpeechBuffer()
+        prefix = "Solar panels convert sunlight into energy as described in "
+        link = "[the local guide, section one](https://guide.test/ref)"
+        self.assertEqual(buffer.feed(prefix + link), [])
+        expected = prefix + "the local guide, section one,"
+        self.assertEqual(buffer.feed(", "), [expected])
+        buffer = voice_loop.StreamingSpeechBuffer()
+        tiny = "A guide says [short](https://example.test/" + "x" * 80 + "), "
+        self.assertLess(len(tiny), 180)
+        self.assertEqual(buffer.feed(tiny), [])  # A long URL is not useful spoken content.
+        buffer = voice_loop.StreamingSpeechBuffer()
+        self.assertEqual(buffer.feed("**" + FIRST_CLAUSE + "** "), [FIRST_CLAUSE])
+
+    def test_parentheses_and_quotes_avoid_inside_clause_boundaries(self):
+        for group in ("(which are described, in the local guide)", '"which are described, in the local guide"',
+                      "“which are described, in the local guide”"):
+            with self.subTest(group=group):
+                buffer = voice_loop.StreamingSpeechBuffer(first_target_chars=160)
+                prefix = FIRST_CLAUSE[:-1] + " "
+                inside = group.index(",") + 2
+                self.assertEqual(buffer.feed(prefix + group[:inside]), [])
+                self.assertEqual(buffer.feed(group[inside:] + ", "), [prefix + group + ","])
+
+    def test_apostrophes_do_not_disable_a_safe_clause(self):
+        clause = "The panel's specialised cells convert absorbed sunlight into electrical energy,"
+        self.assertEqual(voice_loop.StreamingSpeechBuffer().feed(clause + " "), [clause])
+
+    def test_decimal_time_and_numeric_separators_are_not_split(self):
+        clause = "Solar panels convert sunlight into energy at a measured output of 3.14 volts,"
+        self.assertEqual(voice_loop.StreamingSpeechBuffer().feed(clause + " "), [clause])
+        buffer = voice_loop.StreamingSpeechBuffer()
+        numeric = "The measured electrical result has a ratio expressed in units as 12: 30"
+        self.assertEqual(buffer.feed(numeric), [])
+
+    def test_titles_and_dotted_abbreviations_do_not_create_first_fragments(self):
+        for abbreviation in ("Dr.", "Prof.", "U.S.", "e.g."):
+            with self.subTest(abbreviation=abbreviation):
+                buffer = voice_loop.StreamingSpeechBuffer()
+                self.assertEqual(buffer.feed(abbreviation + " "), [])
+                rest = "Smith explains how photovoltaic cells make electricity from absorbed sunlight,"
+                self.assertEqual(buffer.feed(rest + " "), [abbreviation + " " + rest])
+
+    def test_unpunctuated_fallback_and_text_order_are_preserved(self):
+        text = " ".join("word" + str(index) for index in range(80))
+        buffer = voice_loop.StreamingSpeechBuffer()
+        units = buffer.feed(text)
+        self.assertTrue(units)
+        units.extend(buffer.feed("", final=True))
+        self.assertEqual(" ".join(units), text)
+        for width in (1, 3, 17, 150):
+            buffer = voice_loop.StreamingSpeechBuffer()
+            text = FIRST_CLAUSE + " which become useful components in renewable power systems. Next, more detail follows."
+            units = []
+            for index in range(0, len(text), width):
+                units.extend(buffer.feed(text[index:index + width]))
+            units.extend(buffer.feed("", final=True))
+            self.assertEqual(" ".join(units), text)
+
+    @override_settings(VOICE_AUDIO_BACKEND="pulse", VOICE_INPUT_SOURCE="source",
+                       VOICE_STREAM_FIRST_CHUNK_MIN_CHARS="65", VOICE_STREAM_FIRST_CHUNK_TARGET_CHARS="110")
+    def test_first_chunk_settings_and_validation(self):
+        config = voice_loop.VoiceLoopConfig.from_settings()
+        self.assertEqual(config.stream_first_chunk_min_chars, 65)
+        self.assertEqual(config.stream_first_chunk_target_chars, 110)
+        for minimum, target in ((0, 100), (-1, 100), (60, 59)):
+            with self.subTest(minimum=minimum, target=target), self.assertRaises(voice_loop.VoiceLoopError):
+                voice_loop.VoiceLoopConfig("source", stream_first_chunk_min_chars=minimum,
+                                          stream_first_chunk_target_chars=target).validate()
+
+
 class StreamingBufferTests(SimpleTestCase):
     def test_multiple_deltas_wait_for_one_completed_sentence(self):
         buffer = voice_loop.StreamingSpeechBuffer()
@@ -174,6 +305,59 @@ class StreamingAudioTests(SimpleTestCase):
         events[-1].pop("conversation_id")
         self.assertEqual(self.speak(events)[0], 19)
         self.provider.synthesize.assert_called_once_with("Please clarify your request.")
+
+    def test_first_clause_metrics_exclude_notice_and_precede_done_without_delaying_terminal(self):
+        clock = [0.0]
+        first_started, allow_synthesis = Event(), Event()
+        output = io.StringIO()
+        prefix = REDUCED_RESOURCE_STATUS + "\n\n"
+        clause = "**" + FIRST_CLAUSE + "** "
+        remainder = "which use semiconducting materials."
+        def synthesize(text):
+            if text == FIRST_CLAUSE:
+                first_started.set()
+                if not allow_synthesis.wait(2):
+                    raise RuntimeError("test synthesis was not released")
+            return self.audio
+        self.provider.synthesize.side_effect = synthesize
+        def events():
+            yield {"type": "start", "direct": False, "conversation_id": 42}
+            clock[0] = 0.1
+            yield {"type": "delta", "text": prefix}
+            self.assertNotIn("first_tts_unit_ready", self.timings)
+            self.assertNotIn("first_tts_chars", self.timings)
+            clock[0] = 0.2
+            yield {"type": "delta", "text": clause[:-5]}
+            self.assertIn("Assistant: " + clause[:-5], output.getvalue())
+            self.assertFalse(self.provider.synthesize.called)
+            clock[0] = 0.5
+            yield {"type": "delta", "text": clause[-5:]}
+            self.assertTrue(first_started.wait(2))
+            self.assertEqual(self.timings["first_tts_unit_ready"], 0.5)
+            self.assertEqual(self.timings["first_tts_chars"], len(FIRST_CLAUSE))
+            self.assertIn("Assistant: " + clause, output.getvalue())
+            clock[0] = 3.0
+            allow_synthesis.set()
+            yield {"type": "delta", "text": remainder}
+            yield {"type": "done", "conversation_id": 42, "response": prefix + clause + remainder}
+        try:
+            with redirect_stdout(output), patch("scripts.voice_loop.time.perf_counter", side_effect=lambda: clock[0]):
+                metadata = self.speak(events())[1]
+        finally:
+            allow_synthesis.set()
+        self.assertEqual(self.provider.synthesize.call_args_list, [call(FIRST_CLAUSE), call(remainder)])
+        self.assertEqual(self.timings["ai_ttft"], 0.2)
+        self.assertEqual(self.timings["ai_total"], 3.0)
+        self.assertLess(self.timings["first_tts_unit_ready"], self.timings["ai_total"])
+        self.assertEqual(metadata["response"], prefix + clause + remainder)
+        self.assertEqual(output.getvalue(), f"Status: {REDUCED_RESOURCE_STATUS}\nAssistant: " + clause + remainder + "\nTTS chunks: 2\n")
+
+    def test_pipeline_uses_configured_first_minimum_and_target(self):
+        first = "This explanation begins with enough meaningful words to describe the process, with useful details;"
+        config = voice_loop.VoiceLoopConfig("source", stream_first_chunk_min_chars=90, stream_first_chunk_target_chars=110)
+        self.speak(stream_events(first + " and continues with the final thought."), config)
+        self.assertEqual(self.provider.synthesize.call_args_list[0], call(first))
+        self.assertEqual(self.timings["first_tts_chars"], len(first))
 
     def test_resource_prefix_is_filtered_only_from_voice_copy_not_canonical_text(self):
         for prefix in (REDUCED_RESOURCE_STATUS, CONSTRAINED_RESOURCE_STATUS):

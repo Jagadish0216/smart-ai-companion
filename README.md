@@ -422,6 +422,8 @@ Mock mode requires no external services and is useful for frontend development.
 | `VOICE_CAPTURE_VAD_START_TIMEOUT_SECONDS` | `5` | Maximum time to wait for speech after `Speak now...` |
 | `VOICE_LEADING_SILENCE_SECONDS` | `0.7` | Digital silence on the first playback chunk only; set `0.5` for Pi I2S |
 | `VOICE_STREAM_TTS_TARGET_CHARS` | `180` | Streaming fallback word-boundary target for unusually long sentences/unpunctuated text |
+| `VOICE_STREAM_FIRST_CHUNK_MIN_CHARS` | `60` | Minimum sanitized spoken characters for an early first-clause release; must be positive |
+| `VOICE_STREAM_FIRST_CHUNK_TARGET_CHARS` | `100` | First-clause target (must be at least the minimum); never a forced word cut |
 | `VOICE_STREAM_INTER_CHUNK_SILENCE_SECONDS` | `0.12` | Persistent ALSA boundary pause target, counting retained Piper edge silence; finite range `0`–`1` |
 | `VOICE_TTS_CHUNK_CHARS` | `300` | Legacy batch speech-helper chunk size; streaming uses the setting above |
 | `VOICE_TTS_MAX_TOTAL_CHARS` | `0` | Legacy batch speech-helper safety limit; streaming speaks the full answer without truncation |
@@ -493,6 +495,8 @@ VOICE_CAPTURE_VAD_START_TIMEOUT_SECONDS=5
 VOICE_TTS_CHUNK_CHARS=300
 VOICE_TTS_MAX_TOTAL_CHARS=0
 VOICE_STREAM_TTS_TARGET_CHARS=180
+VOICE_STREAM_FIRST_CHUNK_MIN_CHARS=60
+VOICE_STREAM_FIRST_CHUNK_TARGET_CHARS=100
 VOICE_LLM_BRIEF_NUM_PREDICT=96
 VOICE_LLM_NORMAL_NUM_PREDICT=160
 VOICE_LLM_DETAILED_NUM_PREDICT=384
@@ -514,7 +518,9 @@ The terminal prints `Assistant: ` once, then prints actual answer deltas immedia
 
 The service adds one resource prefix before engine deltas and verifies the final response against that prefix plus the engine result. Thus a second copy inside the canonical answer is model-generated, not a second service insertion. Voice presentation suppresses these initial repeats without rewriting persisted history or web output; fixing their underlying model/history cause is outside this audio change.
 
-Completed sentences are released as they arrive, including closing quotes/brackets. A character of look-ahead keeps punctuation split across deltas together. Unusually long/unpunctuated text falls back to safe word boundaries near `VOICE_STREAM_TTS_TARGET_CHARS`. Markdown sanitization is reused, text order is preserved, and the remaining speakable text is flushed at `done`. Streaming does not truncate the answer; the old batch-helper chunk/total limits remain available to batch callers, not the streaming loop. Request/resource generation budgets still apply normally.
+Before the first speech unit is emitted, a safe complete sentence at or below `VOICE_STREAM_FIRST_CHUNK_TARGET_CHARS` is preferred, even if shorter than the minimum. Otherwise the buffer can release the latest already-available comma/semicolon/colon clause containing at least `VOICE_STREAM_FIRST_CHUNK_MIN_CHARS` sanitized characters, up to the target plus a 20-character grace window. There is no wait just to reach the target and no forced cut at that length. Clause boundaries need look-ahead whitespace (or stream completion), must be outside Markdown links and unfinished parentheses/quotes, and cannot split numeric punctuation. Common titles/dotted abbreviations are conservatively skipped as first-unit sentence boundaries. These are deterministic heuristics, not a general linguistic parser.
+
+For example, `Solar panels convert sunlight into electricity by using photovoltaic cells,` can start Piper while the rest of the sentence is still being generated. The minimum counts actual sanitized speech, not URL/Markdown syntax or resource notices. Once the first unit is emitted, the existing sentence-aware behavior resumes; later clauses are not fragmented merely to shorten chunks. If no safe first clause exists, the existing `VOICE_STREAM_TTS_TARGET_CHARS=180` word-boundary fallback remains. Sentence-closing punctuation/quotes, Markdown sanitization, text order and final remainder flushing remain supported. Streaming does not truncate the answer; the old batch-helper chunk/total limits remain available to batch callers, not the streaming loop. Request/resource generation budgets still apply normally. Terminal deltas are still printed immediately, independently of speech readiness.
 
 The main thread consumes generation and performs service persistence. The audio pipeline has exactly two workers:
 
@@ -524,7 +530,7 @@ AI deltas -> sentence buffer -> text queue (2)
     -> one persistent ALSA aplay worker (or sequential Pulse paplay)
 ```
 
-Preparation of chunk N+1 overlaps playback of N while generation continues. Prepared ALSA items contain unique raw file paths and edge-silence counts, not response-long audio bytes. Each chunk uses unique temporary filenames, so preparation cannot overwrite a file in use. PCM scan/copy/play writes are bounded to small blocks, with no unbounded response audio in RAM. First-sentence release and the existing sentence/fallback rules are unchanged; no artificial wait is imposed to coalesce sentences. Queue backpressure bounds pending work. There is never more than one Piper/FFmpeg preparation process or one playback process active.
+Preparation of chunk N+1 overlaps playback of N while generation continues. Prepared ALSA items contain unique raw file paths and edge-silence counts, not response-long audio bytes. Each chunk uses unique temporary filenames, so preparation cannot overwrite a file in use. PCM scan/copy/play writes are bounded to small blocks, with no unbounded response audio in RAM. Only first-unit text selection uses the fast-clause policy above; no artificial wait is imposed to coalesce later sentences. Queue backpressure bounds pending work. There is never more than one Piper/FFmpeg preparation process or one playback process active.
 
 Independent Piper synthesis may add edge silence even when the next chunk is ready. ALSA preparation conservatively scans 10 ms native PCM windows at a very low -80 dBFS peak threshold. It removes only excess quiet edge windows and retains a 30 ms guard beside detected speech. First-chunk leading audio is left intact; its excessive trailing silence and later chunks' leading/trailing excess are controlled. All-quiet chunks and interior pauses remain intact. Every above-threshold sample is copied unchanged; very faint below-threshold phonemes cannot be identified with certainty, which is why guard padding and Pi listening validation remain important. No real Piper recording was supplied in this checkout, so actual Pi edge levels/phonemes have not been measured here.
 
@@ -538,6 +544,8 @@ Timing values are seconds, printed to millisecond precision:
 
 - `record`, `normalize`, `stt`: existing capture, normalization and transcription durations.
 - `ai_ttft`: AI stream consumption start to first actual answer text, excluding resource notices.
+- `first_tts_chars`: sanitized character count of the first unit actually dispatched to Piper, including its punctuation, excluding resource notices/Markdown syntax.
+- `first_tts_unit_ready`: AI stream consumption start to first speech-unit enqueue point, before synthesis; seconds. Compare this with `ai_to_first_speech` to separate text-readiness delay from Piper/preparation/playback-start delay.
 - `ai_to_first_speech`: AI stream consumption start to first playback launch, after display setup.
 - `first_speech`: voice-cycle start to that same playback launch (includes capture/STT).
 - `ai_total`: stream consumption start to `done`, including service preparation and queue backpressure; `ai` remains an alias.
