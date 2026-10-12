@@ -246,6 +246,7 @@ RESOURCE_MANAGER_CACHE_SECONDS = 5
 STT_ENGINE = os.environ.get('STT_ENGINE', 'mock')
 STT_WHISPER_BIN = os.environ.get('STT_WHISPER_BIN', '/opt/whisper.cpp/main')
 STT_WHISPER_MODEL = os.environ.get('STT_WHISPER_MODEL', '/opt/whisper.cpp/models/ggml-base.en.bin')
+STT_WHISPER_THREADS = os.environ.get('STT_WHISPER_THREADS', '4')
 STT_TIMEOUT = int(os.environ.get('STT_TIMEOUT', '30'))
 STT_VAD_ENABLED = os.environ.get('STT_VAD_ENABLED', 'false').lower() in ('1', 'true', 'yes', 'on')
 STT_VAD_MODEL = os.environ.get('STT_VAD_MODEL', '')

@@ -32,6 +32,7 @@ def get_stt_provider() -> SpeechToTextProvider:
             vad_min_speech_ms=getattr(settings, 'STT_VAD_MIN_SPEECH_MS', 250),
             vad_min_silence_ms=getattr(settings, 'STT_VAD_MIN_SILENCE_MS', 700),
             vad_speech_pad_ms=getattr(settings, 'STT_VAD_SPEECH_PAD_MS', 100),
+            threads=getattr(settings, 'STT_WHISPER_THREADS', 4),
         )
     else:
         _stt_provider_cache = MockSTTProvider()

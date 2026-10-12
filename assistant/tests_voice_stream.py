@@ -152,9 +152,9 @@ class FirstClauseBufferTests(SimpleTestCase):
         self.assertEqual(buffer.feed(FIRST_CLAUSE), [])
         self.assertEqual(buffer.feed(" which"), [FIRST_CLAUSE])
         buffer = voice_loop.StreamingSpeechBuffer()
-        words = "usefulword " * 10  # Already past 100; no forced cut.
-        self.assertEqual(buffer.feed(words), [])
-        self.assertEqual(buffer.feed("", final=True), [words.strip()])
+        words = "usefulword " * 10
+        self.assertEqual(buffer.feed(words), [("usefulword " * 9).strip()])
+        self.assertEqual(buffer.feed("", final=True), ["usefulword"])
 
     def test_later_sentences_do_not_release_small_clauses(self):
         buffer = voice_loop.StreamingSpeechBuffer()
@@ -233,6 +233,127 @@ class FirstClauseBufferTests(SimpleTestCase):
             with self.subTest(minimum=minimum, target=target), self.assertRaises(voice_loop.VoiceLoopError):
                 voice_loop.VoiceLoopConfig("source", stream_first_chunk_min_chars=minimum,
                                           stream_first_chunk_target_chars=target).validate()
+
+
+class FirstPhraseFallbackTests(SimpleTestCase):
+    def test_punctuation_free_first_unit_releases_near_target_before_sentence_completes(self):
+        text = ("An ESP32 is a programmable microcontroller offering wireless connectivity for embedded projects "
+                "across many environments")
+        buffer = voice_loop.StreamingSpeechBuffer()
+        units = []
+        released_at = None
+        for index, character in enumerate(text):
+            part = buffer.feed(character)
+            if part and released_at is None:
+                released_at = index + 1
+            units.extend(part)
+        self.assertIsNotNone(released_at)
+        self.assertLessEqual(released_at, 120)
+        self.assertTrue(60 <= len(units[0]) <= 120)
+        self.assertLess(len(units[0]), len(text))
+        units.extend(buffer.feed("", final=True))
+        self.assertEqual(" ".join(units), text)
+
+    def test_completed_natural_connectors_precede_whitespace_fallback(self):
+        prefix = "An ESP32 is a compact microcontroller with integrated wireless connectivity"
+        for connector in ("because", "due to", "while", "but", "so", "which", "that"):
+            with self.subTest(connector=connector):
+                buffer = voice_loop.StreamingSpeechBuffer()
+                self.assertEqual(buffer.feed(prefix + " " + connector + " useful details follow later"), [prefix])
+                self.assertEqual(buffer.feed("", final=True), [connector + " useful details follow later"])
+
+    def test_partial_connector_is_not_mistaken_for_a_complete_word(self):
+        prefix = "An ESP32 is a compact microcontroller with integrated wireless connectivity"
+        buffer = voice_loop.StreamingSpeechBuffer()
+        self.assertEqual(buffer.feed(prefix + " becau"), [])
+        self.assertEqual(buffer.feed("se"), [])
+        self.assertEqual(buffer.feed(" it supports wireless projects"), [prefix])
+
+    def test_punctuation_wins_over_phrase_and_completed_sentence_wins_over_clause(self):
+        for punctuation in (",", ";", ":"):
+            with self.subTest(punctuation=punctuation):
+                clause = FIRST_CLAUSE[:-1] + punctuation
+                text = clause + " because it supports useful applications and more details"
+                self.assertEqual(voice_loop.StreamingSpeechBuffer().feed(text), [clause])
+        sentence = FIRST_CLAUSE + " safely."
+        self.assertEqual(voice_loop.StreamingSpeechBuffer().feed(sentence + " because further detail follows"), [sentence])
+
+    def test_fallback_does_not_split_a_word_at_the_target(self):
+        prefix = "An ESP32 is a compact microcontroller with integrated wireless connectivity"
+        long_word = "extraordinarymicrocontrollerapplications"
+        buffer = voice_loop.StreamingSpeechBuffer()
+        self.assertEqual(buffer.feed(prefix + " " + long_word + " later"), [prefix])
+        self.assertEqual(buffer.feed("", final=True), [long_word + " later"])
+
+    def test_whitespace_fallback_backs_up_before_dangling_tokens(self):
+        prefix = "The controller supports wireless networking and reliable operation in embedded systems"
+        for token in ("a", "an", "the", "and", "or", "to", "of", "for", "in", "on", "with", "across"):
+            with self.subTest(token=token):
+                buffer = voice_loop.StreamingSpeechBuffer()
+                self.assertTrue(60 <= len(prefix) < 100)
+                text = prefix + " " + token + " extraordinarymicrocontrollerapplications continue"
+                self.assertEqual(buffer.feed(text), [prefix])
+                self.assertEqual(" ".join([prefix] + buffer.feed("", final=True)), text)
+
+    def test_protected_groups_cannot_trigger_an_internal_phrase_or_word_split(self):
+        prefix = "The controller provides useful functions "
+        inside = "wireless networking because useful devices communicate " * 5
+        for opening, closing in (("(", ")"), ("[", "]"), ("{", "}"), ('"', '"'), ("“", "”")):
+            with self.subTest(opening=opening):
+                buffer = voice_loop.StreamingSpeechBuffer()
+                text = prefix + opening + inside.strip() + closing
+                self.assertEqual(buffer.feed(text[:-1]), [])
+                self.assertEqual(buffer.feed(text[-1]), [])
+                self.assertEqual(buffer.feed("", final=True), [text])
+
+    def test_markdown_link_label_and_url_remain_one_protected_first_unit(self):
+        prefix = "The controller provides useful functions "
+        label = "wireless networking because useful devices communicate " * 4
+        link = "[" + label.strip() + "](https://example.test/guide)"
+        buffer = voice_loop.StreamingSpeechBuffer()
+        self.assertEqual(buffer.feed(prefix + link[:-4]), [])
+        self.assertEqual(buffer.feed(link[-4:]), [])
+        self.assertEqual(buffer.feed("", final=True), [prefix + label.strip()])
+
+    def test_bare_url_and_formatted_number_cannot_be_split_in_the_first_unit(self):
+        prefix = "The controller provides useful functions "
+        url = "https://example.test/" + "long-path-" * 14
+        buffer = voice_loop.StreamingSpeechBuffer()
+        self.assertEqual(buffer.feed(prefix + url + " "), [])
+        self.assertEqual(buffer.feed("", final=True), [prefix + url])
+        prefix = "The controller reports measurements for connected embedded devices"
+        for number in ("1 000 000 000 000 000 000 000", "12: 30", "1, 234, 567", "3. 14159"):
+            with self.subTest(number=number):
+                text = prefix + " " + number + " measurements are available for review"
+                buffer = voice_loop.StreamingSpeechBuffer()
+                units = buffer.feed(text)
+                self.assertTrue(units)
+                # A whole number may fit, but no first unit may end partway through it.
+                self.assertTrue(units[0] == prefix or number in units[0])
+                units.extend(buffer.feed("", final=True))
+                self.assertEqual(" ".join(units), text)
+
+    def test_new_fallback_never_releases_a_tiny_prefix_to_escape_a_long_word(self):
+        text = "A tiny start " + "unbrokenword" * 24
+        buffer = voice_loop.StreamingSpeechBuffer()
+        self.assertEqual(buffer.feed(text), [])
+        self.assertEqual(buffer.feed("", final=True), [text])
+
+    def test_closed_markdown_label_waits_for_url_in_next_delta(self):
+        prefix = "The controller provides useful functions "
+        label = "a detailed reference for wireless networking applications " * 3 + "."
+        buffer = voice_loop.StreamingSpeechBuffer()
+        self.assertEqual(buffer.feed(prefix + "[" + label + "]"), [])
+        self.assertEqual(buffer.feed("(https://example.test/guide)"), [])
+        self.assertEqual(buffer.feed("", final=True), [prefix + label])
+
+    def test_later_units_keep_normal_target_after_first_phrase_fallback(self):
+        prefix = "An ESP32 is a compact microcontroller with integrated wireless connectivity"
+        buffer = voice_loop.StreamingSpeechBuffer()
+        self.assertEqual(buffer.feed(prefix + " because "), [prefix])
+        continuation = "the application uses programmable devices to provide reliable functions for connected systems"
+        self.assertEqual(buffer.feed(continuation + " "), [])
+        self.assertEqual(buffer.feed("", final=True), ["because " + continuation])
 
 
 class StreamingBufferTests(SimpleTestCase):
@@ -400,6 +521,8 @@ class StreamingAudioTests(SimpleTestCase):
             clock[0] = 0.1
             yield {"type": "delta", "text": prefix}
             self.assertNotIn("first_tts_unit_ready", self.timings)
+            self.assertNotIn("first_tts_text_ready", self.timings)
+            self.assertNotIn("first_audio_ready", self.timings)
             self.assertNotIn("first_tts_chars", self.timings)
             clock[0] = 0.2
             yield {"type": "delta", "text": clause[:-5]}
@@ -409,6 +532,8 @@ class StreamingAudioTests(SimpleTestCase):
             yield {"type": "delta", "text": clause[-5:]}
             self.assertTrue(first_started.wait(2))
             self.assertEqual(self.timings["first_tts_unit_ready"], 0.5)
+            self.assertEqual(self.timings["first_tts_text_ready"], 0.5)
+            self.assertNotIn("first_audio_ready", self.timings)  # Piper is still blocked.
             self.assertEqual(self.timings["first_tts_chars"], len(FIRST_CLAUSE))
             self.assertIn("Assistant: " + clause, output.getvalue())
             clock[0] = 3.0
@@ -424,8 +549,44 @@ class StreamingAudioTests(SimpleTestCase):
         self.assertEqual(self.timings["ai_ttft"], 0.2)
         self.assertEqual(self.timings["ai_total"], 3.0)
         self.assertLess(self.timings["first_tts_unit_ready"], self.timings["ai_total"])
+        self.assertEqual(self.timings["first_audio_ready"], 3.0)
+        self.assertLess(self.timings["first_tts_text_ready"], self.timings["first_audio_ready"])
         self.assertEqual(metadata["response"], prefix + clause + remainder)
         self.assertEqual(output.getvalue(), f"Status: {REDUCED_RESOURCE_STATUS}\nAssistant: " + clause + remainder + "\nTTS chunks: 2\n")
+
+    def test_first_audio_readiness_waits_for_alsa_preparation_not_just_synthesis(self):
+        clock = [0.0]
+        prep_started, allow_preparation = Event(), Event()
+
+        def prepare(*args, **kwargs):
+            self.assertEqual(self.timings["first_tts_text_ready"], 0.5)
+            self.assertNotIn("first_audio_ready", self.timings)
+            self.provider.synthesize.assert_called_once()
+            prep_started.set()
+            if not allow_preparation.wait(2):
+                raise RuntimeError("test preparation was not released")
+
+        self.prepare_alsa_playback.side_effect = prepare
+
+        def events():
+            yield {"type": "start", "conversation_id": 42}
+            clock[0] = 0.5
+            yield {"type": "delta", "text": FIRST_CLAUSE + " "}
+            self.assertTrue(prep_started.wait(2))
+            self.assertNotIn("first_audio_ready", self.timings)
+            clock[0] = 2.0
+            allow_preparation.set()
+            yield {"type": "done", "conversation_id": 42, "response": FIRST_CLAUSE + " "}
+
+        try:
+            with patch("scripts.voice_loop.time.perf_counter", side_effect=lambda: clock[0]):
+                self.speak(events(), config=voice_loop.VoiceLoopConfig("", audio_backend="alsa"))
+        finally:
+            allow_preparation.set()
+        self.assertEqual(self.timings["first_tts_text_ready"], 0.5)
+        self.assertEqual(self.timings["first_tts_unit_ready"], 0.5)
+        self.assertEqual(self.timings["first_audio_ready"], 2.0)
+        self.assertGreaterEqual(self.timings["ai_to_first_speech"], self.timings["first_audio_ready"])
 
     def test_pipeline_uses_configured_first_minimum_and_target(self):
         first = "This explanation begins with enough meaningful words to describe the process, with useful details;"
@@ -1063,6 +1224,38 @@ class CancellableProcessTests(SimpleTestCase):
 @override_settings(AI_ENGINE="mock", RAG_ENABLED=False, ONLINE_RETRIEVAL_ENABLED=False,
                    DEVICE_CONTROL_ENABLED=False, CONVERSATION_MEMORY_ENABLED=False)
 class StreamingVoicePersistenceTests(TestCase):
+    @patch("scripts.voice_loop.get_tts_provider", return_value=MockTTSProvider())
+    @patch("scripts.voice_loop.play_audio")
+    @patch("assistant.services.get_engine")
+    def test_first_phrase_fallback_never_changes_canonical_generated_or_persisted_text(self, engine, play, tts):
+        canonical = ("An ESP32 is a programmable microcontroller offering wireless connectivity for embedded projects "
+                     "across many environments.")
+        first_synthesis = Event()
+        provider = tts.return_value
+        original_synthesize = provider.synthesize
+
+        def synthesize(text):
+            first_synthesis.set()
+            return original_synthesize(text)
+
+        def generate(query, **kwargs):
+            yield AIEngineStreamEvent("delta", text=canonical[:110])
+            self.assertTrue(first_synthesis.wait(2))  # Speakable text precedes model completion.
+            yield AIEngineStreamEvent("delta", text=canonical[110:])
+            yield AIEngineStreamEvent("done", result=AIEngineResult(text=canonical, engine="mock", latency_ms=1))
+
+        engine.return_value.generate_stream.side_effect = generate
+        with patch.object(provider, "synthesize", side_effect=synthesize) as synthesis, redirect_stdout(io.StringIO()) as terminal:
+            conversation_id = voice_loop.run_voice_cycle(voice_loop.VoiceLoopConfig("source"), text="What is an ESP32?")
+        spoken = [item.args[0] for item in synthesis.call_args_list]
+        self.assertTrue(60 <= len(spoken[0]) <= 120)
+        self.assertGreater(len(spoken), 1)
+        self.assertEqual(" ".join(spoken), canonical)
+        self.assertIn("Assistant: " + canonical, terminal.getvalue())
+        self.assertEqual(Message.objects.get(conversation_id=conversation_id, sender="AI").text, canonical)
+        self.assertEqual(Message.objects.get(conversation_id=conversation_id, sender="USER").text, "What is an ESP32?")
+        engine.return_value.generate_stream.assert_called_once()
+
     @patch("scripts.voice_loop.get_tts_provider", return_value=MockTTSProvider())
     @patch("scripts.voice_loop.play_audio")
     @patch("scripts.voice_loop.get_stt_provider")

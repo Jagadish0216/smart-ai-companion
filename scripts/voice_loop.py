@@ -699,6 +699,56 @@ class StreamingSpeechBuffer:
             text.strip(), re.IGNORECASE,
         ))
 
+    def _first_fallback_boundary(self, protected, sentence_boundary, *, final):
+        """Already-available phrase, then word boundary; never split a group."""
+        candidates = []
+        dangling = {
+            "a", "an", "the", "and", "or", "but", "so", "because", "while", "which", "that",
+            "to", "of", "for", "in", "on", "at", "by", "with", "from", "as", "into", "onto",
+            "than", "if", "due", "up", "about", "after", "before", "between", "through", "during",
+            "under", "over", "without", "within", "until", "since", "near", "around", "across",
+            "toward", "towards", "throughout", "despite", "beside", "beyond", "via",
+        }
+
+        def usable(position):
+            if sentence_boundary is not None and position >= sentence_boundary:
+                return None
+            if any(start < position < end for start, end in protected):
+                return None
+            if not self._outside_groups(position, protected):
+                return None
+            tail = self.pending[position:].lstrip()
+            if self.pending[position - 1:position].isdigit() and (
+                tail[:1].isdigit() or not tail and not final
+            ):
+                return None  # A spaced number may still be arriving.
+            spoken = sanitize_text_for_speech(self.pending[:position])
+            length = len(spoken)
+            if not self.first_min_chars <= length <= self.first_target_chars + 20:
+                return None
+            last_word = re.search(r"\b([a-z]+)[^a-z]*$", spoken, re.IGNORECASE)
+            if last_word and last_word.group(1).lower() in dangling:
+                return None
+            return length
+
+        # Require the connector to be complete, not the start of another word.
+        for match in re.finditer(r"\s+(?:because|due\s+to|while|but|so|which|that)(?=\s|$)", self.pending, re.IGNORECASE):
+            if not final and match.end() == len(self.pending):
+                continue
+            length = usable(match.start())
+            if length is not None:
+                candidates.append((length, match.start()))
+        if candidates:
+            return max(candidates)[1]
+        if len(sanitize_text_for_speech(self.pending)) < self.first_target_chars:
+            return None
+        for match in re.finditer(r"\s+", self.pending):
+            length = usable(match.start())
+            if length is not None:
+                candidates.append((length, match.start()))
+        before = [item for item in candidates if item[0] <= self.first_target_chars]
+        return max(before)[1] if before else (min(candidates)[1] if candidates else None)
+
     def feed(self, text, *, final=False, omit_incomplete_tail=False):
         self.pending += text
         units = []
@@ -707,8 +757,21 @@ class StreamingSpeechBuffer:
             # Do not split a Markdown link whose label/URL is still arriving.
             for match in re.finditer(r"!?\[", self.pending):
                 if not any(start <= match.start() < end for start, end in protected):
-                    if "]" not in self.pending[match.end():] or re.search(r"\]\([^)]*$", self.pending[match.end():]):
+                    if (
+                        "]" not in self.pending[match.end():]
+                        or re.search(r"\]\([^)]*$", self.pending[match.end():])
+                        or not self.first_unit_emitted and not final and re.search(r"\]\s*$", self.pending[match.end():])
+                    ):
                         protected.append((match.start(), len(self.pending)))
+            if not self.first_unit_emitted:
+                # First-unit fallbacks must not cut bare URLs or formatted
+                # numbers (including spaced thousands, decimals and ratios).
+                protected.extend(match.span() for match in re.finditer(
+                    r'''\b(?:[a-z][a-z0-9+.-]*://|www\.)[^\s<>()[\]{}"']+''', self.pending, re.IGNORECASE,
+                ))
+                protected.extend(match.span() for match in re.finditer(
+                    r"\b\d+(?:\s*[.,:/-]\s*\d+|\s+\d{3}\b)+", self.pending,
+                ))
 
             def safe(position):
                 return not any(start < position < end for start, end in protected)
@@ -726,7 +789,7 @@ class StreamingSpeechBuffer:
             # for their neighbours, with a bounded size-based (not timed) wait.
             lower = max(1, self.target_chars - 60)
             upper = self.target_chars + 40
-            if not self.first_unit_emitted and not final:
+            if not self.first_unit_emitted:
                 useful = [(end, length) for end, length in sentences if length >= self.first_min_chars]
                 near_first = [end for end, length in useful if length <= self.first_target_chars]
                 boundary = near_first[-1] if near_first else (useful[0][0] if useful else None)
@@ -760,7 +823,11 @@ class StreamingSpeechBuffer:
                         clauses.append(match.end())
                 if clauses:
                     boundary = clauses[-1]
-            if boundary is None and len(sanitize_text_for_speech(self.pending)) > self.target_chars:
+                else:
+                    fallback = self._first_fallback_boundary(protected, boundary, final=final)
+                    if fallback is not None:
+                        boundary = fallback
+            if self.first_unit_emitted and boundary is None and len(sanitize_text_for_speech(self.pending)) > self.target_chars:
                 spaces = [match.start() for match in re.finditer(r"\s+", self.pending)
                           if match.start() >= min(40, self.target_chars / 2) and safe(match.start())]
                 before = [position for position in spaces if position <= self.target_chars]
@@ -777,9 +844,10 @@ class StreamingSpeechBuffer:
             raw_unit, self.pending = self.pending[:boundary], self.pending[boundary:].lstrip()
             spoken = sanitize_text_for_speech(raw_unit)
             if spoken:
-                # A completed sentence slightly beyond target need not become
-                # two tiny jobs; very long units still split only between words.
-                packed = _split_words(spoken, upper)
+                # Later very long units still split only between words.
+                # A protected first group/word may exceed the target: do not
+                # undo its safe boundary by splitting it a second time.
+                packed = _split_words(spoken, upper) if self.first_unit_emitted else [spoken]
                 units.extend(packed)
                 self.emitted_units += len(packed)
                 self.first_unit_emitted = True
@@ -917,6 +985,8 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                     prepared = _timed_call(timings, "audio_prepare", prepare_audio, audio, number)
                 except Exception as exc:
                     raise VoiceLoopError(f"Audio preparation failed on streaming chunk {number}: {exc}") from exc
+                if number == 1:
+                    timings["first_audio_ready"] = time.perf_counter() - stream_started
                 enqueue(ready_audio, prepared)
         except BaseException as exc:
             fail(exc)
@@ -1010,10 +1080,11 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
         complete_sentence_played = (buffer.first_complete_unit is not None
                                     and spoken_count >= buffer.first_complete_unit)
         for unit in buffer.feed(answer, final=final, omit_incomplete_tail=final and complete_sentence_played):
-            first_ready = time.perf_counter() - stream_started if "first_tts_unit_ready" not in timings else None
-            enqueue(pending, unit)
+            first_ready = time.perf_counter() - stream_started if "first_tts_text_ready" not in timings else None
             if first_ready is not None:
+                timings["first_tts_text_ready"] = first_ready
                 timings["first_tts_unit_ready"] = first_ready
+            enqueue(pending, unit)
 
     def finish_terminal_line():
         nonlocal terminal_open
@@ -1118,7 +1189,7 @@ def _timed_call(timings: dict[str, float], stage: str, operation, *args, **kwarg
 
 
 def _print_timing_summary(timings: dict[str, float]) -> None:
-    order = ("record", "normalize", "stt", "ai", "ai_ttft", "first_tts_unit_ready", "ai_to_first_speech", "first_speech",
+    order = ("record", "normalize", "stt", "ai", "ai_ttft", "first_tts_text_ready", "first_tts_unit_ready", "first_audio_ready", "ai_to_first_speech", "first_speech",
              "ai_total", "tts", "audio_prepare", "playback", "total")
     summary = " ".join(f"{stage}={timings[stage]:.3f}s" for stage in order if stage in timings)
     for metric in ("first_tts_chars", "playback_chunks", "playback_starvation_ms", "max_playback_starvation_ms", "num_predict"):

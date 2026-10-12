@@ -1,6 +1,7 @@
 import io
 import json
 import base64
+import subprocess
 from unittest.mock import patch, MagicMock
 
 from django.test import TestCase, override_settings
@@ -19,6 +20,40 @@ class VoiceProviderTests(TestCase):
         self.stt = WhisperCppProvider(binary_path="/fake/main", model_path="/fake/model")
         self.tts = PiperProvider(binary_path="/fake/piper", voice_path="/fake/voice")
 
+    @patch('os.path.exists', return_value=True)
+    @patch('subprocess.run')
+    def test_custom_threads_are_honored_with_and_without_vad(self, run, exists):
+        run.return_value = MagicMock(returncode=0, stdout="A transcript.")
+        for vad in (False, True):
+            with self.subTest(vad=vad):
+                provider = WhisperCppProvider("/fake/main", "/fake/model", threads="2", vad_enabled=vad,
+                                              vad_model_path="/fake/silero.bin", timeout=41)
+                self.assertEqual(provider.transcribe("/fake/audio.wav"), "A transcript.")
+                command = run.call_args.args[0]
+                self.assertEqual(command[command.index("-t") + 1], "2")
+                self.assertEqual("--vad" in command, vad)
+                self.assertEqual(run.call_args.kwargs["timeout"], 41)
+
+    def test_invalid_thread_values_are_rejected_before_launch(self):
+        for threads in (0, -1, "0", "-2", "", "no", "4.5", 4.5, True, None, "²"):
+            with self.subTest(threads=threads), self.assertRaisesRegex(STTError, "positive integer"):
+                WhisperCppProvider("/fake/main", "/fake/model", threads=threads)
+
+    @override_settings(STT_ENGINE="whisper_cpp", STT_WHISPER_THREADS="invalid")
+    def test_factory_rejects_invalid_thread_setting(self):
+        reset_voice_providers()
+        self.addCleanup(reset_voice_providers)
+        with self.assertRaisesRegex(STTError, "positive integer"):
+            get_stt_provider()
+
+    @patch('os.path.exists', return_value=True)
+    @patch('subprocess.run', side_effect=subprocess.TimeoutExpired("whisper", 7))
+    def test_explicit_threads_preserve_timeout_error_contract(self, run, exists):
+        provider = WhisperCppProvider("/fake/main", "/fake/model", timeout=7, threads=3)
+        with self.assertRaisesRegex(STTError, "Transcription timed out"):
+            provider.transcribe("/fake/audio.wav")
+        self.assertEqual(run.call_args.kwargs["timeout"], 7)
+
     @patch('os.path.exists')
     @patch('subprocess.run')
     def test_whisper_cpp_success(self, mock_run, mock_exists):
@@ -33,7 +68,7 @@ class VoiceProviderTests(TestCase):
         command = mock_run.call_args.args[0]
         self.assertEqual(
             command,
-            ["/fake/main", "-m", "/fake/model", "-f", "/fake/audio.wav", "-nt"],
+            ["/fake/main", "-m", "/fake/model", "-f", "/fake/audio.wav", "-t", "4", "-nt"],
         )
         self.assertNotIn("--vad", command)
 
@@ -59,7 +94,7 @@ class VoiceProviderTests(TestCase):
         self.assertEqual(
             mock_run.call_args.args[0],
             [
-                "/fake/main", "-m", "/fake/model", "-f", "/fake/audio.wav", "-nt",
+                "/fake/main", "-m", "/fake/model", "-f", "/fake/audio.wav", "-t", "4", "-nt",
                 "--vad",
                 "--vad-model", "/fake/silero.bin",
                 "--vad-threshold", "0.6",
@@ -89,6 +124,7 @@ class VoiceProviderTests(TestCase):
         STT_ENGINE='whisper_cpp',
         STT_WHISPER_BIN='/fake/main',
         STT_WHISPER_MODEL='/fake/model',
+        STT_WHISPER_THREADS='3',
         STT_TIMEOUT=45,
         STT_VAD_ENABLED=True,
         STT_VAD_MODEL='/fake/silero.bin',
@@ -105,6 +141,7 @@ class VoiceProviderTests(TestCase):
             reset_voice_providers()
 
         self.assertIsInstance(provider, WhisperCppProvider)
+        self.assertEqual(provider.threads, 3)
         self.assertTrue(provider.vad_enabled)
         self.assertEqual(provider.vad_model_path, '/fake/silero.bin')
         self.assertEqual(provider.vad_threshold, 0.65)

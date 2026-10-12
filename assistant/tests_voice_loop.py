@@ -599,7 +599,7 @@ class VoiceLoopTests(SimpleTestCase):
         mock_print.assert_any_call("Assistant: ", end="", flush=True)
         mock_print.assert_any_call(original_response, end="", flush=True)
         summary = next(args[0] for args, _ in mock_print.call_args_list if args and str(args[0]).startswith("Timing:"))
-        for metric in ("record", "normalize", "stt", "ai", "ai_ttft", "first_tts_chars", "first_tts_unit_ready",
+        for metric in ("record", "normalize", "stt", "ai", "ai_ttft", "first_tts_chars", "first_tts_text_ready", "first_tts_unit_ready", "first_audio_ready",
                        "ai_to_first_speech", "first_speech",
                        "ai_total", "tts", "audio_prepare", "playback", "total"):
             self.assertIn(metric + "=", summary)

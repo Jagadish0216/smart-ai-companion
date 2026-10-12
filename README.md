@@ -416,6 +416,7 @@ Mock mode requires no external services and is useful for frontend development.
 | `STT_ENGINE` | `mock` | Speech-to-Text: `mock` or `whisper_cpp` |
 | `STT_WHISPER_BIN` | `/opt/whisper.cpp/main` | Path to whisper.cpp binary |
 | `STT_WHISPER_MODEL` | `/opt/whisper.cpp/models/ggml-base.en.bin` | Path to whisper.cpp model |
+| `STT_WHISPER_THREADS` | `4` | Positive integer; explicit whisper-cli `-t` value, with or without Silero VAD |
 | `STT_VAD_ENABLED` | `false` | Enable whisper.cpp Silero VAD preprocessing |
 | `STT_VAD_MODEL` | _(empty)_ | Path to the Silero VAD model; required when VAD is enabled |
 | `STT_VAD_THRESHOLD` | `0.5` | Speech-detection probability threshold |
@@ -477,9 +478,12 @@ The loop trims each source PCM into `stream-speaker-001.pcm`, etc., and writes t
 
 The loop bounds fixed capture in Python (warm-up plus `VOICE_RECORD_SECONDS`, followed by terminate/kill and reap), rather than adding `-d` to `arecord`. Optional live capture uses the same native format with `-t raw`, computes RMS directly from signed 32-bit LEFT samples, and writes a native WAV for the same final normalization. No per-chunk FFmpeg process is used for VAD. A wall-clock watchdog also kills a stalled ALSA pipe; normal pre-roll, start timeout, silence stop, and maximum speech duration remain in effect.
 
-Optional Silero VAD runs inside whisper.cpp after the fixed-duration recording. To enable it, set `STT_VAD_ENABLED=true` and copy the exact Silero model path on the Pi into `STT_VAD_MODEL`; leave it disabled to preserve the original Whisper command and behavior.
+Whisper uses an explicit, configurable `STT_WHISPER_THREADS=4`, with or without Silero VAD. Invalid/non-positive thread values fail with `STTError` before transcription launches; timeout/error handling is otherwise unchanged. For the validated Pi 5, base.en is the recommended current deployment model: set `STT_WHISPER_MODEL` in the Pi's `.env` to its actual installed base.en path. No deployment-specific home path or model switch is introduced into portable source defaults. Supplied Pi base.en measurements were approximately 3.48/2.50/2.02 seconds with 2/3/4 threads, with accurate transcripts and throttle flags 0x0; these are prior physical results, not a new benchmark of this patch.
+
+Optional Silero VAD runs inside whisper.cpp after the fixed-duration recording. To enable it, set `STT_VAD_ENABLED=true` and copy the exact Silero model path on the Pi into `STT_VAD_MODEL`; disabling it removes only the VAD arguments, not the explicit thread setting. Microphone capture/VAD implementation is unchanged.
 
 ```env
+STT_WHISPER_THREADS=4
 STT_VAD_ENABLED=false
 STT_VAD_MODEL=
 STT_VAD_THRESHOLD=0.5
@@ -585,7 +589,9 @@ The terminal prints `Assistant: ` once, then prints actual answer deltas immedia
 
 The service adds one resource prefix before engine deltas and verifies the final response against that prefix plus the engine result. Thus a second copy inside the canonical answer is model-generated, not a second service insertion. Voice presentation suppresses these initial repeats without rewriting persisted history or web output; fixing their underlying model/history cause is outside this audio change.
 
-Before the first speech unit is emitted, completed sentences below `VOICE_STREAM_FIRST_CHUNK_MIN_CHARS=60` sanitized characters are held while generation continues and combined with following text. A final short answer such as "The answer is 4." flushes at `done` without further waiting. A safe complete prefix at or below `VOICE_STREAM_FIRST_CHUNK_TARGET_CHARS=100` is preferred. For a long opening sentence the buffer may release the latest already-available comma/semicolon/colon clause between the minimum and target plus a 20-character grace window. Clause boundaries need look-ahead whitespace (or stream completion), must be outside Markdown links and unfinished parentheses/quotes, and cannot split numeric punctuation. Common titles/dotted abbreviations are conservatively skipped as sentence boundaries. These are deterministic heuristics, not a general linguistic parser.
+Before the first speech unit is emitted, completed sentences below `VOICE_STREAM_FIRST_CHUNK_MIN_CHARS=60` sanitized characters are held and combined with following text. A final short answer such as "The answer is 4." still flushes at `done`. First-unit priority is: (1) a completed sentence of at least 60 characters within `VOICE_STREAM_FIRST_CHUNK_TARGET_CHARS=100`; (2) the latest available safe comma/semicolon/colon clause within target +20; (3) the latest available natural phrase boundary before a complete `because`, `due to`, `while`, `but`, `so`, `which` or `that`, with the same minimum/grace bounds; (4) once 100 spoken characters are available, the latest safe whitespace boundary at/before target, or the earliest available safe boundary within the 20-character grace window. No timer, extra model call or global target reduction is introduced.
+
+First-unit candidates never cut words, Markdown links (including incomplete label/URL arrivals), parentheses/bracket/brace/quote groups, bare URLs or formatted numbers. Whitespace/phrase candidates back up before obvious dangling articles/conjunctions/prepositions when an earlier useful boundary exists. Safety and the minimum beat the size target: a long protected group or indivisible word may require a larger first unit or holding until completion, rather than cutting it or emitting a tiny prefix. A safe long completed sentence remains usable if no smaller candidate exists. Common titles/dotted abbreviations remain conservatively excluded as sentence boundaries. These are deterministic already-available-text heuristics, not a general linguistic parser; delta sizes can affect which safe candidates are available.
 
 For example, `Solar panels convert sunlight into electricity by using photovoltaic cells,` can start Piper while the rest of the sentence is still being generated. The minimum counts actual sanitized speech, not URL/Markdown syntax or resource notices. Later short completed sentences coalesce into units around the existing `VOICE_STREAM_TTS_TARGET_CHARS=180`: normally 120-220 characters, with punctuation retained inside the same Piper input for natural prosody. The buffer uses bounded character-based holding, no sleep or timer; final short leftovers flush at `done`. Long unpunctuated text retains the safe word-boundary fallback. Text order, Markdown sanitization and closing punctuation remain supported. The legacy batch chunk/total limits do not truncate streaming answers. Terminal deltas print immediately, independently of speech readiness.
 
@@ -618,7 +624,9 @@ Timing values are seconds, printed to millisecond precision:
 - `record`, `normalize`, `stt`: existing capture, normalization and transcription durations.
 - `ai_ttft`: AI stream consumption start to first actual answer text, excluding resource notices.
 - `first_tts_chars`: sanitized character count of the first unit actually dispatched to Piper, including its punctuation, excluding resource notices/Markdown syntax.
-- `first_tts_unit_ready`: AI stream consumption start to first speech-unit enqueue point, before synthesis; seconds. Compare this with `ai_to_first_speech` to separate text-readiness delay from Piper/preparation/playback-start delay.
+- `first_tts_text_ready`: AI stream consumption start to the buffer's first speakable text-unit emission, before enqueue/synthesis.
+- `first_tts_unit_ready`: backward-compatible alias of `first_tts_text_ready`; it does **not** mean synthesized audio is ready.
+- `first_audio_ready`: AI stream consumption start to completion of the first Piper synthesis and audio preparation (including ALSA conversion/edge trimming), immediately before the ready-audio enqueue. Compare it with text readiness and `ai_to_first_speech` to separate buffering, synthesis/preparation and playback-start delays.
 - `ai_to_first_speech`: AI stream consumption start to first playback launch, after display setup.
 - `first_speech`: voice-cycle start to that same playback launch (includes capture/STT).
 - `ai_total`: stream consumption start to `done`, including service preparation and queue backpressure; `ai` remains an alias.
