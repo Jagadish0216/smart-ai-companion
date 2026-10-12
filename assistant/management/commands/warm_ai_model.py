@@ -15,8 +15,7 @@ from assistant.ai_engine import (
     ModelUnavailableError,
 )
 from assistant.ai_engine.local import LocalLLMEngine
-from assistant.execution_policy import get_ai_execution_plan
-from assistant.policy import build_runtime_capability_registry
+from assistant.policy import VOICE_SAFETY_INSTRUCTION
 
 
 def _remaining_timeout(deadline: float) -> float:
@@ -53,7 +52,7 @@ def _wait_for_ollama(host: str, deadline: float) -> None:
 
 class Command(BaseCommand):
     help = (
-        "Warm one local Ollama model and its reusable Smart Companion chat prefix; "
+        "Keep one local Ollama model resident and pre-evaluate minimal voice safety; "
         "defaults to the configured OLLAMA_MODEL."
     )
 
@@ -94,12 +93,9 @@ class Command(BaseCommand):
                 timeout_seconds=_remaining_timeout(deadline),
             )
 
-            execution_plan = get_ai_execution_plan()
-            registry = build_runtime_capability_registry(
-                online_allowed=execution_plan.online_allowed,
-            )
             prefix_result = engine.warm_chat_prefix(
-                system_instruction=registry.build_grounding_instruction(),
+                system_instruction=VOICE_SAFETY_INSTRUCTION,
+                system_prompt="",
                 model=model,
                 timeout_seconds=_remaining_timeout(deadline),
             )
@@ -143,7 +139,8 @@ class Command(BaseCommand):
 
         self.stdout.write(
             self.style.SUCCESS(
-                f"Warmed model {model} and production chat prefix "
-                f"in {elapsed_ms} ms{suffix}; keep_alive is configured."
+                f"Warmed model {model} and minimal voice instruction "
+                f"in {elapsed_ms} ms{suffix}; keep_alive={getattr(settings, 'OLLAMA_KEEP_ALIVE', '24h')}. "
+                "Cross-query prefix cache reuse is not guaranteed."
             )
         )

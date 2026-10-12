@@ -125,20 +125,17 @@ class AssistantResponsePolicyTests(TestCase):
             "Explain edge computing in detail."
         )
 
-        self.assertIn("Spoken reply", normal.system_instruction)
-        self.assertIn("answer the actual question immediately", normal.system_instruction)
-        self.assertIn("accurately and conversationally", normal.system_instruction)
-        self.assertIn("No question repetition", normal.system_instruction)
-        self.assertIn("ordinary headings", normal.system_instruction)
-        self.assertIn("do not impose a short response limit", detailed.system_instruction)
+        self.assertIn("Speak directly", normal.system_instruction)
+        self.assertIn("no filler or headings", normal.system_instruction)
+        self.assertIn("Stop when answered", normal.system_instruction)
+        self.assertIn("Give the requested detail", detailed.system_instruction)
         self.assertEqual(detailed.mode, ResponseMode.DETAILED)
 
     def test_normal_standalone_voice_question_has_concise_relevant_policy(self):
         plan = AssistantResponsePolicy.plan_voice_response("Explain how a Raspberry Pi works.")
         self.assertEqual(plan.mode, ResponseMode.NORMAL)
-        for phrase in ("one or two short sentences", "15-40 spoken words", "answer the actual question immediately",
-                       "only details needed", "No unrelated project/internal details", "then stop",
-                       "admit uncertainty briefly", "invented hardware relationships"):
+        for phrase in ("1-2 short sentences", "15-35 words", "Speak directly",
+                       "only needed facts", "Stop when answered"):
             self.assertIn(phrase, plan.system_instruction)
         self.assertIsNone(plan.rag_system_instruction)  # No duplicate voice shaping inside RAG.
         self.assertEqual(plan.recent_history_limit, 0)
@@ -148,10 +145,8 @@ class AssistantResponsePolicyTests(TestCase):
         plan = AssistantResponsePolicy.plan_voice_response("Briefly explain RAM.")
         self.assertEqual(plan.mode, ResponseMode.BRIEF)
         self.assertIn("One direct sentence", plan.system_instruction)
-        self.assertIn("5-20 words", plan.system_instruction)
-        self.assertIn("no setup or filler", plan.system_instruction)
-        for opening in ("Here's...", "Sure", "Certainly"):
-            self.assertIn(opening, plan.system_instruction)
+        self.assertIn("<=15 words", plan.system_instruction)
+        self.assertIn("no filler", plan.system_instruction)
 
     def test_explicit_four_sentence_request_overrides_voice_defaults(self):
         plan = AssistantResponsePolicy.plan_voice_response("Explain RAM in four short sentences.")
@@ -164,8 +159,8 @@ class AssistantResponsePolicyTests(TestCase):
             with self.subTest(query=query):
                 plan = AssistantResponsePolicy.plan_voice_response(query)
                 self.assertEqual(plan.mode, ResponseMode.DETAILED)
-                self.assertIn("do not impose a short response limit", plan.system_instruction)
-                self.assertIn("conversational rather than essay-like", plan.system_instruction)
+                self.assertIn("Give the requested detail", plan.system_instruction)
+                self.assertIn("stay conversational", plan.system_instruction)
         self.assertEqual(AssistantResponsePolicy.classify("Give me the steps to install Linux.")[0],
                          ResponseMode.NORMAL)  # Shared text-chat routing is untouched.
 
@@ -173,7 +168,7 @@ class AssistantResponsePolicyTests(TestCase):
         plan = AssistantResponsePolicy.plan_voice_response("Tell me about it.")
         self.assertIsNone(plan.direct_response)
         self.assertEqual(plan.recent_history_limit, 2)
-        for phrase in ("Use supplied history", "follow-ups and user facts"):
+        for phrase in ("Use supplied history", "resolve references"):
             self.assertIn(phrase, plan.system_instruction)
 
     @override_settings(
@@ -320,8 +315,9 @@ class AssistantPolicyServiceTests(TestCase):
 
         instruction = engine.generate.call_args.kwargs["system_instruction"]
         self.assertIn(plan.system_instruction, instruction)
-        self.assertIn("Runtime capabilities:", instruction)
-        self.assertIn("do not impose a short response limit", instruction)
+        self.assertNotIn("Runtime capabilities:", instruction)
+        self.assertIn("explicit results supplied for this request", instruction)
+        self.assertIn("Give the requested detail", instruction)
 
     @patch("assistant.services.get_engine")
     def test_educational_capability_request_reaches_engine(self, mock_get_engine):
@@ -406,7 +402,8 @@ class AssistantPolicyServiceTests(TestCase):
         )
         request_instruction = engine.generate.call_args.kwargs["system_instruction"]
         self.assertIn(plan.system_instruction, request_instruction)
-        self.assertIn("Runtime capabilities:", request_instruction)
+        self.assertNotIn("Runtime capabilities:", request_instruction)
+        self.assertIn("explicit results supplied for this request", request_instruction)
         persisted_text = list(
             conversation.messages.order_by("id").values_list("sender", "text")
         )

@@ -271,13 +271,11 @@ class RagPerformanceTests(TestCase):
 class SingleModelWarmTests(TestCase):
     @patch("assistant.management.commands.warm_ai_model._wait_for_ollama")
     @patch("assistant.management.commands.warm_ai_model.time.monotonic", return_value=100)
-    @patch("assistant.management.commands.warm_ai_model.get_ai_execution_plan")
     @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine")
-    def test_legacy_optional_settings_never_warm_another_model(self, engine_class, get_plan, clock, wait):
+    def test_legacy_optional_settings_never_warm_another_model(self, engine_class, clock, wait):
         engine = engine_class.return_value
         engine.warm_model.return_value = {"done": True}
         engine.warm_chat_prefix.return_value = {"done": True}
-        get_plan.return_value = plan()
         from django.core.management import call_command
         output = io.StringIO()
         call_command("warm_ai_model", timeout=90, stdout=output, stderr=io.StringIO())

@@ -79,7 +79,7 @@ def _budget_values() -> dict[str, tuple[int, int]]:
 
 def _first_policy_reason(report: dict, default: str) -> str:
     for reason in report.get("reasons", []):
-        if isinstance(reason, dict) and reason.get("code") and reason["code"] != "THROTTLING_HISTORY":
+        if isinstance(reason, dict) and reason.get("code") and reason["code"] not in {"THROTTLING_HISTORY", "TEMPERATURE_WARM"}:
             return str(reason["code"])
     return default
 

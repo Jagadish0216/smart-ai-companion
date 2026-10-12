@@ -25,7 +25,7 @@ from .ai_engine.local import LocalLLMEngine
 from .management.commands.warm_ai_model import _wait_for_ollama
 from .execution_policy import build_execution_plan
 from .online.base import OnlineRetrievalResult
-from .policy import Capability, build_runtime_capability_registry
+from .policy import AssistantResponsePolicy, Capability, VOICE_SAFETY_INSTRUCTION, build_runtime_capability_registry
 from .services import AssistantService, _build_generation_instruction
 
 
@@ -233,6 +233,7 @@ class GenerationInstructionOrderingTests(TestCase):
         registry.build_grounding_instruction.return_value = "GROUND_STABLE"
 
         response_plan = MagicMock()
+        response_plan.is_voice = False
         response_plan.rag_system_instruction = "RAG_POLICY"
 
         instruction = _build_generation_instruction(
@@ -266,7 +267,7 @@ class GenerationInstructionOrderingTests(TestCase):
         ONLINE_TIMEOUT_SECONDS=8, ONLINE_MAX_RESULTS=4, ONLINE_MAX_CONTEXT_CHARS=6000,
         DEVICE_CONTROL_ENABLED=False,
     )
-    def test_command_prefix_matches_real_local_rag_and_online_preparation(self):
+    def test_command_minimal_safety_matches_real_voice_local_rag_and_online_preparation(self):
         plan = build_execution_plan({
             "recommended_profile": "BALANCED",
             "ai_recommendation": {"local_ai_allowed": True, "online_allowed": True},
@@ -279,7 +280,6 @@ class GenerationInstructionOrderingTests(TestCase):
         )
         with (
             patch("knowledge_base.services.is_rag_available", return_value=True),
-            patch("assistant.management.commands.warm_ai_model.get_ai_execution_plan", return_value=plan),
             patch("assistant.management.commands.warm_ai_model.LocalLLMEngine", return_value=engine),
             patch("assistant.management.commands.warm_ai_model._wait_for_ollama"),
             patch.object(engine, "warm_model", return_value={"done": True}),
@@ -293,15 +293,17 @@ class GenerationInstructionOrderingTests(TestCase):
         ):
             call_command("warm_ai_model", stdout=io.StringIO())
             warm_system = chat.call_args.args[0][0]["content"]
+            self.assertEqual(warm_system, VOICE_SAFETY_INSTRUCTION)
             online_retriever.return_value.retrieve.return_value = [online]
             for query, chunks, route in (
                 ("Explain general computing.", [], "local"),
-                ("Explain local computing.", [rag], "local_rag"),
+                ("What does our knowledge base say about local computing?", [rag], "local_rag"),
                 ("Search the web for today's news.", [], "online"),
             ):
                 with self.subTest(route=route):
                     retriever.return_value.retrieve.return_value = chunks
-                    conversation, _, metadata, error = AssistantService.process_message(query)
+                    conversation, _, metadata, error = AssistantService.process_message(
+                        query, response_plan=AssistantResponsePolicy.plan_voice_response(query))
                     self.assertIsNone(error)
                     self.assertEqual(metadata["route"], route)
                     messages = chat.call_args.args[0]
@@ -569,27 +571,15 @@ class WarmModelCommandTests(TestCase):
         self.addCleanup(wait_patcher.stop)
 
     @override_settings(OLLAMA_MODEL="configured:3b")
-    @patch("assistant.management.commands.warm_ai_model.build_runtime_capability_registry")
-    @patch("assistant.management.commands.warm_ai_model.get_ai_execution_plan")
     @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_chat_prefix")
     @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_model")
     def test_defaults_to_configured_model(
         self,
         warm_model,
         warm_chat_prefix,
-        get_execution_plan,
-        build_registry,
     ):
         warm_model.return_value = {"done": True}
         warm_chat_prefix.return_value = {"done": True}
-
-        plan = MagicMock()
-        plan.online_allowed = True
-        get_execution_plan.return_value = plan
-
-        registry = MagicMock()
-        registry.build_grounding_instruction.return_value = "GROUND_STABLE"
-        build_registry.return_value = registry
 
         with patch(
             "assistant.management.commands.warm_ai_model.time.monotonic",
@@ -601,34 +591,22 @@ class WarmModelCommandTests(TestCase):
             model="configured:3b",
             timeout_seconds=90.0,
         )
-        build_registry.assert_called_once_with(online_allowed=True)
         warm_chat_prefix.assert_called_once_with(
-            system_instruction="GROUND_STABLE",
+            system_instruction=VOICE_SAFETY_INSTRUCTION,
+            system_prompt="",
             model="configured:3b",
             timeout_seconds=80.0,
         )
 
-    @patch("assistant.management.commands.warm_ai_model.build_runtime_capability_registry")
-    @patch("assistant.management.commands.warm_ai_model.get_ai_execution_plan")
     @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_chat_prefix")
     @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_model")
     def test_explicit_model_override(
         self,
         warm_model,
         warm_chat_prefix,
-        get_execution_plan,
-        build_registry,
     ):
         warm_model.return_value = {"done": True}
         warm_chat_prefix.return_value = {"done": True}
-
-        plan = MagicMock()
-        plan.online_allowed = False
-        get_execution_plan.return_value = plan
-
-        registry = MagicMock()
-        registry.build_grounding_instruction.return_value = "GROUND_STABLE"
-        build_registry.return_value = registry
 
         with patch(
             "assistant.management.commands.warm_ai_model.time.monotonic",
@@ -645,17 +623,16 @@ class WarmModelCommandTests(TestCase):
             timeout_seconds=90.0,
         )
         warm_chat_prefix.assert_called_once_with(
-            system_instruction="GROUND_STABLE",
+            system_instruction=VOICE_SAFETY_INSTRUCTION,
+            system_prompt="",
             model="diagnostic:1b",
             timeout_seconds=85.0,
         )
 
-    @patch("assistant.management.commands.warm_ai_model.build_runtime_capability_registry")
-    @patch("assistant.management.commands.warm_ai_model.get_ai_execution_plan")
     @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_chat_prefix")
     @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_model")
     def test_exhausted_shared_timeout_does_not_start_prefix(
-        self, warm_model, warm_chat_prefix, get_plan, build_registry,
+        self, warm_model, warm_chat_prefix,
     ):
         warm_model.return_value = {"done": True}
         with (
@@ -668,12 +645,10 @@ class WarmModelCommandTests(TestCase):
             call_command("warm_ai_model", stdout=io.StringIO())
         warm_chat_prefix.assert_not_called()
 
-    @patch("assistant.management.commands.warm_ai_model.build_runtime_capability_registry")
-    @patch("assistant.management.commands.warm_ai_model.get_ai_execution_plan")
     @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_chat_prefix")
     @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_model")
     def test_readiness_and_both_stages_share_one_budget(
-        self, warm_model, warm_chat_prefix, get_plan, build_registry,
+        self, warm_model, warm_chat_prefix,
     ):
         clock = [100.0]
         self.wait_for_ollama.side_effect = lambda *_: clock.__setitem__(0, 103.0)
@@ -710,12 +685,10 @@ class WarmModelCommandTests(TestCase):
                 self.wait_for_ollama.assert_called_once()
                 warm_chat_prefix.assert_not_called()
 
-    @patch("assistant.management.commands.warm_ai_model.build_runtime_capability_registry")
-    @patch("assistant.management.commands.warm_ai_model.get_ai_execution_plan")
     @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_chat_prefix")
     @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_model")
     def test_prefix_failure_does_not_report_success(
-        self, warm_model, warm_chat_prefix, get_plan, build_registry,
+        self, warm_model, warm_chat_prefix,
     ):
         warm_model.return_value = {"done": True}
         for failure in (

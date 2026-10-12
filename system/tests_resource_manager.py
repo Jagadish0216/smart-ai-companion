@@ -106,15 +106,60 @@ class ResourcePolicyTests(SimpleTestCase):
             "STANDARD",
         )
 
-    def test_high_cpu_alone_is_caution_not_critical(self):
+    def test_busy_inference_is_not_sustained_cpu_pressure(self):
         snapshot = healthy_snapshot()
-        snapshot["cpu"]["utilization_percent"] = 80.0
+        snapshot["cpu"]["utilization_percent"] = 100.0
+        snapshot["cpu"]["load_average"]["five_minutes"] = 1.1
 
         result = resource_manager.evaluate_resource_policy(snapshot)
 
-        self.assertEqual(result["subsystem_health"]["cpu"]["level"], "CAUTION")
-        self.assertEqual(result["overall_health"], "CAUTION")
-        self.assertEqual(result["recommended_profile"], "ECO")
+        self.assertEqual(result["subsystem_health"]["cpu"]["level"], "HEALTHY")
+        self.assertEqual(result["recommended_profile"], "BALANCED")
+        self.assertNotIn("CPU_PRESSURE", [reason["code"] for reason in result["reasons"]])
+
+    @override_settings(RESOURCE_LOAD_CAUTION_PER_CPU=0.8, RESOURCE_LOAD_CONSTRAINED_PER_CPU=1.2)
+    def test_sustained_load_uses_configurable_normalized_thresholds(self):
+        for load, level in ((3.2, "CAUTION"), (4.8, "CONSTRAINED")):
+            with self.subTest(load=load):
+                snapshot = healthy_snapshot()
+                snapshot["cpu"]["utilization_percent"] = 10
+                snapshot["cpu"]["load_average"]["five_minutes"] = load
+                result = resource_manager.evaluate_resource_policy(snapshot)
+                self.assertEqual(result["subsystem_health"]["cpu"]["level"], level)
+                self.assertEqual(result["recommended_profile"], "ECO")
+
+    def test_missing_sustained_load_does_not_promote_one_busy_sample_to_pressure(self):
+        snapshot = healthy_snapshot()
+        snapshot["cpu"]["utilization_percent"] = 100
+        snapshot["cpu"]["load_average"]["five_minutes"] = None
+        result = resource_manager.evaluate_resource_policy(snapshot)
+        self.assertEqual(result["subsystem_health"]["cpu"]["level"], "UNKNOWN")
+        self.assertEqual(result["recommended_profile"], "BALANCED")
+
+    @override_settings(AI_ENGINE="local")
+    def test_warm_inference_is_diagnostic_but_only_real_pressure_emits_notice(self):
+        from assistant.execution_policy import build_execution_plan
+        for temperature, load, profile in ((65, 1.1, "BALANCED"), (73.8, 1.1, "BALANCED"),
+                                            (73.8, 4.0, "ECO"), (75, 1.1, "ECO"), (80, 1.1, "PROTECTIVE")):
+            with self.subTest(temperature=temperature, load=load):
+                snapshot = healthy_snapshot()
+                snapshot["cpu"]["utilization_percent"] = 100
+                snapshot["cpu"]["load_average"]["five_minutes"] = load
+                snapshot["memory"]["used_percent"] = 63
+                snapshot["thermal"]["cpu_temperature_c"] = temperature
+                report = resource_manager.evaluate_resource_policy(snapshot)
+                self.assertEqual(report["recommended_profile"], profile)
+                plan = build_execution_plan(report)
+                if profile == "BALANCED":
+                    self.assertEqual(report["subsystem_health"]["temperature"]["level"], "CAUTION")
+                    self.assertIn("TEMPERATURE_WARM", [reason["code"] for reason in report["reasons"]])
+                    self.assertIsNone(plan.status_message)
+                    self.assertEqual(plan.generation_budget, "NORMAL")
+                elif profile == "ECO":
+                    self.assertEqual(plan.status_message, "Running in reduced-resource mode.")
+                    self.assertNotEqual(plan.policy_reason, "TEMPERATURE_WARM")
+                else:
+                    self.assertFalse(plan.generation_allowed)
 
     def test_memory_pressure_recommends_eco_budget_for_configured_model(self):
         snapshot = healthy_snapshot()
@@ -210,9 +255,8 @@ class ResourcePolicyTests(SimpleTestCase):
 
     def test_current_pressure_still_wins_over_historical_flags(self):
         for section, key, value, expected in (
-            ("cpu", "utilization_percent", 80, "ECO"),
             ("memory", "used_percent", 80, "ECO"),
-            ("thermal", "cpu_temperature_c", 65, "ECO"),
+            ("thermal", "cpu_temperature_c", 75, "ECO"),
             ("memory", "used_percent", 95, "PROTECTIVE"),
             ("thermal", "cpu_temperature_c", 80, "PROTECTIVE"),
             ("storage", "used_percent", 95, "PROTECTIVE"),

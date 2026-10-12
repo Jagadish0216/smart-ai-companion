@@ -383,7 +383,7 @@ class ConversationMemoryServiceTests(TestCase):
     def test_instruction_order_and_empty_memory_preserve_stable_prefix(self):
         registry = MagicMock()
         registry.build_grounding_instruction.return_value = "CAPABILITIES"
-        response_plan = MagicMock(rag_system_instruction="RAG_POLICY")
+        response_plan = MagicMock(rag_system_instruction="RAG_POLICY", is_voice=False)
         source = RetrievedChunk(1, 1, "private", "notes.md", 0, "DOCUMENT", 1.0)
         instruction = _build_generation_instruction(
             registry=registry, base_instruction="REQUEST_POLICY", rag_results=[source],

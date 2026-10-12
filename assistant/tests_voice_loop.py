@@ -590,8 +590,8 @@ class VoiceLoopTests(SimpleTestCase):
         )
         response_plan = mock_process_message.call_args.kwargs["response_plan"]
         self.assertEqual(response_plan.mode, ResponseMode.NORMAL)
-        self.assertIn("one or two short sentences", response_plan.system_instruction)
-        self.assertIn("ordinary headings", response_plan.system_instruction)
+        self.assertIn("1-2 short sentences", response_plan.system_instruction)
+        self.assertIn("no filler or headings", response_plan.system_instruction)
         self.assertEqual(mock_get_tts.return_value.synthesize.call_args_list,
                          [call("It is test time. Details are ready.")])
         self.assertEqual(mock_process_message.return_value[-1]["response"], original_response)

@@ -1,6 +1,7 @@
 """Pi Qwen single-model payload, voice context and explicit RAG contracts."""
 
 import json
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase, TestCase, override_settings
@@ -10,9 +11,11 @@ from knowledge_base.services import KnowledgeIngestionService
 from .ai_engine import AIEngineResult, AIEngineStreamEvent, EngineUnavailableError, get_engine, reset_engine
 from .ai_engine.local import LocalLLMEngine
 from .execution_policy import build_execution_plan, get_ai_execution_plan
-from .policy import AssistantResponsePolicy, build_runtime_capability_registry
+from .devices.types import DeviceAction, DeviceActionResult, DeviceCommand
+from .online.base import OnlineRetrievalResult
+from .policy import AssistantResponsePolicy, Capability, VOICE_SAFETY_INSTRUCTION, build_runtime_capability_registry
 from .routing import normalize_rag_query
-from .services import AssistantService
+from .services import AssistantService, _build_generation_instruction
 from .test_support import install_resource_report
 
 MODEL = "qwen3.5:4b-q4_K_M"
@@ -20,7 +23,7 @@ SETTINGS = dict(AI_ENGINE="local", OLLAMA_MODEL=MODEL, OLLAMA_THINK=False,
                 OLLAMA_NUM_CTX=4096, OLLAMA_KEEP_ALIVE="24h", RAG_ENABLED=False,
                 ONLINE_RETRIEVAL_ENABLED=False, DEVICE_CONTROL_ENABLED=False,
                 VOICE_RECENT_MESSAGES=2, CONVERSATION_RECENT_MESSAGES=4,
-                VOICE_LLM_BRIEF_NUM_PREDICT=48, VOICE_LLM_NORMAL_NUM_PREDICT=96,
+                VOICE_LLM_BRIEF_NUM_PREDICT=32, VOICE_LLM_NORMAL_NUM_PREDICT=64,
                 VOICE_LLM_DETAILED_NUM_PREDICT=192)
 
 
@@ -75,16 +78,16 @@ class SingleModelPayloadTests(SimpleTestCase):
         response.read.return_value = b'{"done":true,"message":{"content":"Ready"}}'
         urlopen.return_value = response
         engine = LocalLLMEngine(model=MODEL, num_ctx=4096, think=False, keep_alive="24h")
-        grounding = build_runtime_capability_registry(online_allowed=False).build_grounding_instruction()
+        grounding = VOICE_SAFETY_INSTRUCTION
         engine.warm_model()
-        engine.warm_chat_prefix(system_instruction=grounding)
+        engine.warm_chat_prefix(system_instruction=grounding, system_prompt="")
         requests = [json.loads(item.args[0].data) for item in urlopen.call_args_list]
         self.assertEqual(len(requests), 2)
         for payload in requests:
             self.assertEqual(payload["model"], MODEL)
             self.assertEqual(payload["options"]["num_ctx"], 4096)
             self.assertIs(payload["think"], False)
-        stable = engine._build_messages("A different question", [], system_instruction=grounding)[0]["content"]
+        stable = engine._build_messages("A different question", [], system_instruction=grounding, system_prompt="")[0]["content"]
         self.assertEqual(requests[1]["messages"][0]["content"], stable)
         self.assertLess(len(stable), 900)
 
@@ -141,6 +144,101 @@ class VoiceContextTests(TestCase):
                 self.assertEqual(done["recent_history_chars"], 0)
                 self.assertFalse(done["memory_used"])
                 self.assertEqual(done["effective_model"], MODEL)
+                instruction = self.engine.generate_stream.call_args.kwargs["system_instruction"]
+                self.assertTrue(instruction.startswith(VOICE_SAFETY_INSTRUCTION))
+                for unrelated in ("Runtime capabilities", "Available now", "Unavailable now", "ESP32", "DHT11", "LED", "Camera", "Movement", "Reminders", "CPU", "temperature"):
+                    self.assertNotIn(unrelated, instruction)
+                self.assertIn("explicit results supplied for this request", instruction)
+                self.assertIn("Never invent facts/relationships", instruction)
+                self.assertLess(len(instruction), 450)
+
+    def test_real_local_engine_uses_one_compact_voice_system_in_batch_and_stream(self):
+        self.engine = LocalLLMEngine(model=MODEL, think=False, num_ctx=4096)
+        response = MagicMock()
+        response.__enter__.return_value = response
+        payload = {"done": True, "message": {"content": "A factual answer."}}
+        response.read.return_value = json.dumps(payload).encode()
+        response.__iter__.side_effect = lambda: iter([json.dumps(payload).encode()])
+        query = "What is an ESP32?"
+        plan = AssistantResponsePolicy.plan_voice_response(query)
+        with patch("assistant.services.get_engine", return_value=self.engine), patch(
+            "assistant.ai_engine.local.urllib.request.urlopen", return_value=response,
+        ) as urlopen:
+            self.request(query)
+            AssistantService.process_message(query, self.conversation.id, response_plan=plan)
+        self.assertEqual(urlopen.call_count, 2)
+        for call in urlopen.call_args_list:
+            body = json.loads(call.args[0].data)
+            self.assertEqual(len(body["messages"]), 2)
+            self.assertEqual(body["messages"][1], {"role": "user", "content": query})
+            content = body["messages"][0]["content"]
+            self.assertEqual(content, VOICE_SAFETY_INSTRUCTION + "\n\n" + plan.system_instruction)
+            self.assertEqual(content.count("You are the Smart AI Companion"), 1)
+            self.assertNotIn("ESP32", content)
+            self.assertEqual(body["options"]["num_predict"], 64)
+            self.assertEqual(body["model"], MODEL)
+
+    def test_web_prompt_retains_full_registry_and_default_engine_system(self):
+        from .ai_engine.local import SYSTEM_PROMPT
+        self.request("What is MQTT?", voice=False)
+        instruction = self.engine.generate_stream.call_args.kwargs["system_instruction"]
+        self.assertIn("Runtime capabilities:", instruction)
+        self.assertIn("ESP32 DHT11 temperature", instruction)
+        messages = LocalLLMEngine()._build_messages("What is MQTT?", [], instruction)
+        self.assertTrue(messages[0]["content"].startswith(SYSTEM_PROMPT + "\n\n"))
+
+    def test_voice_resource_limits_still_win_for_explicit_detail(self):
+        with self.settings(AI_GENERATION_REDUCED_NUM_PREDICT=40):
+            install_resource_report(self, profile="ECO", generation_budget="REDUCED")
+            done = self.request("Explain MQTT in four short sentences.")
+        self.assertEqual(done["num_predict"], 40)
+        self.assertEqual(done["resource_profile"], "ECO")
+        self.assertEqual(done["effective_model"], MODEL)
+
+    def test_action_prompt_grounding_mentions_only_requested_capability(self):
+        registry = build_runtime_capability_registry(online_allowed=False).with_availability(
+            Capability.ENVIRONMENT_SENSING, True)
+        plan = AssistantResponsePolicy.plan_voice_response("Read the room temperature.", registry)
+        instruction = _build_generation_instruction(
+            registry=registry, base_instruction=plan.system_instruction, rag_results=[],
+            response_plan=plan, online_instruction=None)
+        self.assertIn("ESP32 DHT11 temperature (available)", instruction)
+        self.assertNotIn("ESP32 LED control", instruction)
+        self.assertNotIn("Runtime capabilities:", instruction)
+
+    @override_settings(DEVICE_CONTROL_ENABLED=True, ESP32_DEVICE_ID="companion-esp32-01")
+    def test_voice_action_reports_only_supplied_hardware_result_without_llm(self):
+        controller = MagicMock(device_id="companion-esp32-01")
+        controller.execute.return_value = DeviceActionResult(
+            "request-1", DeviceAction.READ_TEMPERATURE, "companion-esp32-01", True, 1,
+            {"temperature_c": 28.4})
+        with patch("assistant.services.get_device_controller", return_value=controller):
+            done = self.request("Read the room temperature.")
+        self.assertEqual(done["route"], "action")
+        self.assertTrue(done["sensor_used"])
+        self.assertIn("28.4", done["response"])
+        controller.execute.assert_called_once_with(DeviceCommand.read_temperature())
+        self.engine.generate_stream.assert_not_called()
+
+    def test_voice_online_retains_supplied_online_context_without_catalog(self):
+        registry = build_runtime_capability_registry(online_allowed=True).with_availability(
+            Capability.ONLINE_RETRIEVAL, True)
+        result = OnlineRetrievalResult(
+            title="Release", url="https://example.com/releases", content="The latest release is 9.9.",
+            provider="searxng", retrieved_at=datetime.now(timezone.utc))
+        retriever = MagicMock()
+        retriever.retrieve.return_value = [result]
+        install_resource_report(self, online_allowed=True)
+        with patch("assistant.services.build_runtime_capability_registry", return_value=registry), patch(
+            "assistant.services.get_online_retriever", return_value=retriever):
+            done = self.request("What is the latest software release?")
+        instruction = self.engine.generate_stream.call_args.kwargs["system_instruction"]
+        self.assertEqual(done["route"], "online")
+        self.assertIn("The latest release is 9.9", instruction)
+        self.assertIn("explicit results supplied for this request", instruction)
+        self.assertNotIn("Runtime capabilities:", instruction)
+        self.assertNotIn("ESP32", instruction)
+        self.engine.generate_stream.assert_called_once()
 
     def test_deictic_and_explicit_references_receive_only_two_recent_messages(self):
         for query in ("Tell me about it.", "How does that work?", "Why?", "What about its GPIO pins?",
@@ -171,7 +269,7 @@ class VoiceContextTests(TestCase):
                 self.assertIn(self.old.text, str(self.engine.generate_stream.call_args.kwargs["conversation_history"]))
 
     def test_voice_budgets_and_explicit_four_sentences_preserve_completion_headroom(self):
-        for query, expected in (("Briefly explain MQTT.", 48), ("Explain MQTT.", 96),
+        for query, expected in (("Briefly explain MQTT.", 32), ("Explain MQTT.", 64),
                                 ("Explain MQTT in detail.", 192), ("Explain MQTT in four short sentences.", 192)):
             with self.subTest(query=query):
                 done = self.request(query)
@@ -224,6 +322,9 @@ class ExplicitRagIntegrationTests(VoiceContextTests):
             self.assertTrue(done["rag_query_normalized"])
             self.assertEqual(kwargs["model"], MODEL)
             self.assertIn("Edge computing processes", kwargs["system_instruction"])
+            self.assertNotIn("Runtime capabilities:", kwargs["system_instruction"])
+            self.assertNotIn("ESP32", kwargs["system_instruction"])
+            self.assertIn("Use trusted local knowledge only", kwargs["system_instruction"])
             self.assertEqual(self.engine.generate_stream.call_args.args[0], query)
             self.assertEqual(done["num_predict"], 64)
             self.engine.available_models.assert_not_called()

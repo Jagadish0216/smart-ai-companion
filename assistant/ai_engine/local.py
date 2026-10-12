@@ -134,6 +134,7 @@ class LocalLLMEngine(AIEngine):
         num_predict: int | None = None,
         model: str | None = None,
         timeout_seconds: float | None = None,
+        system_prompt: str | None = None,
     ) -> AIEngineResult:
         """
         Send a chat request to Ollama and return the structured result.
@@ -147,6 +148,7 @@ class LocalLLMEngine(AIEngine):
             query,
             conversation_history,
             system_instruction=system_instruction,
+            system_prompt=system_prompt,
         )
         prompt_prepare_ms = round((time.perf_counter() - prompt_started) * 1000)
 
@@ -196,6 +198,7 @@ class LocalLLMEngine(AIEngine):
         num_predict: int | None = None,
         model: str | None = None,
         timeout_seconds: float | None = None,
+        system_prompt: str | None = None,
     ):
         """Yield Ollama text deltas immediately and finish with safe metrics."""
         selected_model = model or self._model
@@ -204,6 +207,7 @@ class LocalLLMEngine(AIEngine):
             query,
             conversation_history,
             system_instruction=system_instruction,
+            system_prompt=system_prompt,
         )
         prompt_prepare_ms = round((time.perf_counter() - prompt_started) * 1000)
         request = self._build_chat_request(
@@ -301,6 +305,7 @@ class LocalLLMEngine(AIEngine):
         query: str,
         history: list | None,
         system_instruction: str | None = None,
+        system_prompt: str | None = None,
     ) -> list[dict]:
         """
         Build the messages array for Ollama /api/chat.
@@ -316,10 +321,12 @@ class LocalLLMEngine(AIEngine):
 
         Ollama applies the correct chat template for the model automatically.
         """
-        system_content = SYSTEM_PROMPT
+        # Trusted server override for compact voice grounding; legacy/text
+        # callers retain the original default prompt and message ordering.
+        system_content = SYSTEM_PROMPT if system_prompt is None else system_prompt
         if system_instruction and system_instruction.strip():
             system_content += (
-                "\n\n"
+                ("\n\n" if system_content else "")
                 + system_instruction.strip()
             )
 
@@ -529,12 +536,14 @@ class LocalLLMEngine(AIEngine):
         system_instruction: str | None = None,
         model: str | None = None,
         timeout_seconds: float | None = None,
+        system_prompt: str | None = None,
     ) -> dict:
-        """Prime the reusable production /api/chat system prefix."""
+        """Pre-evaluate a chat instruction, without promising cross-query caching."""
         messages = self._build_messages(
             "Ready.",
             [],
             system_instruction=system_instruction,
+            system_prompt=system_prompt,
         )
         try:
             result = self._call_ollama_chat(

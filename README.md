@@ -67,7 +67,9 @@ API: {conversation_id, response, engine, model, mode}
 
 The reusable policy layer classifies requests as `BRIEF`, `NORMAL`, `DETAILED`, `ACTION`, or `CLARIFICATION`. The standalone voice loop uses this classification to select response depth and a request-scoped Ollama generation budget without changing the global `OLLAMA_NUM_PREDICT=128` fallback. Browser and service calls without a voice plan retain the same behavior while all LLM requests receive request-scoped capability grounding.
 
-Resource scheduling uses current CPU/load, memory, storage, temperature and active throttle flags. Latched historical throttle flags remain diagnostic CAUTION with `THROTTLING_HISTORY`, not current scheduling pressure. Active throttling and critical conditions still select PROTECTIVE and can block generation. BALANCED/PERFORMANCE/ECO use only `OLLAMA_MODEL` (default `qwen3.5:4b-q4_K_M`); profiles reduce output/history budgets, never select another model. For the earlier healthy snapshot with RAM 66.8%, runtime scheduling remains BALANCED/NORMAL because RAM exceeds the 65% PERFORMANCE threshold. Diagnostic CAUTION and runtime BALANCED can coexist.
+Resource scheduling uses sustained five-minute load divided by logical CPU count, memory, storage, temperature and active throttle flags. Instantaneous utilization remains visible: a busy 100% sample with load 1.1 on four cores (normalized 0.275) is not CPU pressure. Configurable normalized-load thresholds remain 1.0 for CAUTION and 1.5 for CONSTRAINED; either selects ECO. Missing sustained-load telemetry is UNKNOWN, not inferred pressure from one sample. Utilization thresholds remain diagnostic busy indicators; PERFORMANCE still requires low instantaneous utilization and ample headroom.
+
+Temperature at 65 C remains diagnostic CAUTION with `TEMPERATURE_WARM`, but below 75 C does not alone select ECO. At 75 C the profile is ECO; at 80 C it is PROTECTIVE. Active throttle flags still select PROTECTIVE and block generation. Latched historical flags remain diagnostic `THROTTLING_HISTORY`. Genuine memory/storage pressure still reduces the profile. Thus CPU 100%, load 1.1/4, RAM 63%, temperature 73.8 C and throttle 0x0 remain BALANCED/NORMAL without a reduced-resource notice, while subsystem health truthfully reports warmth. BALANCED/PERFORMANCE/ECO use only `OLLAMA_MODEL` (default `qwen3.5:4b-q4_K_M`); profiles reduce output/history budgets, never select another model.
 
 Voice plans default to no implicit RAG for generic world-knowledge questions, even if local documents match. Explicit local-document/project intent enables retrieval. Known request wrappers are removed deterministically: "What does our knowledge base say about edge computing?" retrieves "edge computing"; "According to my notes, how is ESP32 relay wiring connected?" retrieves "ESP32 relay wiring connected". The complete original question still goes to the model and database. Lexical scoring is unchanged; implicit text-chat queries are unchanged. Optional `retrieval_query` metadata contains only the user-derived retrieval topic, never document contents; it is not logged, including on errors.
 
@@ -85,7 +87,7 @@ Contentless deictic follow-ups such as "Tell me about it", "How does that work" 
 
 `conversations/memory.py` provides a replaceable lexical retriever. It considers at most the latest 500 eligible older USER rows, applies database-side term filtering, transfers at most 200 candidate excerpts of 4000 characters each, then ranks by distinct query-term coverage. Common conversational stop words are removed; identifiers such as `GPIO18`/`GPIO 18`, `ESP32`, `llama3.2`, hyphenated project names and filenames are supported. Default relevance is 0.5; stronger lexical matches win, with newer timestamps/IDs breaking ties. Up to two unique messages share a 400-character content budget. This is lexical recall, not semantic search: facts beyond the bounded scan horizon, synonyms or facts only appearing after the 4000-character excerpt may not be recalled. Set TOP_K or MAX_CHARS to zero to disable long-term context.
 
-SYSTEM content stays capability grounding → response policy → document RAG → online grounding. Retrieved memory never enters SYSTEM content: selected older statements are replayed as USER history, oldest → newest, followed by chronological bounded recent turns and the current user query supplied separately. Normal LOCAL SYSTEM content is byte-for-byte identical with or without memory when other request policies match, preserving the warmed-prefix architecture. Current corrections are the latest USER turn; newer memories follow older ones; document-grounded RAG instructions remain SYSTEM-level and take precedence over USER memory. Failure logs a safe warning and continues with recent context without changing routing, model selection or output budgets.
+Web/text SYSTEM content stays capability grounding → response policy → document RAG → online grounding. Voice instead uses compact invariant safety → voice policy → relevant request context, without a runtime catalogue. Retrieved memory never enters SYSTEM content: selected older statements are replayed as USER history, oldest → newest, followed by chronological bounded recent turns and the current user query supplied separately. Normal LOCAL SYSTEM content is byte-for-byte identical with or without memory when other request policies match, but cross-query prefix-cache reuse is not guaranteed. Current corrections are the latest USER turn; newer memories follow older ones; document-grounded RAG instructions remain SYSTEM-level and take precedence over USER memory. Failure logs a safe warning and continues with recent context without changing routing, model selection or output budgets.
 
 Recall stays local to SQLite and the existing local generation path; no raw memory text, prompt or message list is exposed in diagnostics. Existing conversation API access controls are unchanged. Normal API responses and streaming done events add `memory_used`, `memory_messages`, `memory_chars` (selected content only) and `memory_ms`; logs use counts/timing only. Deleting a conversation removes its messages through the existing cascade, so there is no separate memory cache to purge.
 
@@ -136,11 +138,13 @@ Ordinary `LOCAL_RAG` answers are capped at `RAG_NUM_PREDICT=64` output tokens, f
 
 Useful chunks are added only to the internal request instruction; user query and history remain unchanged. The shorter RAG instruction still treats local knowledge as factual reference data, ignores embedded instructions, prohibits invented missing facts, and hides retrieval details unless asked. No useful match follows the normal non-RAG path.
 
-The compact shared prompt preserves identity, factual/uncertainty rules and runtime capability/result grounding. Voice and RAG no longer repeat style rules. With local AI, Whisper, Piper and indexed RAG enabled, online/device control disabled, the reusable stable SYSTEM prefix decreased from 1607 to 752 characters (about 402 to 188 tokens using a rough four-characters/token estimate). NORMAL voice instructions decreased from 1386 to 543 characters; the duplicated 784-character RAG voice instruction was removed. Stable prefix plus NORMAL policy is approximately 1297 characters rather than 2993, before user/history/context text. These are measured character counts and approximate token counts, not measured Qwen tokenizer counts or new Pi latency results. No query, history, timestamp or resource profile is inserted into the stable prefix; genuinely changed capability availability still updates grounding truthfully.
+Generic LOCAL voice uses one complete SYSTEM message: compact identity/factual/uncertainty/action-result safety plus short spoken style. It never enumerates devices, unavailable subsystems or project-specific hardware, and does not insert diagnostics/resource notices into the prompt. The local engine's trusted request-scoped SYSTEM override avoids repeating its web/text base prompt; default engine callers and web grounding are unchanged. ACTION receives only the requested capability (hardware actions retain deterministic supplied-result responses with no LLM); LOCAL_RAG still receives document grounding/context, and ONLINE still receives its existing online evidence/safety instruction. Follow-ups get bounded history and a small reference-resolution instruction; standalone questions still get zero history.
 
-`warm_ai_model` warms one model's residency and the shared production prefix. Optional RAG prewarming is removed; old `RAG_PREWARM_*` environment values are ignored. API readiness retries and the single overall timeout remain, as does systemd's 120-second startup limit. Both warm stages use the same 4096-token context and non-thinking controls; keep-alive defaults to 24h. An explicit diagnostic `--model` override still warms only that one requested model.
+Measured under the same local AI/Whisper/Piper/indexed-RAG fixture with online/device control disabled, complete generic NORMAL voice SYSTEM content decreased from 1297 to 443 characters (66% smaller; roughly 324 to 111 tokens at four characters/token). Its invariant safety is 261 characters and voice style is 180, plus a two-character separator. These exclude query/chat-template tokens and are not Qwen tokenizer measurements or new Pi latency results. BRIEF/NORMAL/DETAILED defaults are 32/64/192 output tokens: one direct sentence preferably <=15 words; normally 1-2 short sentences around 15-35 words; or explicitly requested detail/steps/examples/four short sentences. Explicit format overrides brevity, answers stop when complete, and smaller resource-policy budgets still win.
 
-Historical Llama baseline: warm 3B LOCAL TTFT was ~836 ms; 3B LOCAL_RAG TTFT was ~9.5 seconds despite ~2 ms lexical retrieval. Qwen's quality is now accepted, with measured raw warm decode around 2.6-2.9 tokens/s. Short voice generation, bounded follow-up context and a compact reusable prefix address prompt/output overhead; separate SYSTEM-message experiments are not reinstated. Rebenchmark the full production path on the Pi; Windows tests do not establish a new latency figure.
+`warm_ai_model` primarily establishes single-model residency, then pre-evaluates only the 261-character generic voice safety instruction. It no longer collects a boot-time capability catalogue or resource report. Optional RAG prewarming remains removed; old `RAG_PREWARM_*` values are ignored. API readiness retries and the single overall timeout remain, as does systemd's 120-second startup limit. Both stages use the same 4096-token context and non-thinking controls; keep-alive defaults to 24h. An explicit diagnostic `--model` override still warms only that one requested model. Cross-query prefix-cache reuse is not promised; latency improvement comes from smaller uncached prompts/output budgets.
+
+Historical Llama baseline: warm 3B LOCAL TTFT was ~836 ms; 3B LOCAL_RAG TTFT was ~9.5 seconds despite ~2 ms lexical retrieval. With dedicated Pi power, the latest compact Qwen benchmark decoded 94 tokens in 27.647 seconds (~3.4 tokens/s); throttle flags stayed 0x0 even at 73.8 C. Production previously used 256-272 prompt tokens and 15-17 seconds of prefill. Exact repeats cached, but different queries did not reliably reuse the prefix. Rebenchmark the smaller production voice path below; Windows tests establish correctness, not a new Pi latency figure.
 
 `LOCAL_RAG` is reported unavailable when the local LLM is not selected, RAG is disabled, configuration is invalid, or no indexed chunks exist. This conservative empty-index behavior prevents the assistant from claiming it can search local knowledge before ingestion has succeeded.
 
@@ -440,8 +444,8 @@ Mock mode requires no external services and is useful for frontend development.
 | `VOICE_STREAM_INTER_CHUNK_SILENCE_SECONDS` | `0.12` | Persistent ALSA boundary pause target, counting retained Piper edge silence; finite range `0`–`1` |
 | `VOICE_TTS_CHUNK_CHARS` | `300` | Legacy batch speech-helper chunk size; streaming uses the setting above |
 | `VOICE_TTS_MAX_TOTAL_CHARS` | `0` | Legacy batch speech-helper safety limit; streaming speaks the full answer without truncation |
-| `VOICE_LLM_BRIEF_NUM_PREDICT` | `48` | Request-scoped Ollama budget for brief voice responses |
-| `VOICE_LLM_NORMAL_NUM_PREDICT` | `96` | Request-scoped Ollama budget for normal voice responses |
+| `VOICE_LLM_BRIEF_NUM_PREDICT` | `32` | Request-scoped Ollama budget for brief voice responses |
+| `VOICE_LLM_NORMAL_NUM_PREDICT` | `64` | Request-scoped Ollama budget for normal voice responses |
 | `VOICE_LLM_DETAILED_NUM_PREDICT` | `192` | Request-scoped Ollama budget for detailed voice responses |
 | `AI_GENERATION_NORMAL_VOICE_NUM_PREDICT` | `384` | Voice-only healthy NORMAL resource ceiling; capped at 512, never raises ECO/PROTECTIVE limits |
 
@@ -511,8 +515,8 @@ VOICE_TTS_MAX_TOTAL_CHARS=0
 VOICE_STREAM_TTS_TARGET_CHARS=180
 VOICE_STREAM_FIRST_CHUNK_MIN_CHARS=60
 VOICE_STREAM_FIRST_CHUNK_TARGET_CHARS=100
-VOICE_LLM_BRIEF_NUM_PREDICT=48
-VOICE_LLM_NORMAL_NUM_PREDICT=96
+VOICE_LLM_BRIEF_NUM_PREDICT=32
+VOICE_LLM_NORMAL_NUM_PREDICT=64
 VOICE_LLM_DETAILED_NUM_PREDICT=192
 ```
 
@@ -528,7 +532,7 @@ The voice loop applies the assistant response policy before generation. Brief re
 
 The voice loop consumes `AssistantService.process_message_stream()` directly: `start` selects the conversation ID, `delta` feeds a sentence-aware speech buffer, `done` flushes the final speech remainder and supplies the canonical response/metadata, and `error` cancels audio and reports ERROR. Routing, grounding, memory, model selection, response budgets and persistence remain owned by the service; there is no additional AI call or browser endpoint change. The service still persists the complete canonical response, including any resource notices.
 
-Voice-only policy asks for one direct short sentence in BRIEF mode, and normally one or two short sentences (preferably 15-40 spoken words) in NORMAL mode. Background, examples and caveats belong only when needed to answer the request. Explicit detail, steps, examples and comparison requests remain conversational DETAILED answers; explicit formatting/length overrides the defaults (four sentences still means four). A plain "explain how X works" stays NORMAL. Avoid stock openings and project/internal tangents. History still resolves pronouns, follow-ups and user-provided facts, but must not redirect a standalone named-topic question to unrelated earlier project discussion. These are generation instructions, not a second summarization call or a text-chat policy change; actual model adherence needs Pi listening validation.
+Voice-only policy asks for one direct short sentence (preferably <=15 words) in BRIEF mode, and normally 1-2 short sentences (roughly 15-35 words) in NORMAL mode. Background, examples and caveats belong only when needed to answer the request. Explicit detail, steps, examples and comparison requests remain conversational DETAILED answers; explicit formatting/length overrides the defaults (four sentences still means four). A plain "explain how X works" stays NORMAL. Avoid stock openings and project/internal tangents. History still resolves pronouns, follow-ups and user-provided facts, but must not redirect a standalone named-topic question to unrelated earlier project discussion. These are generation instructions, not a second summarization call or a text-chat policy change; actual model adherence needs Pi listening validation.
 
 The terminal prints `Assistant: ` once, then prints actual answer deltas immediately with `flush=True`, preserving their spaces/newlines and Markdown. It finishes the line at `done` (or on failure) and never reprints the full final answer. Terminal presentation runs on the producer; neither audio worker performs terminal writes or waits for them. Known initial resource notices appear once per distinct notice as `Status: ...`, not as assistant text or speech. A small leading-only filter handles notices split across deltas and repeated initial notices; it does not delete matching text inside an actual answer. Genuine direct answers, including resource-unavailability explanations, remain visible and spoken.
 
@@ -540,7 +544,7 @@ For example, `Solar panels convert sunlight into electricity by using photovolta
 
 Only at completion, after a unit containing a complete sentence has already been submitted to playback, speech may omit a clearly dangling final fragment (for example, ending in "a Linux-based", "the", or "and"). An unpunctuated answer is not automatically incomplete; a sole short answer and useful unpunctuated facts remain spoken. This conservative heuristic is presentation-only: terminal and persisted canonical text are never rewritten.
 
-Pi diagnostics confirmed dangling responses at `eval_count=96` and `num_predict=96` under ECO. Healthy BALANCED/PERFORMANCE voice requests with a NORMAL budget now use a separate bounded resource ceiling, `AI_GENERATION_NORMAL_VOICE_NUM_PREDICT=384` (hard maximum 512). Actual BRIEF/NORMAL/DETAILED defaults are 48/96/192; BRIEF requests one direct 5-20-word sentence, and NORMAL prefers 15-40 words. Explicit three-or-more-sentence requests select DETAILED headroom, not a two-sentence limit. Text requests retain their existing NORMAL default of 128. ECO REDUCED 96, PROTECTIVE MINIMAL 48, policy-unavailable and safety-unknown reductions remain unchanged; blocked generation stays blocked. Ordinary explicit RAG still applies its 64-token cap, while detailed RAG remains resource-bounded. A larger healthy ceiling reduces predictable truncation but cannot guarantee arbitrarily long detailed answers finish.
+Earlier Pi diagnostics confirmed dangling responses at `eval_count=96` and `num_predict=96` under ECO. Healthy BALANCED/PERFORMANCE voice requests retain a separate bounded resource ceiling, `AI_GENERATION_NORMAL_VOICE_NUM_PREDICT=384` (hard maximum 512). Actual BRIEF/NORMAL/DETAILED defaults are now 32/64/192; BRIEF requests one direct sentence preferably <=15 words, and NORMAL prefers 1-2 short sentences around 15-35 words. Explicit three-or-more-sentence requests select DETAILED headroom, not a two-sentence limit. Text requests retain their existing NORMAL default of 128. ECO REDUCED 96, PROTECTIVE MINIMAL 48, policy-unavailable and safety-unknown reductions remain unchanged; blocked generation stays blocked. Ordinary LOCAL_RAG still applies its 64-token cap, while detailed RAG remains resource-bounded. Shorter style instructions reduce truncation risk but cannot guarantee arbitrary explicit formats finish within their budget.
 
 Final generation metadata adds `eval_count` and `output_limit_reached = eval_count >= num_predict` only when the engine supplies a nonnegative integer token count. Otherwise both are absent, not fabricated. This flags probable token exhaustion, not linguistic completeness; canonical output is persisted truthfully even if cut off. Closing a generated stream after its validated, persisted `done` event no longer logs an incomplete client disconnect; abandoning it before `done` still does. No additional inference stage, ALSA/Piper change, STT or model-TTFT improvement is claimed.
 
@@ -688,6 +692,106 @@ NDJSON metadata with Ollama metrics in the journal, verify `load_duration` is
 near zero after warm-up, then repeat under ECO pressure to confirm reduced budgets on the same
 configured Qwen model, without switching or duplicate residency. Also issue `/api/system/resource-manager/` requests
 during generation to confirm the threaded worker remains responsive.
+
+### Dedicated-power voice acceptance procedure
+
+In `/home/jagadish/apps/smart-ai-companion/.env`, change only the two voice budgets below; verify the other five existing values. Do not change audio, display, MQTT, RAG, capture or networking settings:
+
+```env
+VOICE_LLM_BRIEF_NUM_PREDICT=32
+VOICE_LLM_NORMAL_NUM_PREDICT=64
+VOICE_LLM_DETAILED_NUM_PREDICT=192
+OLLAMA_MODEL=qwen3.5:4b-q4_K_M
+OLLAMA_KEEP_ALIVE=24h
+OLLAMA_THINK=false
+OLLAMA_NUM_CTX=4096
+```
+
+After transferring this reviewed working-tree change to the Pi (no commit/push is performed by this task), stop any interactive voice loop and activate the existing environment. Restart Django so it reloads code/settings, then explicitly rerun warm-up:
+
+```bash
+cd /home/jagadish/apps/smart-ai-companion
+source venv/bin/activate
+sudo systemctl restart smart-ai-companion.service
+python manage.py warm_ai_model --timeout 90
+ollama ps
+vcgencmd get_throttled
+```
+
+Run this exact in-process voice-generation benchmark. It uses the actual response plan, service, streaming engine, prompt construction and metadata; it does not fake output or add an inference call. Each query starts a fresh conversation (saved as ordinary benchmark history). It reports the complete SYSTEM size and actual Ollama tokens/cache/prefill/decode metrics, without dumping internal prompts. First-delta/total times cover the service path, not microphone/STT/TTS, HTTP transport or acoustic latency.
+
+```bash
+python manage.py shell <<'PY'
+import json
+import time
+from unittest.mock import patch
+from assistant.ai_engine import get_engine
+from assistant.policy import AssistantResponsePolicy
+from assistant.services import AssistantService
+
+engine = get_engine()
+build_request = engine._build_chat_request
+generate_stream = engine.generate_stream
+diagnostics = {}
+
+def observed_request(*args, **kwargs):
+    request = build_request(*args, **kwargs)
+    body = json.loads(request.data)
+    diagnostics['system_chars'] = len(body['messages'][0]['content'])
+    return request
+
+def observed_stream(*args, **kwargs):
+    for event in generate_stream(*args, **kwargs):
+        if event.type == 'done':
+            diagnostics.update(event.result.metrics)
+        yield event
+
+queries = [
+    'What is an ESP32?',
+    'Explain how Raspberry Pi works.',
+    'What is MQTT?',
+    'Briefly explain RAM.',
+    'Explain edge computing in four short sentences.',
+]
+with patch.object(engine, '_build_chat_request', observed_request), patch.object(engine, 'generate_stream', observed_stream):
+    for query in queries:
+        diagnostics.clear()
+        started = time.perf_counter()
+        first = None
+        for event in AssistantService.process_message_stream(query, response_plan=AssistantResponsePolicy.plan_voice_response(query)):
+            if event['type'] == 'delta' and event['text'].strip() and first is None:
+                first = round((time.perf_counter() - started) * 1000)
+            if event['type'] == 'error':
+                raise RuntimeError(event)
+            if event['type'] == 'done':
+                fields = ('conversation_id', 'route', 'effective_model', 'num_predict', 'resource_profile', 'generation_budget',
+                          'ttft_ms', 'generation_ms', 'recent_history_messages', 'memory_used', 'output_limit_reached')
+                report = {key: event.get(key) for key in fields}
+                report.update(diagnostics)
+                report.update(query=query, service_first_delta_ms=first,
+                              total_ms=round((time.perf_counter() - started) * 1000), response=event['response'])
+                print(json.dumps(report, sort_keys=True), flush=True)
+PY
+```
+
+Use different questions, not just exact repeats. NORMAL should report SYSTEM 443 characters, budget 64, zero recent history, Qwen only, and no unrelated hardware limitations; BRIEF should report 32 and four-sentence DETAILED 192 unless genuine resource pressure reduces it. Treat actual `prompt_eval_count` as authoritative; the four-characters/token approximation excludes the query and chat template. Record uncached (`prompt_eval_cached_count=0`, when supplied) results as well as cached ones. Confirm model load is near zero after residency warm-up; do not require cross-query cache hits.
+
+During generation, inspect the Resource Manager dashboard or poll it from another terminal:
+
+```bash
+watch -n 2 curl -fsS http://127.0.0.1:8000/api/system/resource-manager/
+```
+
+With the physical-like healthy snapshot, expect BALANCED/NORMAL even at CPU 100%/73.8 C, diagnostic `TEMPERATURE_WARM`, and no reduced-resource notice. Genuine normalized load >=1.0 or temperature >=75 C should still select ECO; active throttling or >=80 C remain PROTECTIVE. Do not deliberately overheat the Pi or induce undervoltage for this benchmark. After the run, check power/temperature and then run the unmodified physical voice loop to measure STT, first speech, Piper/ALSA gaps and TFT states:
+
+```bash
+vcgencmd get_throttled
+vcgencmd measure_temp
+journalctl -k -b --no-pager
+python scripts/voice_loop.py
+```
+
+Ask the same distinct standalone questions, an actual supported device action, a relevant local-document question and a configured online question. Verify factual/direct answers, supplied-result grounding, concise speech, one playback stream per response, and existing TFT state transitions. Review voice-loop Timing lines separately from the generation-only measurements above.
 
 ## Current Implementation Status
 

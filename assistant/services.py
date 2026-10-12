@@ -23,6 +23,7 @@ from .ai_engine import (
     ModelUnavailableError,
     get_engine,
 )
+from .ai_engine.local import LocalLLMEngine
 from .devices.base import (
     DeviceCommandTimeoutError,
     DeviceControllerError,
@@ -41,6 +42,7 @@ from .policy import (
     CapabilityRegistry,
     ResponseMode,
     ResponsePlan,
+    VOICE_SAFETY_INSTRUCTION,
     build_runtime_capability_registry,
 )
 from .routing import QueryRoute, QueryRouteDecision, QueryRouter
@@ -63,6 +65,7 @@ class PreparedAssistantRequest:
     online_latency_ms: int
     execution_started: float
     stage_ms: dict[str, int] = field(default_factory=dict)
+    is_voice: bool = False
 
 
 class AssistantService:
@@ -446,6 +449,7 @@ def _prepare_message(
         online_latency_ms=online_latency_ms,
         execution_started=execution_started,
         stage_ms=stage_ms,
+        is_voice=bool(response_plan and response_plan.is_voice),
     )
 
 
@@ -458,9 +462,19 @@ def _build_generation_instruction(
     online_instruction: str | None,
     rag_detailed: bool = False,
 ) -> str:
-    """Keep stable capability grounding before request-specific context."""
+    """Voice gets invariant safety and relevant context, never the inventory."""
+    grounding = (
+        VOICE_SAFETY_INSTRUCTION if response_plan and response_plan.is_voice
+        else registry.build_grounding_instruction()
+    )
+    if response_plan and response_plan.is_voice and response_plan.required_capability:
+        status = registry.status(response_plan.required_capability)
+        grounding = _combine_instructions(
+            grounding,
+            f"Requested capability: {status.description} ({'available' if status.available else 'unavailable'}).",
+        )
     return _combine_instructions(
-        registry.build_grounding_instruction(),
+        grounding,
         base_instruction,
         build_rag_instruction(rag_results, concise=not rag_detailed) if rag_results else None,
         (
@@ -473,13 +487,17 @@ def _build_generation_instruction(
 
 
 def _generation_kwargs(prepared: PreparedAssistantRequest) -> dict:
-    return {
+    kwargs = {
         "conversation_history": prepared.history,
         "system_instruction": prepared.system_instruction,
         "num_predict": prepared.num_predict,
         "model": prepared.execution_plan.effective_model,
         "timeout_seconds": prepared.execution_plan.timeout_seconds,
     }
+    if prepared.is_voice and isinstance(prepared.engine, LocalLLMEngine):
+        # Safety/identity already occur once in the complete voice instruction.
+        kwargs["system_prompt"] = ""
+    return kwargs
 
 
 def _resource_status_prefix(execution_plan: AIExecutionPlan) -> str:
