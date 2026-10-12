@@ -422,6 +422,7 @@ Mock mode requires no external services and is useful for frontend development.
 | `VOICE_CAPTURE_VAD_START_TIMEOUT_SECONDS` | `5` | Maximum time to wait for speech after `Speak now...` |
 | `VOICE_LEADING_SILENCE_SECONDS` | `0.7` | Digital silence on the first playback chunk only; set `0.5` for Pi I2S |
 | `VOICE_STREAM_TTS_TARGET_CHARS` | `180` | Streaming fallback word-boundary target for unusually long sentences/unpunctuated text |
+| `VOICE_STREAM_INTER_CHUNK_SILENCE_SECONDS` | `0.12` | Persistent ALSA boundary pause target, counting retained Piper edge silence; finite range `0`–`1` |
 | `VOICE_TTS_CHUNK_CHARS` | `300` | Legacy batch speech-helper chunk size; streaming uses the setting above |
 | `VOICE_TTS_MAX_TOTAL_CHARS` | `0` | Legacy batch speech-helper safety limit; streaming speaks the full answer without truncation |
 | `VOICE_LLM_BRIEF_NUM_PREDICT` | `96` | Request-scoped Ollama budget for brief voice responses |
@@ -440,16 +441,19 @@ VOICE_ALSA_CAPTURE_DEVICE=hw:CARD=sndrpigooglevoi,DEV=0
 VOICE_ALSA_PLAYBACK_DEVICE=hw:CARD=sndrpigooglevoi,DEV=0
 VOICE_PLAYBACK_GAIN=4.0
 VOICE_LEADING_SILENCE_SECONDS=0.5
+VOICE_STREAM_INTER_CHUNK_SILENCE_SECONDS=0.12
 ```
 
-ALSA capture uses native 48 kHz stereo S32_LE, then FFmpeg explicitly selects LEFT with `pan=mono|c0=FL` and produces mono 16 kHz `pcm_s16le` for Whisper. It does not average the silent RIGHT channel into speech. Each Piper chunk is converted to 48 kHz stereo `pcm_s32le` with `volume=4.0,alimiter=limit=0.98:level=false` (the gain is configurable), then played on the named ALSA device. Numeric card indices are intentionally not used. The commands are:
+ALSA capture uses native 48 kHz stereo S32_LE, then FFmpeg explicitly selects LEFT with `pan=mono|c0=FL` and produces mono 16 kHz `pcm_s16le` for Whisper. It does not average the silent RIGHT channel into speech. Each Piper chunk is converted to headerless 48 kHz stereo S32_LE with `volume=4.0,alimiter=limit=0.98:level=false` (the gain is unchanged/configurable). A single persistent `aplay` owns the named ALSA device for the entire streamed response. Numeric card indices are intentionally not used. Capture and preparation commands are:
 
 ```bash
 arecord -D hw:CARD=sndrpigooglevoi,DEV=0 -c 2 -r 48000 -f S32_LE -t wav recorded.wav
 ffmpeg -y -i recorded.wav -af 'pan=mono|c0=FL' -ar 16000 -ac 1 -c:a pcm_s16le normalized.wav
-ffmpeg -y -i stream-playback-001.wav -af 'volume=4.0,alimiter=limit=0.98:level=false' -ar 48000 -ac 2 -c:a pcm_s32le stream-speaker-001.wav
-aplay -D hw:CARD=sndrpigooglevoi,DEV=0 stream-speaker-001.wav
+ffmpeg -y -i stream-playback-001.wav -af 'volume=4.0,alimiter=limit=0.98:level=false' -ar 48000 -ac 2 -c:a pcm_s32le -f s32le stream-speaker-source-001.pcm
+aplay -D hw:CARD=sndrpigooglevoi,DEV=0 -t raw -f S32_LE -r 48000 -c 2
 ```
+
+The loop trims each source PCM into `stream-speaker-001.pcm`, etc., and writes those files plus controlled silence into the same `aplay` stdin; it never writes WAV headers to that stream. EOF closes stdin after the last chunk, then the loop waits for device drain and verifies the exit code before returning the TFT to idle. ALSA nonblocking pipe writes use at most 64 KiB at a time, so device backpressure can be cancelled without a third worker. stderr is file-backed, avoiding a pipe-reader thread/deadlock. Playback has one 300-second response-lifetime bound; errors/cancellation terminate, kill if necessary, and reap the child. Pulse retains its existing per-chunk `paplay` behavior; legacy batch WAV helpers remain available.
 
 The loop bounds fixed capture in Python (warm-up plus `VOICE_RECORD_SECONDS`, followed by terminate/kill and reap), rather than adding `-d` to `arecord`. Optional live capture uses the same native format with `-t raw`, computes RMS directly from signed 32-bit LEFT samples, and writes a native WAV for the same final normalization. No per-chunk FFmpeg process is used for VAD. A wall-clock watchdog also kills a stalled ALSA pipe; normal pre-roll, start timeout, silence stop, and maximum speech duration remain in effect.
 
@@ -516,15 +520,19 @@ The main thread consumes generation and performs service persistence. The audio 
 
 ```text
 AI deltas -> sentence buffer -> text queue (2)
-    -> one Piper/WAV/FFmpeg preparation worker -> ready-audio queue (2)
-    -> one sequential aplay/paplay worker
+    -> one Piper/FFmpeg/PCM-edge preparation worker -> ready-audio queue (2)
+    -> one persistent ALSA aplay worker (or sequential Pulse paplay)
 ```
 
-Preparation of chunk N+1 overlaps playback of N while generation continues. Each chunk uses unique temporary filenames (`stream-playback-001.wav`, `stream-speaker-001.wav`, etc.), so preparation cannot overwrite a file in use. The next ready chunk launches directly after current playback, with no inter-chunk sleeps or added silence. First-sentence release and the existing sentence/fallback rules are unchanged; no artificial wait is imposed to coalesce sentences. Queue backpressure bounds pending work. There is never more than one Piper/FFmpeg preparation process or one playback process active.
+Preparation of chunk N+1 overlaps playback of N while generation continues. Prepared ALSA items contain unique raw file paths and edge-silence counts, not response-long audio bytes. Each chunk uses unique temporary filenames, so preparation cannot overwrite a file in use. PCM scan/copy/play writes are bounded to small blocks, with no unbounded response audio in RAM. First-sentence release and the existing sentence/fallback rules are unchanged; no artificial wait is imposed to coalesce sentences. Queue backpressure bounds pending work. There is never more than one Piper/FFmpeg preparation process or one playback process active.
+
+Independent Piper synthesis may add edge silence even when the next chunk is ready. ALSA preparation conservatively scans 10 ms native PCM windows at a very low -80 dBFS peak threshold. It removes only excess quiet edge windows and retains a 30 ms guard beside detected speech. First-chunk leading audio is left intact; its excessive trailing silence and later chunks' leading/trailing excess are controlled. All-quiet chunks and interior pauses remain intact. Every above-threshold sample is copied unchanged; very faint below-threshold phonemes cannot be identified with certainty, which is why guard padding and Pi listening validation remain important. No real Piper recording was supplied in this checkout, so actual Pi edge levels/phonemes have not been measured here.
+
+At a boundary, the player inserts only `max(0, target - previous retained trailing - next retained leading)` frames of zero-valued PCM. The default target is 0.12 seconds; 10 ms edge-window resolution means actual quiet boundaries can be slightly longer. Retained Piper silence is counted, not doubled, and a natural pause remains even with both chunks already ready. The initial configured 0.5 seconds is generated as native zero PCM exactly once before chunk 1. No silence or pause is implemented using `sleep()`.
 
 On AI/TTS/preparation/playback failure, shared cancellation discards queued work, cancels/reaps active Piper/FFmpeg/aplay/paplay processes, unblocks both queues through cancellation-aware waits, closes the service generator, and joins both workers before temporary files are removed. The original failure is retained instead of being replaced by secondary cancellation errors. An audio failure is surfaced when the bounded service stream next yields or times out. The next interaction starts at LISTENING.
 
-Real digital silence is prepended only to the first chunk, before ALSA conversion, never implemented as a playback sleep. The display changes to SPEAKING exactly once, after conversion and immediately before the first playback, remains SPEAKING throughout the response, then returns to READY/ECO/PROTECTIVE after final playback. ALSA uses `arecord`, `ffmpeg`, and `aplay`; Pulse retains `parecord`, `ffmpeg`, and `paplay`. Wake-word detection is not implemented.
+The display changes to SPEAKING exactly once, after preparation and immediately before opening the persistent player/writing initial silence, remains SPEAKING throughout the response and final device drain, then returns to READY/ECO/PROTECTIVE. Pulse still prepends its first-chunk WAV silence before playback. ALSA uses `arecord`, `ffmpeg`, and `aplay`; Pulse retains `parecord`, `ffmpeg`, and `paplay`. Wake-word detection is not implemented.
 
 Timing values are seconds, printed to millisecond precision:
 
@@ -534,8 +542,11 @@ Timing values are seconds, printed to millisecond precision:
 - `first_speech`: voice-cycle start to that same playback launch (includes capture/STT).
 - `ai_total`: stream consumption start to `done`, including service preparation and queue backpressure; `ai` remains an alias.
 - `tts`: accumulated Piper synthesis time.
-- `audio_prepare`: accumulated first-chunk silence/WAV saving/ALSA FFmpeg conversion time, excluding queue waits and playback.
-- `playback`: accumulated physical playback-command time only; FFmpeg conversion is not included.
+- `audio_prepare`: accumulated WAV saving/ALSA raw conversion/edge trimming time, excluding queue waits and playback (Pulse includes first-chunk WAV silence).
+- `playback`: ALSA persistent-player lifetime from first launch through PCM handling, readiness waits and final drain/reap; includes intentional PCM silence, not FFmpeg preparation. Pulse retains summed playback-command durations.
+- `playback_chunks`: number of prepared chunks fully submitted to playback.
+- `playback_starvation_ms`: accumulated readiness wait after one chunk is consumed and before another arrives; an already-ready chunk contributes exactly zero. First preparation, intentional PCM pauses and final EOF-marker wait are excluded.
+- `max_playback_starvation_ms`: largest such readiness wait in the response.
 - `total`: complete voice-cycle wall time through final playback and cleanup.
 
 Playback-launch metrics exclude the following 0.5-second first-chunk digital silence and do not measure speaker-driver/acoustic latency. Stages overlap, so their sum is not the wall-clock total. For sufficiently long streamed responses, compare `ai_to_first_speech < ai_total` to confirm speech began before AI completion.
@@ -557,7 +568,7 @@ python manage.py makemigrations --check
 python manage.py test
 ```
 
-The suite includes local knowledge chunking/ingestion/retrieval tests plus mocked Ollama, voice-provider, and standalone voice-loop coverage. Tests run without real Ollama, Whisper, Piper, PulseAudio services, or ALSA audio hardware. Focused voice/display tests: `python manage.py test assistant.tests_voice_loop assistant.tests_voice_stream assistant.tests_alsa_audio assistant.tests_display assistant.tests_voice`. Run only the RAG coverage with:
+The suite includes local knowledge chunking/ingestion/retrieval tests plus mocked Ollama, voice-provider, and standalone voice-loop coverage. Tests run without real Ollama, Whisper, Piper, PulseAudio services, or ALSA audio hardware. Focused voice/display tests: `python manage.py test assistant.tests_voice_loop assistant.tests_voice_stream assistant.tests_alsa_stream assistant.tests_alsa_audio assistant.tests_display assistant.tests_voice`. Persistent pipe tests also use harmless Python child processes, not sound hardware. Run only the RAG coverage with:
 
 ```bash
 python manage.py test knowledge_base.tests knowledge_base.tests_rag

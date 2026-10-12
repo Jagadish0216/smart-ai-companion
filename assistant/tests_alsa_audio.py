@@ -268,7 +268,8 @@ class AlsaLifecycleTests(SimpleTestCase):
         self.mocks = {}
         for name in ("record_audio", "record_audio_alsa", "record_audio_with_capture_vad",
                      "normalize_audio", "get_stt_provider", "get_tts_provider",
-                     "AssistantService.process_message_stream", "prepare_alsa_playback", "play_audio_alsa", "play_audio"):
+                     "AssistantService.process_message_stream", "prepare_alsa_playback", "play_audio_alsa", "play_audio",
+                     "PersistentAlsaPlayer", "trim_pcm_edges"):
             patcher = patch("scripts.voice_loop." + name)
             self.mocks[name] = patcher.start()
             self.addCleanup(patcher.stop)
@@ -283,6 +284,12 @@ class AlsaLifecycleTests(SimpleTestCase):
             self.mocks[operation].side_effect = lambda *args, _event=event, **kwargs: self.events.append(_event)
         self.config = voice_loop.VoiceLoopConfig("", audio_backend="alsa", leading_silence_seconds=0.5,
                                                 tts_chunk_chars=17)
+        self.mocks["trim_pcm_edges"].return_value = (0, 0)
+        def player_factory(device, stopped, temp_path):
+            player = MagicMock()
+            player.write_file.side_effect = lambda path: self.mocks["play_audio_alsa"](path, device, cancel_event=stopped)
+            return player
+        self.mocks["PersistentAlsaPlayer"].side_effect = player_factory
 
     def cycle(self, config=None):
         return voice_loop.run_voice_cycle(config or self.config, conversation_id=12, display=self.display)
@@ -304,7 +311,10 @@ class AlsaLifecycleTests(SimpleTestCase):
         for conversion, playback in zip(self.mocks["prepare_alsa_playback"].call_args_list,
                                          self.mocks["play_audio_alsa"].call_args_list):
             self.assertEqual(conversion.args[2], 4)
-            self.assertEqual(playback.args, (conversion.args[1], DEVICE))
+            self.assertEqual(playback.args[1], DEVICE)
+            self.assertTrue(playback.args[0].name.endswith(".pcm"))
+            self.assertTrue(conversion.kwargs["raw_pcm"])
+        self.mocks["PersistentAlsaPlayer"].assert_called_once()
         self.assertEqual(self.mocks["AssistantService.process_message_stream"].call_args.kwargs["conversation_id"], 12)
 
     def test_vad_cycle_selects_native_left_channel_backend(self):

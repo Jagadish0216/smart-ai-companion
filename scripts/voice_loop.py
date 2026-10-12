@@ -42,6 +42,7 @@ from assistant.execution_policy import CONSTRAINED_RESOURCE_STATUS, REDUCED_RESO
 from assistant.voice.factory import get_stt_provider, get_tts_provider  # noqa: E402
 from assistant.voice.processes import run_cancellable  # noqa: E402
 from assistant.voice.tts import TextToSpeechProvider  # noqa: E402
+from assistant.voice.alsa_stream import PersistentAlsaPlayer, trim_pcm_edges  # noqa: E402
 
 CAPTURE_SAMPLE_RATE = 16000
 CAPTURE_SAMPLE_WIDTH = 2
@@ -84,6 +85,7 @@ class VoiceLoopConfig:
     alsa_playback_device: str = "hw:CARD=sndrpigooglevoi,DEV=0"
     playback_gain: float = 4.0
     stream_tts_target_chars: int = 180
+    stream_inter_chunk_silence_seconds: float = 0.12
 
     @classmethod
     def from_settings(cls) -> "VoiceLoopConfig":
@@ -124,6 +126,9 @@ class VoiceLoopConfig:
             ).strip(),
             playback_gain=float(getattr(settings, "VOICE_PLAYBACK_GAIN", 4.0)),
             stream_tts_target_chars=int(getattr(settings, "VOICE_STREAM_TTS_TARGET_CHARS", 180)),
+            stream_inter_chunk_silence_seconds=float(
+                getattr(settings, "VOICE_STREAM_INTER_CHUNK_SILENCE_SECONDS", 0.12)
+            ),
         )
         config.validate()
         return config
@@ -159,6 +164,8 @@ class VoiceLoopConfig:
             raise VoiceLoopError("VOICE_TTS_CHUNK_CHARS must be greater than zero.")
         if self.stream_tts_target_chars <= 0:
             raise VoiceLoopError("VOICE_STREAM_TTS_TARGET_CHARS must be greater than zero.")
+        if not math.isfinite(self.stream_inter_chunk_silence_seconds) or not 0 <= self.stream_inter_chunk_silence_seconds <= 1:
+            raise VoiceLoopError("VOICE_STREAM_INTER_CHUNK_SILENCE_SECONDS must be finite and between 0 and 1.")
         if self.tts_max_total_chars < 0:
             raise VoiceLoopError("VOICE_TTS_MAX_TOTAL_CHARS cannot be negative.")
         if self.input_warmup_seconds < 0:
@@ -713,6 +720,8 @@ class LeadingResourceNoticeFilter:
 class PreparedAudio:
     number: int
     path: Path
+    leading_silence_frames: int = 0
+    trailing_silence_frames: int = 0
 
 
 def speak_stream_response(events, tts_provider, temp_path, config, timings, cycle_started,
@@ -755,14 +764,16 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
         return finish
 
     def prepare_audio(audio, number):
-        if number == 1:
+        if number == 1 and config.audio_backend != "alsa":
             audio = prepend_leading_silence(audio, config.leading_silence_seconds)
         playback_path = temp_path / f"stream-playback-{number:03d}.wav"
         playback_path.write_bytes(audio)
         if config.audio_backend == "alsa":
-            speaker_path = temp_path / f"stream-speaker-{number:03d}.wav"
-            prepare_alsa_playback(playback_path, speaker_path, config.playback_gain, cancel_event=stopped)
-            playback_path = speaker_path
+            source_pcm = temp_path / f"stream-speaker-source-{number:03d}.pcm"
+            speaker_path = temp_path / f"stream-speaker-{number:03d}.pcm"
+            prepare_alsa_playback(playback_path, source_pcm, config.playback_gain, cancel_event=stopped, raw_pcm=True)
+            leading, trailing = trim_pcm_edges(source_pcm, speaker_path, trim_leading=number > 1, cancel_event=stopped)
+            return PreparedAudio(number, speaker_path, leading, trailing)
         return PreparedAudio(number, playback_path)
 
     def preparation_worker():
@@ -797,11 +808,38 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
 
     def playback_worker():
         nonlocal spoken_count
+        player = None
+        playback_started = None
+        previous_trailing_frames = 0
+        timings.update(playback_chunks=0, playback_starvation_ms=0.0, max_playback_starvation_ms=0.0)
         try:
             while not stopped.is_set():
-                prepared = receive(ready_audio)
+                # An already-ready item costs zero starvation. Time only a real
+                # queue miss; do not include PCM pauses or the final EOF marker.
+                wait_started = None
+                try:
+                    prepared = ready_audio.get_nowait()
+                except Empty:
+                    if spoken_count:
+                        wait_started = time.perf_counter()
+                    while not stopped.is_set():
+                        if player is not None:
+                            player.check()
+                        try:
+                            prepared = ready_audio.get(timeout=0.05)
+                            break
+                        except Empty:
+                            pass
+                    else:
+                        return
                 if prepared is finish or stopped.is_set():
+                    if player is not None and not stopped.is_set():
+                        player.finish()
                     return
+                if wait_started is not None:
+                    starvation = (time.perf_counter() - wait_started) * 1000
+                    timings["playback_starvation_ms"] += starvation
+                    timings["max_playback_starvation_ms"] = max(timings["max_playback_starvation_ms"], starvation)
                 if prepared.number == 1:
                     if on_playback_start is not None:
                         try:
@@ -811,16 +849,34 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                     playback_started = time.perf_counter()
                     timings["first_speech"] = playback_started - cycle_started
                     timings["ai_to_first_speech"] = playback_started - stream_started
-                operation, args = play_audio, (prepared.path,)
-                if config.audio_backend == "alsa":
-                    operation, args = play_audio_alsa, (prepared.path, config.alsa_playback_device)
                 try:
-                    _timed_call(timings, "playback", operation, *args, cancel_event=stopped)
+                    if config.audio_backend == "alsa":
+                        if player is None:
+                            player = PersistentAlsaPlayer(config.alsa_playback_device, stopped, temp_path)
+                            player.start()
+                            player.write_silence(round(config.leading_silence_seconds * ALSA_SAMPLE_RATE))
+                        else:
+                            gap_frames = max(0, round(config.stream_inter_chunk_silence_seconds * ALSA_SAMPLE_RATE)
+                                             - previous_trailing_frames - prepared.leading_silence_frames)
+                            player.write_silence(gap_frames)
+                        player.write_file(prepared.path)
+                        previous_trailing_frames = prepared.trailing_silence_frames
+                    else:
+                        _timed_call(timings, "playback", play_audio, prepared.path, cancel_event=stopped)
                 except Exception as exc:
                     raise VoiceLoopError(f"Playback failed on streaming chunk {prepared.number}: {exc}") from exc
                 spoken_count += 1
+                timings["playback_chunks"] = spoken_count
         except BaseException as exc:
             fail(exc)
+        finally:
+            if player is not None:
+                try:
+                    player.abort()
+                except Exception as exc:
+                    fail(exc)
+                finally:
+                    timings["playback"] = time.perf_counter() - playback_started
 
     def present(text, *, final=False):
         nonlocal terminal_open
@@ -943,6 +999,9 @@ def _print_timing_summary(timings: dict[str, float]) -> None:
     order = ("record", "normalize", "stt", "ai", "ai_ttft", "ai_to_first_speech", "first_speech",
              "ai_total", "tts", "audio_prepare", "playback", "total")
     summary = " ".join(f"{stage}={timings[stage]:.3f}s" for stage in order if stage in timings)
+    for metric in ("playback_chunks", "playback_starvation_ms", "max_playback_starvation_ms"):
+        if metric in timings:
+            summary += f" {metric}={timings[metric]:.3f}" if metric.endswith("_ms") else f" {metric}={timings[metric]}"
     print(f"Timing: {summary}")
 
 
@@ -973,11 +1032,12 @@ def play_audio(audio_path: Path, *, cancel_event=None) -> None:
         )
 
 
-def prepare_alsa_playback(input_path: Path, output_path: Path, gain: float, *, cancel_event=None) -> None:
-    """Convert a Piper chunk (including first-chunk silence) to native speaker PCM."""
+def prepare_alsa_playback(input_path: Path, output_path: Path, gain: float, *, cancel_event=None, raw_pcm=False) -> None:
+    """Convert Piper WAV to native speaker WAV (batch) or headerless PCM (stream)."""
     command = ["ffmpeg", "-y", "-i", str(input_path), "-af",
                f"volume={gain},alimiter=limit=0.98:level=false",
-               "-ar", "48000", "-ac", "2", "-c:a", "pcm_s32le", str(output_path)]
+               "-ar", "48000", "-ac", "2", "-c:a", "pcm_s32le",
+               *(["-f", "s32le"] if raw_pcm else []), str(output_path)]
     try:
         result = _run_audio_subprocess(command, timeout=60, cancel_event=cancel_event)
     except FileNotFoundError as exc:
@@ -991,7 +1051,8 @@ def prepare_alsa_playback(input_path: Path, output_path: Path, gain: float, *, c
             f"Speaker conversion failed (ffmpeg exit {result.returncode}): {_stderr_text(result.stderr)}"
         )
     if not output_path.exists() or output_path.stat().st_size == 0:
-        raise VoiceLoopError("Speaker conversion failed: ffmpeg produced no WAV file.")
+        kind = "PCM" if raw_pcm else "WAV"
+        raise VoiceLoopError(f"Speaker conversion failed: ffmpeg produced no {kind} file.")
 
 
 def play_audio_alsa(audio_path: Path, device: str, *, cancel_event=None) -> None:

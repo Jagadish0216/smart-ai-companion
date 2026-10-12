@@ -24,7 +24,6 @@ from conversations.models import Conversation, Message
 from scripts import voice_loop
 
 REAL_PREPARE_ALSA = voice_loop.prepare_alsa_playback
-REAL_PLAY_ALSA = voice_loop.play_audio_alsa
 
 
 def stream_events(text, conversation_id=42, direct=False, **metadata):
@@ -109,6 +108,22 @@ class StreamingAudioTests(SimpleTestCase):
             setattr(self, name, patcher.start())
             self.addCleanup(patcher.stop)
         self.main_thread = get_ident()
+        # Mock consumption of a raw file, not a per-chunk aplay invocation.
+        self.stream_write = MagicMock()
+        self.player = MagicMock()
+        patcher = patch("scripts.voice_loop.PersistentAlsaPlayer")
+        self.player_factory = patcher.start()
+        self.addCleanup(patcher.stop)
+        def factory(device, stopped, temp_path):
+            self.player.write_file.side_effect = lambda path: self.stream_write(path, device, cancel_event=stopped)
+            return self.player
+        self.player_factory.side_effect = factory
+        def trim(source, destination, **kwargs):
+            destination.write_bytes(source.read_bytes() if source.exists() else self.audio)
+            return 0, 0
+        patcher = patch("scripts.voice_loop.trim_pcm_edges", side_effect=trim)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def speak(self, events, config=None):
         with tempfile.TemporaryDirectory() as directory:
@@ -293,7 +308,7 @@ class StreamingAudioTests(SimpleTestCase):
             self.assertEqual(gain, 4.0)
             order.append("convert")
         self.prepare_alsa_playback.side_effect = convert
-        self.play_audio_alsa.side_effect = lambda *args, **kwargs: order.append("play")
+        self.stream_write.side_effect = lambda *args, **kwargs: order.append("play")
         config = voice_loop.VoiceLoopConfig("", audio_backend="alsa", leading_silence_seconds=0.5)
         with tempfile.TemporaryDirectory() as directory, patch("scripts.voice_loop.time.sleep") as sleep:
             voice_loop.speak_stream_response(stream_events("First sentence. Second sentence."), self.provider,
@@ -304,18 +319,16 @@ class StreamingAudioTests(SimpleTestCase):
         self.assertLess(order.index("convert"), order.index("SPEAKING"))
         self.assertEqual([event for event in order if event != "convert"], ["SPEAKING", "play", "play"])
         sleep.assert_not_called()
-        with wave.open(io.BytesIO(inputs[0]), "rb") as wav:
-            self.assertEqual(wav.getnframes(), 8160)
-            self.assertEqual(wav.readframes(8000), b"\x00" * 16000)
+        self.assertEqual(inputs[0], self.audio)  # Startup zeros now belong to the persistent player.
+        self.assertEqual(self.player.write_silence.call_args_list, [call(24000), call(5760)])
         self.assertEqual(inputs[1], self.audio)
         self.play_audio.assert_not_called()
-        for playback in self.play_audio_alsa.call_args_list:
+        for playback in self.stream_write.call_args_list:
             self.assertEqual(playback.args[1], "hw:CARD=sndrpigooglevoi,DEV=0")
 
     def test_actual_alsa_commands_use_cancellable_subprocess_path(self):
         config = voice_loop.VoiceLoopConfig("", audio_backend="alsa")
         self.prepare_alsa_playback.side_effect = REAL_PREPARE_ALSA
-        self.play_audio_alsa.side_effect = REAL_PLAY_ALSA
         def execute(command, **kwargs):
             if command[0] == "ffmpeg":
                 Path(command[-1]).write_bytes(self.audio)
@@ -323,16 +336,15 @@ class StreamingAudioTests(SimpleTestCase):
         with patch("scripts.voice_loop._run_audio_subprocess") as run:
             run.side_effect = execute
             self.speak(stream_events("An answer."), config)
-        conversion, playback = run.call_args_list
+        conversion, = run.call_args_list
         command = conversion.args[0]
         self.assertEqual(command[:3], ["ffmpeg", "-y", "-i"])
         self.assertEqual(command[4:-1], ["-af", "volume=4.0,alimiter=limit=0.98:level=false",
-                                        "-ar", "48000", "-ac", "2", "-c:a", "pcm_s32le"])
-        self.assertEqual(playback.args[0], ["aplay", "-D", "hw:CARD=sndrpigooglevoi,DEV=0", command[-1]])
+                                        "-ar", "48000", "-ac", "2", "-c:a", "pcm_s32le", "-f", "s32le"])
+        self.player_factory.assert_called_once()
         conversion_event = self.prepare_alsa_playback.call_args.kwargs["cancel_event"]
-        self.assertIs(self.play_audio_alsa.call_args.kwargs["cancel_event"], conversion_event)
+        self.assertIs(self.stream_write.call_args.kwargs["cancel_event"], conversion_event)
         self.assertIs(conversion.kwargs["cancel_event"], conversion_event)
-        self.assertIs(playback.kwargs["cancel_event"], conversion_event)
 
     def test_prepare_next_audio_during_playback_with_unique_files_and_no_overlap(self):
         playing_first = Event()
@@ -381,12 +393,12 @@ class StreamingAudioTests(SimpleTestCase):
                 active_playback -= 1
         self.provider.synthesize.side_effect = synthesize
         self.prepare_alsa_playback.side_effect = convert
-        self.play_audio_alsa.side_effect = play
+        self.stream_write.side_effect = play
         config = voice_loop.VoiceLoopConfig("", audio_backend="alsa", leading_silence_seconds=0.5)
         with patch("scripts.voice_loop.Queue", side_effect=queue_factory), patch("scripts.voice_loop.time.sleep") as sleep:
             self.speak(stream_events("First sentence. Second sentence. Third sentence."), config)
         sleep.assert_not_called()
-        self.assertEqual(played_paths, ["stream-speaker-001.wav", "stream-speaker-002.wav", "stream-speaker-003.wav"])
+        self.assertEqual(played_paths, ["stream-speaker-001.pcm", "stream-speaker-002.pcm", "stream-speaker-003.pcm"])
         self.assertEqual([item.args[0].name for item in self.prepare_alsa_playback.call_args_list],
                          ["stream-playback-001.wav", "stream-playback-002.wav", "stream-playback-003.wav"])
         self.assertEqual(len(set(prep_threads)), 1)
@@ -450,7 +462,7 @@ class StreamingAudioTests(SimpleTestCase):
         for stage in ("tts", "prepare"):
             with self.subTest(stage=stage):
                 self.provider.reset_mock()
-                self.play_audio_alsa.reset_mock()
+                self.stream_write.reset_mock()
                 self.prepare_alsa_playback.reset_mock()
                 active = Event()
                 cancelled = Event()
@@ -471,12 +483,12 @@ class StreamingAudioTests(SimpleTestCase):
                     raise AudioCancelledError("cancelled secondary error")
                 self.provider.synthesize.side_effect = synthesize
                 self.prepare_alsa_playback.side_effect = convert
-                self.play_audio_alsa.side_effect = play
+                self.stream_write.side_effect = play
                 config = voice_loop.VoiceLoopConfig("", audio_backend="alsa")
                 with self.assertRaisesRegex(voice_loop.VoiceLoopError, "original " + stage + " failure"):
                     self.speak(stream_events("First sentence. Second sentence."), config)
                 self.assertTrue(cancelled.is_set())
-                self.play_audio_alsa.assert_called_once()
+                self.stream_write.assert_called_once()
                 self.assertFalse(any(thread.name.startswith("voice-stream-audio") for thread in enumerate_threads()))
 
     def test_live_terminal_deltas_before_done_without_final_answer_replay(self):
@@ -538,7 +550,7 @@ class StreamingAudioTests(SimpleTestCase):
             clock[0] += 7
         self.provider.synthesize.side_effect = synthesize
         self.prepare_alsa_playback.side_effect = convert
-        self.play_audio_alsa.side_effect = play
+        self.stream_write.side_effect = play
         config = voice_loop.VoiceLoopConfig("", audio_backend="alsa")
         with tempfile.TemporaryDirectory() as directory, patch("scripts.voice_loop.time.perf_counter", side_effect=lambda: clock[0]):
             voice_loop.speak_stream_response(stream_events("An answer."), self.provider, Path(directory),
