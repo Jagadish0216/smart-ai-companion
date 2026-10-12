@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, call, patch
 import wave
 
 from django.test import SimpleTestCase, override_settings
+from assistant.tests_voice_stream import FIRST_SENTENCE, SECOND_SENTENCE
 
 from scripts import voice_loop
 
@@ -275,7 +276,7 @@ class AlsaLifecycleTests(SimpleTestCase):
             self.addCleanup(patcher.stop)
         self.mocks["get_stt_provider"].return_value.transcribe.return_value = "Explain local AI."
         self.mocks["get_tts_provider"].return_value.synthesize.return_value = piper_wav()
-        text = "First sentence. Second sentence."
+        text = FIRST_SENTENCE + " " + SECOND_SENTENCE
         self.mocks["AssistantService.process_message_stream"].return_value = [
             {"type": "start", "conversation_id": 42, "direct": False}, {"type": "delta", "text": text},
             {"type": "done", "conversation_id": 42, "response": text, "resource_profile": "BALANCED"}]

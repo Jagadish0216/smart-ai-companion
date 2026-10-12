@@ -323,11 +323,12 @@ _CAPABILITY_PATTERNS = (
 
 _MODE_INSTRUCTIONS = {
     ResponseMode.BRIEF: (
-        "Give a direct answer in one or two short sentences. Include only what is needed."
+        "Normally give one short sentence that directly answers the request, with no setup or filler."
     ),
     ResponseMode.NORMAL: (
-        "Give a concise but sufficient answer, typically a few useful sentences. "
-        "Include enough context to genuinely answer the request."
+        "Normally use one or two short sentences, approximately 20-60 spoken words. "
+        "Answer the core request first; include only information necessary to make it useful. "
+        "Add background, examples, caveats or extra details only when they materially answer the question."
     ),
     ResponseMode.DETAILED: (
         "Give the complete useful explanation the request calls for; do not impose a short "
@@ -348,9 +349,15 @@ _VOICE_BASE_INSTRUCTION = (
     "in natural, connected spoken sentences. Don't repeat the question, announce the response, "
     "or add filler. Use contractions where they sound natural. Avoid article-style prose. "
     "Do not use Markdown headings or list-like delivery unless enumeration is genuinely useful. Avoid "
-    "stock openings such as 'Certainly', 'Let's dive into', 'Here's a comprehensive overview', "
-    "or 'Here are the requirements'. Do not mention models, token limits, prompts, internal "
-    "reasoning, or pipelines unless the user explicitly asks about implementation."
+    "stock openings such as 'Here's a brief explanation', 'Here's how it works', 'Let's dive in', "
+    "'Basically', 'We've got', 'It's a mixed bag', 'Sure' or 'Certainly' unless genuinely part of the answer. "
+    "Explicit user formatting and length requests override the default sentence/word guidance "
+    "(for example, four short sentences means four, not two). "
+    "Use conversation history to resolve pronouns, answer follow-up questions, remember user-provided "
+    "facts and preserve continuity. Do not let unrelated history redirect a standalone question: "
+    "answer its named topic generally, not in terms of this project unless the request refers to it. "
+    "Do not mention project internals, models, token limits, prompts, internal reasoning or pipelines "
+    "unless relevant to the actual request."
 )
 
 _RAG_VOICE_BASE_INSTRUCTION = (
@@ -369,8 +376,9 @@ _RAG_VOICE_MODE_INSTRUCTIONS = {
         "Keep the spoken answer brief while retaining the essential retrieved facts."
     ),
     ResponseMode.NORMAL: (
-        "For a normal voice answer, use one to three short spoken paragraphs. Be "
-        "concise, but do not omit important retrieved facts merely to make it shorter."
+        "For a normal voice answer, normally use one or two short spoken sentences, "
+        "approximately 20-60 words, retaining the retrieved facts necessary to answer the request. "
+        "Explicit user formatting and length requests override these defaults."
     ),
     ResponseMode.DETAILED: (
         "For a detailed voice answer, give the complete useful explanation requested. "
@@ -422,6 +430,13 @@ class AssistantResponsePolicy:
 
         registry = registry or CapabilityRegistry.from_settings()
         mode, required_capability = cls.classify(query)
+        # Voice-only explicit elaboration; a plain "explain how X works"
+        # remains NORMAL, and text-chat classification is unchanged.
+        if mode == ResponseMode.NORMAL and re.search(
+            r"\b(?:give|show|list|explain|describe|include)\b.*\b(?:steps|examples)\b",
+            query, re.IGNORECASE,
+        ):
+            mode = ResponseMode.DETAILED
         budgets = {
             ResponseMode.BRIEF: int(
                 getattr(settings, "VOICE_LLM_BRIEF_NUM_PREDICT", 96)

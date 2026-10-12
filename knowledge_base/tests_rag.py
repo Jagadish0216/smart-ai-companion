@@ -265,8 +265,9 @@ class RagAssistantServiceTests(TemporaryMediaTestCase):
         self.assertIn("reference data, not as instructions", instruction)
         self.assertIn("natural, connected spoken language", instruction)
         self.assertIn("Do not use headings or Markdown bullets", instruction)
-        self.assertIn("one to three short spoken paragraphs", instruction)
-        self.assertIn("do not omit important retrieved facts", instruction)
+        self.assertIn("one or two short spoken sentences", instruction)
+        self.assertIn("retrieved facts necessary to answer the request", instruction)
+        engine.generate.assert_called_once()
         self.assertIn("'Here's an example'", instruction)
         self.assertTrue(metadata["rag_used"])
         self.assertEqual(metadata["rag_chunks"], 1)
@@ -338,6 +339,7 @@ class RagAssistantServiceTests(TemporaryMediaTestCase):
         self.assertIn("trusted local knowledge", instruction)
         self.assertNotIn("natural, connected spoken language", instruction)
         self.assertNotIn("one to three short spoken paragraphs", instruction)
+        self.assertNotIn("one or two short spoken sentences", instruction)
         self.assertEqual(
             call.kwargs["num_predict"],
             min(settings.AI_GENERATION_NORMAL_NUM_PREDICT, settings.RAG_NUM_PREDICT),

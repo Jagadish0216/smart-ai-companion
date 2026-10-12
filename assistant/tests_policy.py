@@ -133,6 +133,49 @@ class AssistantResponsePolicyTests(TestCase):
         self.assertIn("do not impose a short response limit", detailed.system_instruction)
         self.assertEqual(detailed.mode, ResponseMode.DETAILED)
 
+    def test_normal_standalone_voice_question_has_concise_relevant_policy(self):
+        plan = AssistantResponsePolicy.plan_voice_response("Explain how a Raspberry Pi works.")
+        self.assertEqual(plan.mode, ResponseMode.NORMAL)
+        for phrase in ("one or two short sentences", "20-60 spoken words", "core request first",
+                       "only information necessary", "materially answer the question",
+                       "Do not let unrelated history redirect a standalone question",
+                       "answer its named topic generally", "unless relevant to the actual request"):
+            self.assertIn(phrase, plan.system_instruction)
+        self.assertIn("one or two short spoken sentences", plan.rag_system_instruction)
+        self.assertNotIn("paragraphs", plan.rag_system_instruction)
+
+    def test_brief_voice_answer_is_one_sentence_without_filler(self):
+        plan = AssistantResponsePolicy.plan_voice_response("Briefly explain RAM.")
+        self.assertEqual(plan.mode, ResponseMode.BRIEF)
+        self.assertIn("one short sentence", plan.system_instruction)
+        self.assertIn("no setup or filler", plan.system_instruction)
+        for opening in ("Here's a brief explanation", "Here's how it works", "Let's dive in",
+                        "Basically", "We've got", "It's a mixed bag", "Sure", "Certainly"):
+            self.assertIn(opening, plan.system_instruction)
+
+    def test_explicit_four_sentence_request_overrides_voice_defaults(self):
+        plan = AssistantResponsePolicy.plan_voice_response("Explain RAM in four short sentences.")
+        self.assertIn("Explicit user formatting and length requests override", plan.system_instruction)
+        self.assertIn("four short sentences means four, not two", plan.system_instruction)
+
+    def test_explicit_details_steps_examples_and_comparison_remain_detailed(self):
+        for query in ("Explain RAM in detail.", "Give me the steps to install Linux.",
+                      "Show examples of using GPIO.", "Compare RAM and storage."):
+            with self.subTest(query=query):
+                plan = AssistantResponsePolicy.plan_voice_response(query)
+                self.assertEqual(plan.mode, ResponseMode.DETAILED)
+                self.assertIn("do not impose a short response limit", plan.system_instruction)
+                self.assertIn("conversational rather than essay-like", plan.system_instruction)
+        self.assertEqual(AssistantResponsePolicy.classify("Give me the steps to install Linux.")[0],
+                         ResponseMode.NORMAL)  # Shared text-chat routing is untouched.
+
+    def test_follow_up_voice_policy_keeps_history_resolution(self):
+        plan = AssistantResponsePolicy.plan_voice_response("Tell me about it.")
+        self.assertIsNone(plan.direct_response)
+        for phrase in ("resolve pronouns", "answer follow-up questions", "remember user-provided facts",
+                       "preserve continuity"):
+            self.assertIn(phrase, plan.system_instruction)
+
     @override_settings(
         VOICE_LLM_BRIEF_NUM_PREDICT="91",
         VOICE_LLM_NORMAL_NUM_PREDICT="161",
@@ -218,6 +261,23 @@ class AssistantResponsePolicyTests(TestCase):
 class AssistantPolicyServiceTests(TestCase):
     def setUp(self):
         install_resource_report(self)
+
+    @patch("assistant.services.get_engine")
+    def test_voice_standalone_and_follow_up_keep_history_and_one_generation(self, mock_get_engine):
+        engine = MagicMock()
+        engine.generate.return_value = AIEngineResult(text="A useful answer.", engine="local", latency_ms=1)
+        mock_get_engine.return_value = engine
+        conversation, *_ = AssistantService.process_message("We discussed the Smart AI Companion project.")
+        for query in ("Explain how a Raspberry Pi works.", "Tell me about it."):
+            plan = AssistantResponsePolicy.plan_voice_response(query)
+            conversation, _text, _metadata, error = AssistantService.process_message(
+                query, conversation_id=conversation.id, response_plan=plan)
+            self.assertIsNone(error)
+            kwargs = engine.generate.call_args.kwargs
+            self.assertTrue(kwargs["conversation_history"])
+            self.assertIn(plan.system_instruction, kwargs["system_instruction"])
+        self.assertEqual(engine.generate.call_count, 3)
+        self.assertEqual(conversation.messages.count(), 6)
 
     @patch("assistant.services.get_engine")
     def test_normal_request_receives_capability_grounding(self, mock_get_engine):

@@ -33,12 +33,82 @@ def stream_events(text, conversation_id=42, direct=False, **metadata):
 
 
 FIRST_CLAUSE = "Solar panels convert sunlight into electricity by using photovoltaic cells,"
+# Hardware pipeline fixtures deliberately exceed the packing minimums so
+# multi-unit worker/backpressure assertions still exercise real boundaries.
+FIRST_SENTENCE = "The first complete sentence contains useful information and is long enough to start natural speech."
+SECOND_SENTENCE = "The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit."
+THIRD_SENTENCE = SECOND_SENTENCE.replace("second", "third")
 
 
 class FirstClauseBufferTests(SimpleTestCase):
-    def test_short_full_sentence_emits_even_below_minimum(self):
+    def test_short_full_sentence_is_held_until_response_completion(self):
         buffer = voice_loop.StreamingSpeechBuffer()
-        self.assertEqual(buffer.feed("Panels make electricity. "), ["Panels make electricity."])
+        self.assertEqual(buffer.feed("The answer is 4. "), [])
+        self.assertEqual(buffer.feed("", final=True), ["The answer is 4."])
+
+    def test_tiny_first_sentence_combines_with_following_content(self):
+        buffer = voice_loop.StreamingSpeechBuffer()
+        self.assertEqual(buffer.feed("It's a mixed bag. "), [])
+        following = "A small computer runs Linux and connects to hardware using GPIO pins."
+        self.assertEqual(buffer.feed(following + " "), ["It's a mixed bag. " + following])
+
+    def test_short_adjacent_sentences_keep_punctuation_in_one_final_unit(self):
+        text = "It's a small computer. It runs Linux. It has GPIO pins."
+        buffer = voice_loop.StreamingSpeechBuffer()
+        for sentence in ("It's a small computer. ", "It runs Linux. ", "It has GPIO pins."):
+            self.assertEqual(buffer.feed(sentence), [])
+        self.assertEqual(buffer.feed("", final=True), [text])
+
+    def test_available_adjacent_sentences_are_packed_before_first_release(self):
+        text = "It's a small computer. It runs Linux. It has GPIO pins. It supports programming."
+        buffer = voice_loop.StreamingSpeechBuffer()
+        self.assertEqual(buffer.feed(text + " "), [text])
+        self.assertEqual(buffer.feed("", final=True), [])
+
+    def test_later_short_sentences_pack_into_normal_sized_units(self):
+        buffer = voice_loop.StreamingSpeechBuffer()
+        self.assertEqual(buffer.feed(FIRST_CLAUSE + " "), [FIRST_CLAUSE])
+        self.assertEqual(buffer.feed("It runs Linux. It has GPIO pins. "), [])
+        more = "It connects to a monitor and keyboard, supports programming, and fits many embedded projects. "
+        expected = "It runs Linux. It has GPIO pins. " + more.strip()
+        self.assertEqual(buffer.feed(more), [expected])
+        self.assertTrue(120 <= len(expected) <= 220)
+
+    def test_completed_unit_in_target_grace_window_is_not_split_into_tiny_jobs(self):
+        buffer = voice_loop.StreamingSpeechBuffer()
+        buffer.feed(FIRST_CLAUSE + " ")
+        text = ("The computer uses a processor and memory to run programs and process incoming data. "
+                "GPIO pins let it communicate with connected hardware such as sensors, switches and small displays.")
+        self.assertTrue(180 < len(text) <= 220)
+        self.assertEqual(buffer.feed(text + " "), [text])
+
+    def test_obviously_incomplete_tail_requires_a_complete_sentence_and_playback_permission(self):
+        for ending in ("The Raspberry Pi runs on a Linux-based", "It connects to the", "It provides power and"):
+            with self.subTest(ending=ending):
+                buffer = voice_loop.StreamingSpeechBuffer()
+                self.assertEqual(buffer.feed(FIRST_SENTENCE + " "), [FIRST_SENTENCE])
+                self.assertEqual(buffer.feed(ending), [])
+                self.assertEqual(buffer.feed("", final=True, omit_incomplete_tail=True), [])
+                buffer = voice_loop.StreamingSpeechBuffer()
+                buffer.feed(FIRST_SENTENCE + " ")
+                buffer.feed(ending)
+                self.assertEqual(buffer.feed("", final=True), [ending])
+                buffer = voice_loop.StreamingSpeechBuffer()
+                buffer.feed(ending)
+                self.assertEqual(buffer.feed("", final=True, omit_incomplete_tail=True), [ending])
+        buffer = voice_loop.StreamingSpeechBuffer()
+        buffer.feed(FIRST_CLAUSE + " ")  # A clause alone is not a complete useful sentence.
+        buffer.feed("which are")
+        self.assertEqual(buffer.feed("", final=True, omit_incomplete_tail=True), ["which are"])
+
+    def test_useful_unpunctuated_tail_is_not_discarded(self):
+        for text in ("The name is Blue Falcon", "The system is Linux-based", "That is what it is for",
+                     "The indicator is switched on", "Yes, you can"):
+            with self.subTest(text=text):
+                buffer = voice_loop.StreamingSpeechBuffer()
+                buffer.feed(FIRST_SENTENCE + " ")
+                buffer.feed(text)
+                self.assertEqual(buffer.feed("", final=True, omit_incomplete_tail=True), [text])
 
     def test_first_long_sentence_emits_a_useful_comma_clause_before_completion(self):
         buffer = voice_loop.StreamingSpeechBuffer()
@@ -74,7 +144,8 @@ class FirstClauseBufferTests(SimpleTestCase):
     def test_long_completed_sentence_can_use_shorter_first_clause(self):
         remainder = "which are made of semiconductor materials that respond to incoming sunlight."
         buffer = voice_loop.StreamingSpeechBuffer()
-        self.assertEqual(buffer.feed(FIRST_CLAUSE + " " + remainder + " "), [FIRST_CLAUSE, remainder])
+        self.assertEqual(buffer.feed(FIRST_CLAUSE + " " + remainder + " "), [FIRST_CLAUSE])
+        self.assertEqual(buffer.feed("", final=True), [remainder])
 
     def test_boundary_waits_for_lookahead_and_never_cuts_words_at_target(self):
         buffer = voice_loop.StreamingSpeechBuffer()
@@ -90,7 +161,8 @@ class FirstClauseBufferTests(SimpleTestCase):
         self.assertEqual(buffer.feed(FIRST_CLAUSE + " "), [FIRST_CLAUSE])
         continuation = "which use semiconductor materials to transfer absorbed energy into current,"
         self.assertEqual(buffer.feed(continuation + " "), [])
-        self.assertEqual(buffer.feed("rather than heat alone. "), [continuation + " rather than heat alone."])
+        self.assertEqual(buffer.feed("rather than heat alone. "), [])
+        self.assertEqual(buffer.feed("", final=True), [continuation + " rather than heat alone."])
 
     def test_link_labels_urls_and_markdown_length_are_protected(self):
         buffer = voice_loop.StreamingSpeechBuffer()
@@ -168,13 +240,15 @@ class StreamingBufferTests(SimpleTestCase):
         buffer = voice_loop.StreamingSpeechBuffer()
         self.assertEqual(buffer.feed("A natural"), [])
         self.assertEqual(buffer.feed(" completed sentence"), [])
-        self.assertEqual(buffer.feed(". "), ["A natural completed sentence."])
+        self.assertEqual(buffer.feed(". "), [])
+        self.assertEqual(buffer.feed("", final=True), ["A natural completed sentence."])
 
     def test_split_closing_quote_bracket_and_markdown_stay_with_sentence(self):
         buffer = voice_loop.StreamingSpeechBuffer()
         self.assertEqual(buffer.feed('He said "**Hello.'), [])
-        self.assertEqual(buffer.feed('**") '), ['He said "Hello.")'])
-        self.assertEqual(buffer.feed("Another fact! "), ["Another fact!"])
+        self.assertEqual(buffer.feed('**") '), [])
+        self.assertEqual(buffer.feed("Another fact! "), [])
+        self.assertEqual(buffer.feed("", final=True), ['He said "Hello.") Another fact!'])
 
     def test_final_incomplete_sentence_flushes(self):
         buffer = voice_loop.StreamingSpeechBuffer()
@@ -277,19 +351,20 @@ class StreamingAudioTests(SimpleTestCase):
         def events():
             self.assertEqual(get_ident(), self.main_thread)
             yield {"type": "start", "conversation_id": 71, "direct": False}
-            yield {"type": "delta", "text": "First"}
-            yield {"type": "delta", "text": " completed sentence. "}
+            yield {"type": "delta", "text": FIRST_SENTENCE[:10]}
+            yield {"type": "delta", "text": FIRST_SENTENCE[10:] + " "}
             self.assertTrue(playback_started.wait(2))
             generation_continued.set()
             yield {"type": "delta", "text": "Second sentence. Last unfinished thought"}
             yield {"type": "done", "conversation_id": 72,
-                   "response": "First completed sentence. Second sentence. Last unfinished thought",
+                   "response": FIRST_SENTENCE + " Second sentence. Last unfinished thought",
                    "resource_profile": "ECO", "num_predict": 64}
         conversation_id, metadata = self.speak(events())
         self.assertEqual(conversation_id, 72)
         self.assertEqual(metadata["num_predict"], 64)
+        self.assertEqual(self.timings["num_predict"], 64)
         self.assertEqual(self.provider.synthesize.call_args_list,
-                         [call("First completed sentence."), call("Second sentence."), call("Last unfinished thought")])
+                         [call(FIRST_SENTENCE), call("Second sentence."), call("Last unfinished thought")])
         self.assertEqual(len(set(thread_ids)), 1)
         self.assertNotEqual(thread_ids[0], self.main_thread)
         self.assertEqual(self.states, ["SPEAKING"])
@@ -415,8 +490,8 @@ class StreamingAudioTests(SimpleTestCase):
 
     def test_streaming_does_not_apply_legacy_batch_truncation_limit(self):
         config = voice_loop.VoiceLoopConfig("source", tts_max_total_chars=5)
-        self.speak(stream_events("First sentence. Second sentence."), config)
-        self.assertEqual(self.provider.synthesize.call_args_list, [call("First sentence."), call("Second sentence.")])
+        self.speak(stream_events(FIRST_SENTENCE + " " + SECOND_SENTENCE), config)
+        self.assertEqual(self.provider.synthesize.call_args_list, [call(FIRST_SENTENCE), call(SECOND_SENTENCE)])
 
     def test_first_speech_metric_includes_display_callback_time(self):
         clock = [0]
@@ -440,7 +515,7 @@ class StreamingAudioTests(SimpleTestCase):
         def events():
             try:
                 yield {"type": "start", "conversation_id": 19, "direct": False}
-                yield {"type": "delta", "text": "First sentence. "}
+                yield {"type": "delta", "text": FIRST_SENTENCE + " "}
                 self.assertTrue(playback_started.wait(2))
                 yield {"type": "delta", "text": "Queued sentence. "}
                 yield {"type": "error", "detail": "connection lost"}
@@ -451,7 +526,7 @@ class StreamingAudioTests(SimpleTestCase):
         self.assertTrue(playback_cancelled.is_set())
         self.assertTrue(stream_closed.is_set())
         self.play_audio.assert_called_once()
-        self.assertEqual(self.provider.synthesize.call_args_list[0], call("First sentence."))
+        self.assertEqual(self.provider.synthesize.call_args_list[0], call(FIRST_SENTENCE))
         self.assertLessEqual(self.provider.synthesize.call_count, 2)
         self.assertFalse(any(thread.name.startswith("voice-stream-audio") for thread in enumerate_threads()))
 
@@ -482,7 +557,9 @@ class StreamingAudioTests(SimpleTestCase):
         with patch("scripts.voice_loop.Queue", side_effect=queue_factory):
             self.speak(stream_events("A completed sentence. " * 30))
         self.assertEqual([queue.maxsize for queue in queues], [2, 2])
-        self.assertEqual(self.provider.synthesize.call_count, 30)
+        self.assertLess(self.provider.synthesize.call_count, 30)
+        self.assertEqual(" ".join(item.args[0] for item in self.provider.synthesize.call_args_list),
+                         ("A completed sentence. " * 30).strip())
         self.assertEqual(len(set(threads)), 1)
 
     def test_alsa_first_silence_conversion_and_speaking_order(self):
@@ -495,7 +572,7 @@ class StreamingAudioTests(SimpleTestCase):
         self.stream_write.side_effect = lambda *args, **kwargs: order.append("play")
         config = voice_loop.VoiceLoopConfig("", audio_backend="alsa", leading_silence_seconds=0.5)
         with tempfile.TemporaryDirectory() as directory, patch("scripts.voice_loop.time.sleep") as sleep:
-            voice_loop.speak_stream_response(stream_events("First sentence. Second sentence."), self.provider,
+            voice_loop.speak_stream_response(stream_events(FIRST_SENTENCE + " " + SECOND_SENTENCE), self.provider,
                                             Path(directory), config, {}, voice_loop.time.perf_counter(),
                                             on_playback_start=lambda: order.append("SPEAKING"))
         self.assertEqual(order.count("SPEAKING"), 1)
@@ -550,7 +627,7 @@ class StreamingAudioTests(SimpleTestCase):
             active_synthesis += 1
             prep_threads.append(get_ident())
             try:
-                if text == "Second sentence.":
+                if text == SECOND_SENTENCE:
                     self.assertTrue(playing_first.wait(2))
                 return self.audio
             finally:
@@ -580,7 +657,7 @@ class StreamingAudioTests(SimpleTestCase):
         self.stream_write.side_effect = play
         config = voice_loop.VoiceLoopConfig("", audio_backend="alsa", leading_silence_seconds=0.5)
         with patch("scripts.voice_loop.Queue", side_effect=queue_factory), patch("scripts.voice_loop.time.sleep") as sleep:
-            self.speak(stream_events("First sentence. Second sentence. Third sentence."), config)
+            self.speak(stream_events(FIRST_SENTENCE + " " + SECOND_SENTENCE + " " + THIRD_SENTENCE), config)
         sleep.assert_not_called()
         self.assertEqual(played_paths, ["stream-speaker-001.pcm", "stream-speaker-002.pcm", "stream-speaker-003.pcm"])
         self.assertEqual([item.args[0].name for item in self.prepare_alsa_playback.call_args_list],
@@ -636,7 +713,7 @@ class StreamingAudioTests(SimpleTestCase):
         self.play_audio.side_effect = play
         with patch("scripts.voice_loop.Queue", side_effect=queue_factory):
             with self.assertRaisesRegex(voice_loop.VoiceLoopError, "speaker failed while both queues full"):
-                self.speak(stream_events("A completed sentence. " * 30))
+                self.speak(stream_events("A completed sentence. " * 100))
         self.assertTrue(full_audio.is_set())
         self.assertTrue(full_text.is_set())
         self.play_audio.assert_called_once()
@@ -654,7 +731,7 @@ class StreamingAudioTests(SimpleTestCase):
                     self.assertTrue(active.wait(2))
                     raise voice_loop.VoiceLoopError("original " + stage + " failure")
                 def synthesize(text):
-                    if stage == "tts" and text == "Second sentence.":
+                    if stage == "tts" and text == SECOND_SENTENCE:
                         fail_after_playback()
                     return self.audio
                 def convert(source, destination, gain, **kwargs):
@@ -670,7 +747,7 @@ class StreamingAudioTests(SimpleTestCase):
                 self.stream_write.side_effect = play
                 config = voice_loop.VoiceLoopConfig("", audio_backend="alsa")
                 with self.assertRaisesRegex(voice_loop.VoiceLoopError, "original " + stage + " failure"):
-                    self.speak(stream_events("First sentence. Second sentence."), config)
+                    self.speak(stream_events(FIRST_SENTENCE + " " + SECOND_SENTENCE), config)
                 self.assertTrue(cancelled.is_set())
                 self.stream_write.assert_called_once()
                 self.assertFalse(any(thread.name.startswith("voice-stream-audio") for thread in enumerate_threads()))
@@ -686,7 +763,7 @@ class StreamingAudioTests(SimpleTestCase):
             yield {"type": "done", "conversation_id": 9, "response": "".join(fragments)}
         with redirect_stdout(output), patch("builtins.print", wraps=print) as print_calls:
             self.assertEqual(self.speak(events())[0], 9)
-        self.assertEqual(output.getvalue(), "Assistant: " + "".join(fragments) + "\nTTS chunks: 2\n")
+        self.assertEqual(output.getvalue(), "Assistant: " + "".join(fragments) + "\nTTS chunks: 1\n")
         for fragment in fragments:
             self.assertIn(call(fragment, end="", flush=True), print_calls.call_args_list)
         self.assertEqual(output.getvalue().count("Assistant: "), 1)
@@ -696,7 +773,35 @@ class StreamingAudioTests(SimpleTestCase):
         output = io.StringIO()
         with redirect_stdout(output):
             self.speak(stream_events(text, direct=True))
-        self.assertEqual(output.getvalue(), "Assistant: " + text + "\nTTS chunks: 2\n")
+        self.assertEqual(output.getvalue(), "Assistant: " + text + "\nTTS chunks: 1\n")
+
+    def test_incomplete_tail_is_speech_only_after_complete_sentence_playback(self):
+        consumed = Event()
+        class CompletionTimings(dict):
+            def __setitem__(timings, key, value):
+                super().__setitem__(key, value)
+                if key == "playback_chunks" and value == 1:
+                    consumed.set()
+        self.timings = CompletionTimings()
+        tail = "The Raspberry Pi runs on a Linux-based"
+        canonical = FIRST_SENTENCE + " " + tail
+        def events():
+            yield {"type": "start", "conversation_id": 42, "direct": False}
+            yield {"type": "delta", "text": FIRST_SENTENCE + " "}
+            self.assertTrue(consumed.wait(2))
+            yield {"type": "delta", "text": tail}
+            yield {"type": "done", "conversation_id": 42, "response": canonical}
+        output = io.StringIO()
+        with redirect_stdout(output):
+            done = self.speak(events())[1]
+        self.provider.synthesize.assert_called_once_with(FIRST_SENTENCE)
+        self.assertEqual(done["response"], canonical)
+        self.assertEqual(output.getvalue(), "Assistant: " + canonical + "\nTTS chunks: 1\n")
+
+    def test_short_multi_sentence_answer_uses_one_piper_call(self):
+        text = "It's a small computer. It runs Linux. It has GPIO pins."
+        self.speak(stream_events(text))
+        self.provider.synthesize.assert_called_once_with(text)
 
     def test_terminal_error_finishes_partial_line(self):
         output = io.StringIO()
@@ -751,7 +856,7 @@ class StreamingAudioTests(SimpleTestCase):
         audio = self.audio
         class Provider(TextToSpeechProvider):
             def synthesize_cancellable(provider, text, cancel_event):
-                if text == "Second sentence.":
+                if text == SECOND_SENTENCE:
                     if not active_play.wait(2):
                         raise TTSError("test playback did not start")
                     active_tts.set()
@@ -769,7 +874,7 @@ class StreamingAudioTests(SimpleTestCase):
         self.play_audio.side_effect = play
         def events():
             yield {"type": "start", "conversation_id": 1, "direct": False}
-            yield {"type": "delta", "text": "First sentence. Second sentence. "}
+            yield {"type": "delta", "text": FIRST_SENTENCE + " " + SECOND_SENTENCE + " "}
             self.assertTrue(active_tts.wait(2))
             yield {"type": "error", "detail": "AI connection interrupted"}
         with self.assertRaisesRegex(voice_loop.VoiceLoopError, "AI connection interrupted"):
@@ -788,12 +893,12 @@ class StreamingAudioTests(SimpleTestCase):
                 second_finished.set()
         self.play_audio.side_effect = play
         def terminal_print(*args, **kwargs):
-            if args == ("Third sentence. ",):
+            if args == (THIRD_SENTENCE + " ",):
                 self.assertTrue(second_finished.wait(2))
-        text = "First sentence. Second sentence. Third sentence. "
+        text = FIRST_SENTENCE + " " + SECOND_SENTENCE + " " + THIRD_SENTENCE + " "
         events = stream_events(text)
-        events[1:2] = [{"type": "delta", "text": "First sentence. Second sentence. "},
-                      {"type": "delta", "text": "Third sentence. "}]
+        events[1:2] = [{"type": "delta", "text": FIRST_SENTENCE + " " + SECOND_SENTENCE + " "},
+                      {"type": "delta", "text": THIRD_SENTENCE + " "}]
         with patch("builtins.print", side_effect=terminal_print):
             self.speak(events)
         self.assertEqual(played, ["stream-playback-001.wav", "stream-playback-002.wav", "stream-playback-003.wav"])

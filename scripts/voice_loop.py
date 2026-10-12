@@ -651,6 +651,9 @@ class StreamingSpeechBuffer:
         self.first_min_chars = first_min_chars
         self.first_target_chars = first_target_chars
         self.first_unit_emitted = False
+        self.complete_sentence_emitted = False
+        self.emitted_units = 0
+        self.first_complete_unit = None
         self.pending = ""
 
     def _outside_groups(self, position, protected):
@@ -686,7 +689,16 @@ class StreamingSpeechBuffer:
             re.fullmatch(r"[a-z](?:\.[a-z])*", word)
         )
 
-    def feed(self, text, *, final=False):
+    @staticmethod
+    def _obviously_incomplete(text):
+        """Only clear dangling syntax; an unpunctuated answer is not itself an error."""
+        return bool(re.search(
+            r"(?:\b(?:a|an|the|and|or|because|which)|"
+            r"\b(?:a|an|the)\s+[\w]+-based|[-,:;])$",
+            text.strip(), re.IGNORECASE,
+        ))
+
+    def feed(self, text, *, final=False, omit_incomplete_tail=False):
         self.pending += text
         units = []
         while self.pending:
@@ -701,15 +713,30 @@ class StreamingSpeechBuffer:
                 return not any(start < position < end for start, end in protected)
 
             boundary = None
+            sentences = []
             for match in re.finditer(r'''[.!?](?:["'’”)\]}*_`]+)?(?=\s|$)''', self.pending):
                 if safe(match.start()) and safe(match.end()) and (final or match.end() < len(self.pending)):
-                    if not self.first_unit_emitted:
-                        if self.pending[match.start()] == "." and self._first_abbreviation(match.start()):
-                            continue
-                        if not self._outside_groups(match.end(), protected):
-                            continue
-                    boundary = match.end()
-                    break
+                    if self.pending[match.start()] == "." and self._first_abbreviation(match.start()):
+                        continue
+                    if not self._outside_groups(match.end(), protected):
+                        continue
+                    sentences.append((match.end(), len(sanitize_text_for_speech(self.pending[:match.end()]))))
+            # Keep punctuation inside Piper input. Hold tiny completed sentences
+            # for their neighbours, with a bounded size-based (not timed) wait.
+            lower = max(1, self.target_chars - 60)
+            upper = self.target_chars + 40
+            if not self.first_unit_emitted and not final:
+                useful = [(end, length) for end, length in sentences if length >= self.first_min_chars]
+                near_first = [end for end, length in useful if length <= self.first_target_chars]
+                boundary = near_first[-1] if near_first else (useful[0][0] if useful else None)
+            else:
+                available = [(end, length) for end, length in sentences if length <= upper]
+                if available:
+                    end, length = available[-1]
+                    if final or length >= lower or len(sanitize_text_for_speech(self.pending)) >= upper:
+                        boundary = end
+                elif sentences:
+                    boundary = sentences[0][0]
             if not self.first_unit_emitted and (
                 boundary is None or len(sanitize_text_for_speech(self.pending[:boundary])) > self.first_target_chars
             ):
@@ -732,7 +759,7 @@ class StreamingSpeechBuffer:
                         clauses.append(match.end())
                 if clauses:
                     boundary = clauses[-1]
-            if boundary is None and len(self.pending) > self.target_chars:
+            if boundary is None and len(sanitize_text_for_speech(self.pending)) > self.target_chars:
                 spaces = [match.start() for match in re.finditer(r"\s+", self.pending)
                           if match.start() >= min(40, self.target_chars / 2) and safe(match.start())]
                 before = [position for position in spaces if position <= self.target_chars]
@@ -740,12 +767,24 @@ class StreamingSpeechBuffer:
             if boundary is None:
                 if not final:
                     break
+                if (omit_incomplete_tail and self.complete_sentence_emitted
+                        and self._obviously_incomplete(sanitize_text_for_speech(self.pending))):
+                    self.pending = ""
+                    break
                 boundary = len(self.pending)
+            complete_sentence = any(end <= boundary for end, _length in sentences)
             raw_unit, self.pending = self.pending[:boundary], self.pending[boundary:].lstrip()
             spoken = sanitize_text_for_speech(raw_unit)
             if spoken:
-                units.extend(_split_words(spoken, self.target_chars))
+                # A completed sentence slightly beyond target need not become
+                # two tiny jobs; very long units still split only between words.
+                packed = _split_words(spoken, upper)
+                units.extend(packed)
+                self.emitted_units += len(packed)
                 self.first_unit_emitted = True
+                self.complete_sentence_emitted |= complete_sentence
+                if complete_sentence and self.first_complete_unit is None:
+                    self.first_complete_unit = self.emitted_units
         return units
 
 
@@ -967,7 +1006,9 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                 print("Assistant: ", end="", flush=True)
                 terminal_open = True
             print(answer, end="", flush=True)
-        for unit in buffer.feed(answer, final=final):
+        complete_sentence_played = (buffer.first_complete_unit is not None
+                                    and spoken_count >= buffer.first_complete_unit)
+        for unit in buffer.feed(answer, final=final, omit_incomplete_tail=final and complete_sentence_played):
             first_ready = time.perf_counter() - stream_started if "first_tts_unit_ready" not in timings else None
             enqueue(pending, unit)
             if first_ready is not None:
@@ -1015,6 +1056,8 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                     raise VoiceLoopError("AI response failed: stream text did not match its final response.")
                 timings["ai_total"] = time.perf_counter() - stream_started
                 timings["ai"] = timings["ai_total"]  # Retain the existing metric.
+                if isinstance(done.get("num_predict"), int):
+                    timings["num_predict"] = done["num_predict"]
                 present("", final=True)
                 finish_terminal_line()
                 break
@@ -1077,7 +1120,7 @@ def _print_timing_summary(timings: dict[str, float]) -> None:
     order = ("record", "normalize", "stt", "ai", "ai_ttft", "first_tts_unit_ready", "ai_to_first_speech", "first_speech",
              "ai_total", "tts", "audio_prepare", "playback", "total")
     summary = " ".join(f"{stage}={timings[stage]:.3f}s" for stage in order if stage in timings)
-    for metric in ("first_tts_chars", "playback_chunks", "playback_starvation_ms", "max_playback_starvation_ms"):
+    for metric in ("first_tts_chars", "playback_chunks", "playback_starvation_ms", "max_playback_starvation_ms", "num_predict"):
         if metric in timings:
             summary += f" {metric}={timings[metric]:.3f}" if metric.endswith("_ms") else f" {metric}={timings[metric]}"
     print(f"Timing: {summary}")

@@ -10,7 +10,7 @@ import wave
 from django.test import SimpleTestCase, override_settings
 
 from assistant.policy import AssistantResponsePolicy, ResponseMode
-from assistant.tests_voice_stream import stream_events
+from assistant.tests_voice_stream import FIRST_SENTENCE, SECOND_SENTENCE, THIRD_SENTENCE, stream_events
 from scripts.voice_loop import (
     VoiceLoopConfig,
     VoiceLoopError,
@@ -590,10 +590,10 @@ class VoiceLoopTests(SimpleTestCase):
         )
         response_plan = mock_process_message.call_args.kwargs["response_plan"]
         self.assertEqual(response_plan.mode, ResponseMode.NORMAL)
-        self.assertIn("concise but sufficient", response_plan.system_instruction)
+        self.assertIn("one or two short sentences", response_plan.system_instruction)
         self.assertIn("Do not use Markdown", response_plan.system_instruction)
         self.assertEqual(mock_get_tts.return_value.synthesize.call_args_list,
-                         [call("It is test time."), call("Details are ready.")])
+                         [call("It is test time. Details are ready.")])
         self.assertEqual(mock_process_message.return_value[-1]["response"], original_response)
         mock_print.assert_any_call("Assistant: ", end="", flush=True)
         mock_print.assert_any_call(original_response, end="", flush=True)
@@ -603,7 +603,7 @@ class VoiceLoopTests(SimpleTestCase):
                        "ai_total", "tts", "audio_prepare", "playback", "total"):
             self.assertIn(metric + "=", summary)
         mock_prepend.assert_called_once_with(_make_wav(), 0.7)
-        self.assertEqual(mock_play.call_count, 2)
+        self.assertEqual(mock_play.call_count, 1)
         self.assertFalse(Path(mock_play.call_args.args[0]).exists())
 
     @patch("scripts.voice_loop.play_audio")
@@ -625,9 +625,7 @@ class VoiceLoopTests(SimpleTestCase):
     ):
         mock_get_stt.return_value.transcribe.return_value = "Explain fully."
         original_response = (
-            "**First sentence contains useful details.** "
-            "Second sentence provides more context. "
-            "Third sentence completes the explanation."
+            "**" + FIRST_SENTENCE + "** " + SECOND_SENTENCE + " " + THIRD_SENTENCE
         )
         mock_process_message.return_value = stream_events(original_response, conversation_id=7)
         wav_bytes = _make_wav()
@@ -646,9 +644,9 @@ class VoiceLoopTests(SimpleTestCase):
         self.assertEqual(
             mock_get_tts.return_value.synthesize.call_args_list,
             [
-                call("First sentence contains useful details."),
-                call("Second sentence provides more context."),
-                call("Third sentence completes the explanation."),
+                call(FIRST_SENTENCE),
+                call(SECOND_SENTENCE),
+                call(THIRD_SENTENCE),
             ],
         )
         self.assertEqual(mock_play.call_count, 3)
@@ -674,7 +672,7 @@ class VoiceLoopTests(SimpleTestCase):
     ):
         mock_get_stt.return_value.transcribe.return_value = "Explain fully."
         mock_process_message.return_value = stream_events(
-            "First complete sentence. Second complete sentence.", conversation_id=7)
+            FIRST_SENTENCE + " " + SECOND_SENTENCE, conversation_id=7)
         mock_get_tts.return_value.synthesize.side_effect = [
             _make_wav(),
             RuntimeError("Piper stopped"),

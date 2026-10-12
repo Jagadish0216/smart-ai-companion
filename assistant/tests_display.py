@@ -12,6 +12,7 @@ from django.test import SimpleTestCase, override_settings
 
 from assistant.display import DisplayState, NoOpDisplay, get_companion_display
 from assistant.display.serial_display import SerialCompanionDisplay, WRITE_TIMEOUT_SECONDS
+from assistant.tests_voice_stream import FIRST_SENTENCE, SECOND_SENTENCE, THIRD_SENTENCE
 from scripts import voice_loop
 
 
@@ -271,7 +272,7 @@ class DisplayVoiceLifecycleTests(SimpleTestCase):
 
     def generate(self, *args, **kwargs):
         self.events.append("ai")
-        text = "First sentence. Second sentence. Third sentence."
+        text = FIRST_SENTENCE + " " + SECOND_SENTENCE + " " + THIRD_SENTENCE
         return [{"type": "start", "conversation_id": 42, "direct": False},
                 {"type": "delta", "text": text},
                 {"type": "done", "conversation_id": 42, "response": text, "resource_profile": self.profile}]

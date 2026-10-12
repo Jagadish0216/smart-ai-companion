@@ -13,7 +13,7 @@ from django.test import SimpleTestCase, override_settings
 
 from assistant.voice import alsa_stream
 from assistant.voice.processes import AudioCancelledError
-from assistant.tests_voice_stream import stream_events
+from assistant.tests_voice_stream import FIRST_SENTENCE, SECOND_SENTENCE, stream_events
 from scripts import voice_loop
 
 DEVICE = "hw:CARD=sndrpigooglevoi,DEV=0"
@@ -253,7 +253,7 @@ class PersistentPipelineTests(SimpleTestCase):
         child.wait.side_effect = wait
         received = []
         write.side_effect = lambda fd, data: received.append(bytes(data)) or len(data)
-        self.assertEqual(self.speak(stream_events("First sentence. Second sentence."))[0], 42)
+        self.assertEqual(self.speak(stream_events(FIRST_SENTENCE + " " + SECOND_SENTENCE))[0], 42)
         expected = (pcm(0, 24000) + speech1 + pcm(0, 1440)
                     + pcm(0, 2880) + pcm(0, 1440) + speech2 + pcm(0, 1440))
         self.assertEqual(b"".join(received), expected)
@@ -267,7 +267,7 @@ class PersistentPipelineTests(SimpleTestCase):
     @patch("scripts.voice_loop.trim_pcm_edges", return_value=(0, 7200))
     @patch("scripts.voice_loop.prepare_alsa_playback")
     def test_retained_trailing_silence_prevents_double_pause(self, convert, trim, player):
-        self.speak(stream_events("First sentence. Second sentence."))
+        self.speak(stream_events(FIRST_SENTENCE + " " + SECOND_SENTENCE))
         self.assertEqual(player.return_value.write_silence.call_args_list, [call(24000), call(0)])
 
     def test_ready_queue_has_exactly_zero_starvation(self):
@@ -283,7 +283,7 @@ class PersistentPipelineTests(SimpleTestCase):
         with patch("scripts.voice_loop.PersistentAlsaPlayer") as player, patch("scripts.voice_loop.Queue", ObservedQueue), \
                 patch("scripts.voice_loop.prepare_alsa_playback"), patch("scripts.voice_loop.trim_pcm_edges", return_value=(0, 0)):
             player.return_value.write_file.side_effect = consume
-            self.speak(stream_events("First sentence. Second sentence."))
+            self.speak(stream_events(FIRST_SENTENCE + " " + SECOND_SENTENCE))
         self.assertEqual(self.timings["playback_starvation_ms"], 0)
         self.assertEqual(self.timings["max_playback_starvation_ms"], 0)
 
@@ -299,11 +299,11 @@ class PersistentPipelineTests(SimpleTestCase):
             first_consumed.set()
         def events():
             yield {"type": "start", "direct": False, "conversation_id": 42}
-            yield {"type": "delta", "text": "First sentence. "}
+            yield {"type": "delta", "text": FIRST_SENTENCE + " "}
             self.assertTrue(starving.wait(2))
             clock[0] = 0.075
-            yield {"type": "delta", "text": "Second sentence. "}
-            yield {"type": "done", "response": "First sentence. Second sentence. ", "conversation_id": 42}
+            yield {"type": "delta", "text": SECOND_SENTENCE + " "}
+            yield {"type": "done", "response": FIRST_SENTENCE + " " + SECOND_SENTENCE + " ", "conversation_id": 42}
         with patch("scripts.voice_loop.PersistentAlsaPlayer") as player, patch("scripts.voice_loop.Queue", ObservedQueue), \
                 patch("scripts.voice_loop.prepare_alsa_playback"), patch("scripts.voice_loop.trim_pcm_edges", return_value=(0, 0)), \
                 patch("scripts.voice_loop.time.perf_counter", side_effect=lambda: clock[0]):
@@ -355,7 +355,7 @@ class PersistentPipelineTests(SimpleTestCase):
                 patch("scripts.voice_loop.prepare_alsa_playback"), patch("scripts.voice_loop.trim_pcm_edges", return_value=(0, 0)):
             player.return_value.write_file.side_effect = fail_write
             with self.assertRaisesRegex(voice_loop.VoiceLoopError, "persistent player failed"):
-                self.speak(stream_events("Another sentence. " * 30))
+                self.speak(stream_events("Another sentence. " * 100))
         player.assert_called_once()
         player.return_value.abort.assert_called()
         self.assertFalse(any(thread.name.startswith("voice-stream-audio") for thread in threads()))
@@ -384,7 +384,7 @@ class PersistentPipelineTests(SimpleTestCase):
                     def events():
                         yield {"type": "start", "direct": False, "conversation_id": 42}
                         if partial:
-                            yield {"type": "delta", "text": "First sentence. "}
+                            yield {"type": "delta", "text": FIRST_SENTENCE + " "}
                             self.assertTrue(active.wait(2))
                         yield {"type": "error", "detail": "AI disconnected"}
                     service.return_value = events()
