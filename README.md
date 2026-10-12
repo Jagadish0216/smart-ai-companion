@@ -528,6 +528,53 @@ python scripts/voice_loop.py
 
 Press Enter to record one cycle, wait for `Speak now...`, or type `q` and press Enter to exit. By default, the microphone remains open for the warm-up plus the full `VOICE_RECORD_SECONDS` window, preserving the original fixed-duration behavior. Set `VOICE_CAPTURE_VAD_ENABLED=true` to wait for speech and stop after trailing silence instead. This live mode uses a lightweight PCM RMS gate and keeps 300 ms of pre-roll to avoid clipping the first word; whisper.cpp Silero VAD remains a separate downstream validation option. The `record` timing includes the complete microphone-open operation, and live mode also prints the captured audio duration.
 
+#### Development input injection (no microphone required)
+
+The input options are mutually exclusive. Without any option, the existing physical microphone/VAD mode is unchanged:
+
+```bash
+python scripts/voice_loop.py --audio-file /tmp/test.wav
+python scripts/voice_loop.py --text "What is an ESP32?"
+python scripts/voice_loop.py --text-mode
+```
+
+`--audio-file` runs once: prints `Input audio: <path>`, normalizes the supplied audio through the existing ffmpeg helper to 16 kHz mono signed 16-bit PCM WAV, calls the configured Whisper provider, and prints `You: <transcription>`. It never records with the microphone, `arecord` or capture VAD. Arbitrary input audio uses normal mono conversion rather than the INMP441-specific left-channel extraction. The source file is not rewritten/deleted; the normalized temporary copy is cleaned up. Provider-side Whisper configuration is unchanged.
+
+`--text` runs once: prints `Injected text: <query>` and bypasses capture, VAD, normalization and STT completely. `--text-mode` prompts `[text, q=quit] > ` repeatedly, ignores empty lines, and retains `conversation_id` across successful turns so `Tell me about it.` uses the existing follow-up policy/history. Query case is preserved; `q` quits and EOF exits. A failed turn reports its error without discarding the previous successful conversation. Conversation memory implementation is unchanged.
+
+All injected inputs converge on the same response policy, `AssistantService.process_message_stream()`, Piper/TTS workers, persistent ALSA playback and THINKING/SPEAKING/READY lifecycle (or existing ECO/PROTECTIVE states). They do not create an alternate generation or speech implementation. Normal Assistant output and timing continue; bypassed stages are absent from Timing instead of reporting invented capture/STT durations. Existing cancellation, subprocess reaping, worker/temporary-file cleanup and display closure remain in effect. One-shot failures exit nonzero, and Ctrl+C during a one-shot cycle exits 130. Injection skips the microphone-source requirement but retains output configuration validation; no `.env` changes are needed.
+
+Generate repeatable speech inputs using the already configured TTS provider:
+
+```bash
+python scripts/make_voice_test_audio.py --text "What is an ESP32?" --output /tmp/esp32.wav
+python scripts/voice_loop.py --audio-file /tmp/esp32.wav
+```
+
+Use the existing `TTS_ENGINE=piper` configuration for actual synthetic speech. The utility calls the configured provider once, validates its WAV output, and saves those bytes without playback or another dependency. The destination directory must already exist; the named output file is replaced on success. A mock TTS provider only produces its mock WAV, not genuine speech. This tests Piper-generated input → Whisper → Qwen → Piper output, **not real microphone quality, capture VAD, acoustics or recognition of human speech**.
+
+Exact Pi validation commands (using the existing deployed environment and audio/display settings):
+
+```bash
+cd /home/jagadish/apps/smart-ai-companion
+source venv/bin/activate
+python scripts/voice_loop.py --help
+python scripts/voice_loop.py --text "What is an ESP32?"
+python scripts/voice_loop.py --text-mode
+```
+
+In text mode, enter `Explain how Raspberry Pi works.`, then `Tell me about it.`, then `q`. Next generate/replay synthetic inputs:
+
+```bash
+python scripts/make_voice_test_audio.py --text "What is an ESP32?" --output /tmp/esp32.wav
+python scripts/voice_loop.py --audio-file /tmp/esp32.wav
+python scripts/make_voice_test_audio.py --text "Explain how Raspberry Pi works." --output /tmp/pi.wav
+python scripts/voice_loop.py --audio-file /tmp/pi.wav
+pgrep -a aplay
+```
+
+Verify transcription prints only in audio-file mode, normal streamed output/timing and speaker audio appear in both, TFT transitions remain correct, and no `aplay` child remains after each command has finished (when no other audio session is running). Also interrupt one injected response with Ctrl+C and repeat the process check. Optionally run `python scripts/voice_loop.py` afterward to confirm the existing microphone entry point is still available; the synthetic runs alone do not validate it.
+
 The voice loop applies the assistant response policy before generation. Brief requests stay direct, normal requests remain concise but sufficient, and explicit requests for detail, steps, examples, or comparisons can use the larger detailed budget and produce complete answers. Ambiguous commands ask for clarification. Recognized actions that require an unavailable sensor, device, camera, retrieval source, or scheduler are answered honestly instead of being presented as completed.
 
 The voice loop consumes `AssistantService.process_message_stream()` directly: `start` selects the conversation ID, `delta` feeds a sentence-aware speech buffer, `done` flushes the final speech remainder and supplies the canonical response/metadata, and `error` cancels audio and reports ERROR. Routing, grounding, memory, model selection, response budgets and persistence remain owned by the service; there is no additional AI call or browser endpoint change. The service still persists the complete canonical response, including any resource notices.

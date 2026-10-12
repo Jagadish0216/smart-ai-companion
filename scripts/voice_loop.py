@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import io
 import logging
 import math
@@ -90,7 +91,7 @@ class VoiceLoopConfig:
     stream_first_chunk_target_chars: int = 100
 
     @classmethod
-    def from_settings(cls) -> "VoiceLoopConfig":
+    def from_settings(cls, *, require_capture: bool = True) -> "VoiceLoopConfig":
         config = cls(
             input_source=str(getattr(settings, "VOICE_INPUT_SOURCE", "")).strip(),
             record_seconds=float(getattr(settings, "VOICE_RECORD_SECONDS", 5)),
@@ -134,14 +135,14 @@ class VoiceLoopConfig:
             stream_first_chunk_min_chars=int(getattr(settings, "VOICE_STREAM_FIRST_CHUNK_MIN_CHARS", 60)),
             stream_first_chunk_target_chars=int(getattr(settings, "VOICE_STREAM_FIRST_CHUNK_TARGET_CHARS", 100)),
         )
-        config.validate()
+        config.validate(require_capture=require_capture)
         return config
 
-    def validate(self) -> None:
+    def validate(self, *, require_capture: bool = True) -> None:
         if self.audio_backend not in {"pulse", "alsa"}:
             raise VoiceLoopError("VOICE_AUDIO_BACKEND must be pulse or alsa.")
         if self.audio_backend == "alsa" and (
-            not self.alsa_capture_device or not self.alsa_playback_device
+            (require_capture and not self.alsa_capture_device) or not self.alsa_playback_device
         ):
             raise VoiceLoopError("ALSA capture and playback devices must be configured.")
         if not math.isfinite(self.playback_gain) or self.playback_gain <= 0:
@@ -153,7 +154,7 @@ class VoiceLoopConfig:
         ):
             if not math.isfinite(getattr(self, name)):
                 raise VoiceLoopError(f"Voice setting {name} must be finite.")
-        if self.audio_backend == "pulse" and not self.input_source:
+        if require_capture and self.audio_backend == "pulse" and not self.input_source:
             raise VoiceLoopError(
                 "VOICE_INPUT_SOURCE is not configured. Use 'pactl list short sources' "
                 "to find the PipeWire/PulseAudio source name."
@@ -1276,17 +1277,22 @@ def run_voice_cycle(
     config: VoiceLoopConfig,
     conversation_id: int | None = None,
     display=None,
+    *,
+    audio_file: Path | None = None,
+    text: str | None = None,
 ) -> int | None:
     """Run a cycle; hardware display failures are isolated from voice failures."""
     try:
-        return _run_voice_cycle(config, conversation_id, display)
+        return _run_voice_cycle(config, conversation_id, display, audio_file=audio_file, text=text)
     except (Exception, KeyboardInterrupt):
         _set_display_state(display, DisplayState.ERROR)
         raise
 
 
-def _run_voice_cycle(config, conversation_id, display):
-    """Run one record/transcribe/respond/speak cycle."""
+def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=None):
+    """Select an input, then reuse the production respond/speak cycle."""
+    if audio_file is not None and text is not None:
+        raise VoiceLoopError("Choose either audio-file or text input, not both.")
     cycle_started = time.perf_counter()
     timings = {}
     with tempfile.TemporaryDirectory(prefix="smart-ai-voice-") as temp_dir:
@@ -1294,61 +1300,72 @@ def _run_voice_cycle(config, conversation_id, display):
         recorded_path = temp_path / "recorded.wav"
         normalized_path = temp_path / "normalized.wav"
 
-        _set_display_state(display, DisplayState.LISTENING)
-        source = config.alsa_capture_device if config.audio_backend == "alsa" else config.input_source
-        if config.capture_vad_enabled:
-            print(
-                f"Preparing microphone ({config.input_warmup_seconds:g}s warm-up, "
-                "then speech-driven capture)..."
-            )
-            _timed_call(
-                timings,
-                "record",
-                record_audio_with_capture_vad,
-                recorded_path,
-                source,
-                config.input_warmup_seconds,
-                config.capture_vad_start_threshold,
-                config.capture_vad_silence_seconds,
-                config.capture_vad_max_seconds,
-                config.capture_vad_start_timeout_seconds,
-                **({"backend": "alsa"} if config.audio_backend == "alsa" else {}),
-            )
+        if text is not None:
+            transcript = text.strip()
+            if not transcript:
+                raise VoiceLoopError("Injected text must not be empty.")
+            print(f"Injected text: {transcript}")
         else:
-            print(
-                f"Preparing microphone ({config.input_warmup_seconds:g}s warm-up, "
-                f"then {config.record_seconds:g}s recording)..."
-            )
+            if audio_file is not None:
+                recorded_path = Path(audio_file).expanduser()
+                if not recorded_path.is_file():
+                    raise VoiceLoopError(f"Input audio is not a file: {recorded_path}")
+                print(f"Input audio: {recorded_path}")
+            else:
+                _set_display_state(display, DisplayState.LISTENING)
+                source = config.alsa_capture_device if config.audio_backend == "alsa" else config.input_source
+                if config.capture_vad_enabled:
+                    print(
+                        f"Preparing microphone ({config.input_warmup_seconds:g}s warm-up, "
+                        "then speech-driven capture)..."
+                    )
+                    _timed_call(
+                        timings,
+                        "record",
+                        record_audio_with_capture_vad,
+                        recorded_path,
+                        source,
+                        config.input_warmup_seconds,
+                        config.capture_vad_start_threshold,
+                        config.capture_vad_silence_seconds,
+                        config.capture_vad_max_seconds,
+                        config.capture_vad_start_timeout_seconds,
+                        **({"backend": "alsa"} if config.audio_backend == "alsa" else {}),
+                    )
+                else:
+                    print(
+                        f"Preparing microphone ({config.input_warmup_seconds:g}s warm-up, "
+                        f"then {config.record_seconds:g}s recording)..."
+                    )
+                    _timed_call(
+                        timings,
+                        "record",
+                        record_audio_alsa if config.audio_backend == "alsa" else record_audio,
+                        recorded_path,
+                        source,
+                        config.record_seconds,
+                        config.input_warmup_seconds,
+                    )
             _timed_call(
                 timings,
-                "record",
-                record_audio_alsa if config.audio_backend == "alsa" else record_audio,
+                "normalize",
+                normalize_audio,
                 recorded_path,
-                source,
-                config.record_seconds,
-                config.input_warmup_seconds,
+                normalized_path,
+                **({"left_channel": True} if config.audio_backend == "alsa" and audio_file is None else {}),
             )
-        _timed_call(
-            timings,
-            "normalize",
-            normalize_audio,
-            recorded_path,
-            normalized_path,
-            **({"left_channel": True} if config.audio_backend == "alsa" else {}),
-        )
-
-        try:
-            transcript = _timed_call(
-                timings,
-                "stt",
-                get_stt_provider().transcribe,
-                str(normalized_path),
-            ).strip()
-        except Exception as exc:
-            raise VoiceLoopError(f"Transcription failed: {exc}") from exc
-        if not transcript or is_no_speech_transcription(transcript):
-            raise VoiceLoopError("Transcription failed: no speech was recognized.")
-        print(f"You: {transcript}")
+            try:
+                transcript = _timed_call(
+                    timings,
+                    "stt",
+                    get_stt_provider().transcribe,
+                    str(normalized_path),
+                ).strip()
+            except Exception as exc:
+                raise VoiceLoopError(f"Transcription failed: {exc}") from exc
+            if not transcript or is_no_speech_transcription(transcript):
+                raise VoiceLoopError("Transcription failed: no speech was recognized.")
+            print(f"You: {transcript}")
         response_plan = AssistantResponsePolicy.plan_voice_response(transcript)
 
         _set_display_state(display, DisplayState.THINKING)
@@ -1374,43 +1391,69 @@ def _run_voice_cycle(config, conversation_id, display):
     return next_conversation_id
 
 
-def main() -> int:
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description="Production voice loop with optional development input injection.")
+    inputs = parser.add_mutually_exclusive_group()
+    inputs.add_argument("--audio-file", type=Path, help="Run once using an audio file instead of microphone capture.")
+    inputs.add_argument("--text", help="Run once using text, bypassing capture, normalization and STT.")
+    inputs.add_argument("--text-mode", action="store_true", help="Interactively enter text while retaining the conversation.")
+    args = parser.parse_args(argv)
+    if args.text is not None and not args.text.strip():
+        parser.error("--text must not be empty")
+    single_input = args.audio_file is not None or args.text is not None
     try:
-        config = VoiceLoopConfig.from_settings()
+        config = (
+            VoiceLoopConfig.from_settings(require_capture=False) if single_input or args.text_mode
+            else VoiceLoopConfig.from_settings()
+        )
     except (TypeError, ValueError, VoiceLoopError) as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 1
 
     print("Smart AI Companion voice loop")
     print(f"Audio backend: {config.audio_backend}")
-    print(f"Input source: {config.alsa_capture_device if config.audio_backend == 'alsa' else config.input_source}")
-    print("Press Enter to record, or type q and press Enter to quit.")
+    if not single_input and not args.text_mode:
+        print(f"Input source: {config.alsa_capture_device if config.audio_backend == 'alsa' else config.input_source}")
+        print("Press Enter to record, or type q and press Enter to quit.")
     conversation_id = None
     display = get_companion_display()
     try:
         _set_display_state(display, DisplayState.READY)
         while True:
-            try:
-                command = input("\n[Enter=record, q=quit] > ").strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                print("\nExiting voice loop.")
-                return 0
+            injection = {}
+            if single_input:
+                injection = {"audio_file": args.audio_file} if args.audio_file is not None else {"text": args.text}
+            else:
+                try:
+                    command = input("[text, q=quit] > " if args.text_mode else "\n[Enter=record, q=quit] > ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    print("\nExiting voice loop.")
+                    return 0
+                if command.lower() == "q":
+                    print("Exiting voice loop.")
+                    return 0
+                if args.text_mode:
+                    if not command:
+                        continue
+                    injection = {"text": command}
+                elif command:
+                    print("Type q to quit, or press Enter to start recording.")
+                    continue
 
-            if command == "q":
-                print("Exiting voice loop.")
-                return 0
-            if command:
-                print("Type q to quit, or press Enter to start recording.")
-                continue
-
+            exit_code = 0
             try:
-                conversation_id = run_voice_cycle(config, conversation_id, display=display)
+                conversation_id = run_voice_cycle(config, conversation_id, display=display, **injection)
             except VoiceLoopError as exc:
                 print(f"Voice cycle error: {exc}", file=sys.stderr)
+                exit_code = 1
             except KeyboardInterrupt:
                 print("\nVoice cycle cancelled.", file=sys.stderr)
+                exit_code = 130
             except Exception as exc:
                 print(f"Voice cycle error: unexpected failure ({exc}).", file=sys.stderr)
+                exit_code = 1
+            if single_input:
+                return exit_code
     finally:
         try:
             display.close()

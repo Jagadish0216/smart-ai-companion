@@ -376,7 +376,7 @@ class DisplayVoiceLifecycleTests(SimpleTestCase):
     def test_main_owns_one_controller_startup_ready_and_closes_once(self, user_input, config, factory):
         config.return_value = voice_loop.VoiceLoopConfig("source")
         factory.return_value = self.display
-        self.assertEqual(voice_loop.main(), 0)
+        self.assertEqual(voice_loop.main([]), 0)
         factory.assert_called_once()
         self.assertEqual(self.events[0], "READY")
         self.assertEqual(self.events.count("LISTENING"), 2)
@@ -389,7 +389,7 @@ class DisplayVoiceLifecycleTests(SimpleTestCase):
     def test_main_eof_closes_controller(self, user_input, config, factory):
         config.return_value = voice_loop.VoiceLoopConfig("source")
         factory.return_value = self.display
-        self.assertEqual(voice_loop.main(), 0)
+        self.assertEqual(voice_loop.main([]), 0)
         self.display.close.assert_called_once()
 
     @patch("scripts.voice_loop.get_companion_display")
@@ -400,6 +400,6 @@ class DisplayVoiceLifecycleTests(SimpleTestCase):
         factory.return_value = self.display
         self.display.close.side_effect = OSError("private port details")
         with self.assertLogs("scripts.voice_loop", level="WARNING") as logs:
-            self.assertEqual(voice_loop.main(), 0)
+            self.assertEqual(voice_loop.main([]), 0)
         self.display.close.assert_called_once()
         self.assertNotIn("private", str(logs.output))
