@@ -116,7 +116,7 @@ class ResourcePolicyTests(SimpleTestCase):
         self.assertEqual(result["overall_health"], "CAUTION")
         self.assertEqual(result["recommended_profile"], "ECO")
 
-    def test_memory_pressure_recommends_eco_and_lightweight(self):
+    def test_memory_pressure_recommends_eco_budget_for_configured_model(self):
         snapshot = healthy_snapshot()
         snapshot["memory"]["used_percent"] = 80.0
 
@@ -125,7 +125,7 @@ class ResourcePolicyTests(SimpleTestCase):
         self.assertEqual(result["recommended_profile"], "ECO")
         self.assertEqual(
             result["ai_recommendation"]["preferred_model_class"],
-            "LIGHTWEIGHT",
+            "STANDARD",
         )
         self.assertEqual(result["reasons"][0]["code"], "MEMORY_PRESSURE")
 
@@ -310,7 +310,7 @@ class ResourcePolicyTests(SimpleTestCase):
         self.assertEqual(result["overall_health"], "UNKNOWN")
         self.assertEqual(
             result["ai_recommendation"]["preferred_model_class"],
-            "LIGHTWEIGHT",
+            "STANDARD",
         )
 
     def test_multiple_warnings_have_stable_priority_and_codes(self):

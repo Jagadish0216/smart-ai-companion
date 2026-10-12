@@ -152,11 +152,14 @@ AI_ENGINE = os.environ.get('AI_ENGINE', 'mock')
 
 # Ollama configuration (only used when AI_ENGINE=local)
 OLLAMA_HOST = os.environ.get('OLLAMA_HOST', 'http://localhost:11434')
-OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', 'llama3.2:3b')
+OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', 'qwen3.5:4b-q4_K_M')
 OLLAMA_TIMEOUT = int(os.environ.get('OLLAMA_TIMEOUT', '120'))
-OLLAMA_KEEP_ALIVE = os.environ.get('OLLAMA_KEEP_ALIVE', '30m')
+OLLAMA_KEEP_ALIVE = os.environ.get('OLLAMA_KEEP_ALIVE', '24h')
+OLLAMA_THINK = os.environ.get('OLLAMA_THINK', 'false').lower() in ('1', 'true', 'yes', 'on')
+OLLAMA_NUM_CTX = int(os.environ.get('OLLAMA_NUM_CTX', '4096'))
 OLLAMA_NUM_PREDICT = int(os.environ.get('OLLAMA_NUM_PREDICT', '128'))
-AI_LIGHTWEIGHT_MODEL = os.environ.get('AI_LIGHTWEIGHT_MODEL', 'llama3.2:1b')
+# Deprecated settings are parsed for compatibility only; never select models.
+AI_LIGHTWEIGHT_MODEL = os.environ.get('AI_LIGHTWEIGHT_MODEL', OLLAMA_MODEL)
 AI_GENERATION_NORMAL_NUM_PREDICT = int(
     os.environ.get('AI_GENERATION_NORMAL_NUM_PREDICT', str(OLLAMA_NUM_PREDICT))
 )
@@ -175,6 +178,7 @@ CHAT_STREAM_IDLE_TIMEOUT_SECONDS = int(os.environ.get('CHAT_STREAM_IDLE_TIMEOUT_
 
 # Conversation-scoped, local lexical memory; zero limits disable memory context.
 CONVERSATION_RECENT_MESSAGES = int(os.environ.get('CONVERSATION_RECENT_MESSAGES', '4'))
+VOICE_RECENT_MESSAGES = int(os.environ.get('VOICE_RECENT_MESSAGES', '2'))
 CONVERSATION_MEMORY_TOP_K = int(os.environ.get('CONVERSATION_MEMORY_TOP_K', '2'))
 CONVERSATION_MEMORY_MAX_CHARS = int(os.environ.get('CONVERSATION_MEMORY_MAX_CHARS', '400'))
 CONVERSATION_MEMORY_MIN_RELEVANCE = float(os.environ.get('CONVERSATION_MEMORY_MIN_RELEVANCE', '0.5'))
@@ -185,11 +189,9 @@ RAG_RETRIEVER = os.environ.get('RAG_RETRIEVER', 'lexical')
 RAG_CHUNK_CHARS = int(os.environ.get('RAG_CHUNK_CHARS', '700'))
 RAG_CHUNK_OVERLAP_CHARS = int(os.environ.get('RAG_CHUNK_OVERLAP_CHARS', '100'))
 RAG_TOP_K = int(os.environ.get('RAG_TOP_K', '2'))
-RAG_MODEL = os.environ.get('RAG_MODEL', AI_LIGHTWEIGHT_MODEL)
+RAG_MODEL = os.environ.get('RAG_MODEL', OLLAMA_MODEL)  # Deprecated, ignored at runtime.
 RAG_MAX_CONTEXT_CHARS = int(os.environ.get('RAG_MAX_CONTEXT_CHARS', '1200'))
 RAG_NUM_PREDICT = int(os.environ.get('RAG_NUM_PREDICT', '64'))
-RAG_PREWARM_ENABLED = os.environ.get('RAG_PREWARM_ENABLED', 'false').lower() in ('1', 'true', 'yes', 'on')
-RAG_PREWARM_TIMEOUT_SECONDS = float(os.environ.get('RAG_PREWARM_TIMEOUT_SECONDS', '20'))
 RAG_MIN_RELEVANCE = float(os.environ.get('RAG_MIN_RELEVANCE', '0.5'))
 
 # Optional online retrieval. Generation remains on the configured local LLM.
@@ -282,6 +284,6 @@ VOICE_STREAM_FIRST_CHUNK_MIN_CHARS = os.environ.get('VOICE_STREAM_FIRST_CHUNK_MI
 VOICE_STREAM_FIRST_CHUNK_TARGET_CHARS = os.environ.get('VOICE_STREAM_FIRST_CHUNK_TARGET_CHARS', '100')
 VOICE_STREAM_INTER_CHUNK_SILENCE_SECONDS = os.environ.get('VOICE_STREAM_INTER_CHUNK_SILENCE_SECONDS', '0.12')
 VOICE_TTS_MAX_TOTAL_CHARS = os.environ.get('VOICE_TTS_MAX_TOTAL_CHARS', '0')
-VOICE_LLM_BRIEF_NUM_PREDICT = os.environ.get('VOICE_LLM_BRIEF_NUM_PREDICT', '96')
-VOICE_LLM_NORMAL_NUM_PREDICT = os.environ.get('VOICE_LLM_NORMAL_NUM_PREDICT', '160')
-VOICE_LLM_DETAILED_NUM_PREDICT = os.environ.get('VOICE_LLM_DETAILED_NUM_PREDICT', '384')
+VOICE_LLM_BRIEF_NUM_PREDICT = os.environ.get('VOICE_LLM_BRIEF_NUM_PREDICT', '48')
+VOICE_LLM_NORMAL_NUM_PREDICT = os.environ.get('VOICE_LLM_NORMAL_NUM_PREDICT', '96')
+VOICE_LLM_DETAILED_NUM_PREDICT = os.environ.get('VOICE_LLM_DETAILED_NUM_PREDICT', '192')

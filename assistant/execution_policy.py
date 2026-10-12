@@ -90,11 +90,8 @@ def build_execution_plan(
     available_models: Iterable[str] | None = None,
     resource_policy_available: bool = True,
 ) -> AIExecutionPlan:
-    """Translate one resource report and optional local inventory into a plan."""
-    configured_model = str(getattr(settings, "OLLAMA_MODEL", "llama3.2:3b"))
-    lightweight_model = str(
-        getattr(settings, "AI_LIGHTWEIGHT_MODEL", "llama3.2:1b")
-    )
+    """Resource budgets govern the one configured model; inventory is legacy input."""
+    configured_model = str(getattr(settings, "OLLAMA_MODEL", "qwen3.5:4b-q4_K_M"))
     profile = str(report.get("recommended_profile", "UNKNOWN")).upper()
     if profile not in RESOURCE_PROFILES:
         profile = "UNKNOWN"
@@ -123,19 +120,11 @@ def build_execution_plan(
     if resource_policy_available and recommended_budget in GENERATION_BUDGETS:
         budget = recommended_budget
 
-    installed = set(available_models) if available_models is not None else None
     effective_model: str | None = configured_model
     model_reason = "CONFIGURED_MODEL"
     status_message = None
     if profile == "ECO":
         status_message = REDUCED_RESOURCE_STATUS
-        if installed is not None and lightweight_model in installed:
-            effective_model = lightweight_model
-            model_reason = policy_reason or "RESOURCE_PRESSURE"
-        elif installed is None:
-            model_reason = "LIGHTWEIGHT_AVAILABILITY_UNKNOWN"
-        else:
-            model_reason = "LIGHTWEIGHT_UNAVAILABLE"
     elif profile == "PROTECTIVE":
         if not generation_allowed:
             effective_model = None
@@ -144,22 +133,8 @@ def build_execution_plan(
                 "Local AI is temporarily unavailable because the device is "
                 "protecting itself from a critical resource condition."
             )
-        elif installed is not None and lightweight_model in installed:
-            effective_model = lightweight_model
-            model_reason = policy_reason or "RESOURCE_PRESSURE"
-            status_message = CONSTRAINED_RESOURCE_STATUS
         else:
-            effective_model = None
-            generation_allowed = False
-            model_reason = (
-                "LIGHTWEIGHT_AVAILABILITY_UNKNOWN"
-                if installed is None
-                else "LIGHTWEIGHT_UNAVAILABLE"
-            )
-            status_message = (
-                "Local AI is temporarily unavailable because the device is "
-                "protecting itself from a critical resource condition."
-            )
+            status_message = CONSTRAINED_RESOURCE_STATUS
 
     max_output_tokens, context_message_limit = _budget_values()[budget]
     return AIExecutionPlan(
@@ -225,20 +200,8 @@ def get_ai_execution_plan(
         }
         policy_available = False
 
-    available_models = None
-    if (
-        str(report.get("recommended_profile", "")).upper() in {"ECO", "PROTECTIVE"}
-        and str(getattr(settings, "AI_ENGINE", "mock")).lower() == "local"
-        and model_inventory_provider is not None
-    ):
-        try:
-            available_models = set(model_inventory_provider())
-        except Exception:
-            available_models = None
-
     return build_execution_plan(
         report,
-        available_models=available_models,
         resource_policy_available=policy_available,
     )
 
@@ -254,15 +217,5 @@ def select_voice_budget(plan: AIExecutionPlan) -> AIExecutionPlan:
 
 
 def select_rag_model(plan: AIExecutionPlan, available_models: Iterable[str]) -> AIExecutionPlan:
-    """Select a grounded-synthesis model without relaxing any resource limits."""
-    if not plan.generation_allowed or not plan.local_ai_allowed:
-        return plan
-    lightweight = str(getattr(settings, "AI_LIGHTWEIGHT_MODEL", "llama3.2:1b"))
-    rag_model = str(getattr(settings, "RAG_MODEL", lightweight)).strip() or lightweight
-    if plan.resource_profile in {"ECO", "PROTECTIVE"} and rag_model not in {
-        lightweight, plan.effective_model,
-    }:
-        return plan
-    if rag_model not in set(available_models):
-        return plan
-    return replace(plan, effective_model=rag_model, model_reason="RAG_MODEL")
+    """Deprecated compatibility helper: RAG never changes the configured model."""
+    return plan

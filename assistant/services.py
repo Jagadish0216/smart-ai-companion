@@ -35,7 +35,7 @@ from .devices.types import DeviceAction, DeviceCommand, SensorReading
 from .online.base import OnlineRetrievalError, OnlineRetrievalResult
 from .online.factory import get_online_retriever
 from .online.grounding import build_online_grounding_instruction
-from .execution_policy import AIExecutionPlan, get_ai_execution_plan, select_rag_model, select_voice_budget
+from .execution_policy import AIExecutionPlan, get_ai_execution_plan, select_voice_budget
 from .policy import (
     Capability,
     CapabilityRegistry,
@@ -231,28 +231,16 @@ def _prepare_message(
     else:
         conversation = Conversation.objects.create(title=query[:50])
 
-    planned_engine = None
-    inventory_models = None
-
-    def local_model_inventory():
-        nonlocal planned_engine, inventory_models
-        if inventory_models is not None:
-            return inventory_models
-        planned_engine = get_engine()
-        inventory = getattr(planned_engine, "available_models", None)
-        inventory_models = set(inventory()) if callable(inventory) else set()
-        return inventory_models
-
     policy_started = time.perf_counter()
-    execution_plan = get_ai_execution_plan(
-        model_inventory_provider=local_model_inventory,
-    )
+    execution_plan = get_ai_execution_plan()
     if response_plan is not None and response_plan.is_voice:
         execution_plan = select_voice_budget(execution_plan)
     policy_ms = round((time.perf_counter() - policy_started) * 1000)
     # Limit in SQL, not just after loading history. Capture before the current row.
     history_started = time.perf_counter()
     requested_history_limit = max(0, int(getattr(settings, "CONVERSATION_RECENT_MESSAGES", 4)))
+    if response_plan is not None and response_plan.recent_history_limit is not None:
+        requested_history_limit = min(requested_history_limit, max(0, response_plan.recent_history_limit))
     recent_limit = min(requested_history_limit, max(0, execution_plan.context_message_limit))
     recent = _get_conversation_history(conversation, recent_limit, include_ids=True)
     history = [{"role": item["role"], "content": item["content"]} for item in recent]
@@ -295,7 +283,13 @@ def _prepare_message(
         "routing_ms": routing_ms,
         "rag_ms": getattr(route_decision, "rag_latency_ms", 0),
         "memory_ms": 0,
+        "recent_history_used": bool(recent),
+        "recent_history_messages": len(recent),
+        "recent_history_chars": sum(len(item["content"]) for item in recent),
     }
+    if route_decision.retrieval_query is not None:
+        stage_ms["retrieval_query"] = route_decision.retrieval_query
+        stage_ms["rag_query_normalized"] = route_decision.retrieval_query != query
 
     direct_response = _direct_response_for_route(
         route_decision,
@@ -358,10 +352,6 @@ def _prepare_message(
                 effective_num_predict,
                 max(1, int(getattr(settings, "RAG_NUM_PREDICT", 64))),
             )
-        try:
-            execution_plan = select_rag_model(execution_plan, local_model_inventory())
-        except EngineUnavailableError:
-            logger.warning("RAG model inventory unavailable; retaining the resource-selected model")
 
     online_results: list[OnlineRetrievalResult] = []
     online_instruction = None
@@ -412,7 +402,7 @@ def _prepare_message(
     memory_messages = []
     memory_history = []
     memory_started = time.perf_counter()
-    if conversation_id:
+    if conversation_id and (response_plan is None or response_plan.allow_long_term_memory):
         try:
             memory_messages = get_memory_retriever().retrieve(
                 query, conversation_id=conversation.id, before_id=current_message.id,
@@ -446,7 +436,7 @@ def _prepare_message(
         conversation=conversation,
         query=query,
         history=history,
-        engine=planned_engine or get_engine(),
+        engine=get_engine(),
         execution_plan=execution_plan,
         route_decision=route_decision,
         system_instruction=effective_instruction,
@@ -558,6 +548,7 @@ def _log_request_performance(prepared: PreparedAssistantRequest, metadata: dict)
             "resource_profile", "effective_model",
             "num_predict", "max_output_tokens", "eval_count", "output_limit_reached",
             "memory_used", "memory_messages", "memory_chars", "memory_ms",
+            "recent_history_used", "recent_history_messages", "recent_history_chars", "rag_query_normalized",
         )
     }
     logger.info(
@@ -590,7 +581,7 @@ def _log_generation_exception(exc: Exception) -> None:
 
 def _log_failed_request(prepared: PreparedAssistantRequest) -> None:
     safe_metrics = {
-        **prepared.stage_ms,
+        **{key: value for key, value in prepared.stage_ms.items() if key != "retrieval_query"},
         "execution_ms": round(
             (time.perf_counter() - prepared.execution_started) * 1000
         ),

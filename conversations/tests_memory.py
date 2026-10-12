@@ -365,7 +365,7 @@ class ConversationMemoryServiceTests(TestCase):
             response = self.request()
         kwargs = self.engine.generate.call_args.kwargs
         self.assertEqual(response[2]["route"], "local_rag")
-        self.assertEqual(kwargs["model"], "small:1b")
+        self.assertEqual(kwargs["model"], "primary:3b")
         self.assertEqual(kwargs["num_predict"], 64)
         self.assertIn(source.content, kwargs["system_instruction"])
         self.assertIn("Use trusted local knowledge only", kwargs["system_instruction"])

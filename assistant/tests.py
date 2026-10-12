@@ -335,7 +335,7 @@ class LocalLLMEngineMockedTests(TestCase):
 
     @patch.dict("os.environ", {}, clear=True)
     @patch("assistant.ai_engine.local.urllib.request.urlopen")
-    def test_keep_alive_defaults_to_30_minutes(self, mock_urlopen):
+    def test_keep_alive_defaults_to_24_hours(self, mock_urlopen):
         """The /api/chat payload uses the documented keep-alive default."""
         mock_urlopen.return_value = self._make_mock_response({
             "message": {"role": "assistant", "content": "Hello"},
@@ -346,7 +346,7 @@ class LocalLLMEngineMockedTests(TestCase):
 
         request_obj = mock_urlopen.call_args[0][0]
         sent_payload = json.loads(request_obj.data.decode("utf-8"))
-        self.assertEqual(sent_payload["keep_alive"], "30m")
+        self.assertEqual(sent_payload["keep_alive"], "24h")
 
     @patch.dict("os.environ", {"OLLAMA_KEEP_ALIVE": "10m"})
     @patch("assistant.ai_engine.local.urllib.request.urlopen")
@@ -378,7 +378,7 @@ class LocalLLMEngineMockedTests(TestCase):
 
         request_obj = mock_urlopen.call_args[0][0]
         sent_payload = json.loads(request_obj.data.decode("utf-8"))
-        self.assertEqual(sent_payload["options"], {"num_predict": 128})
+        self.assertEqual(sent_payload["options"], {"num_predict": 128, "num_ctx": 4096})
 
     @patch.dict("os.environ", {"OLLAMA_NUM_PREDICT": "256"})
     @patch("assistant.ai_engine.local.urllib.request.urlopen")
@@ -393,7 +393,7 @@ class LocalLLMEngineMockedTests(TestCase):
 
         request_obj = mock_urlopen.call_args[0][0]
         sent_payload = json.loads(request_obj.data.decode("utf-8"))
-        self.assertEqual(sent_payload["options"], {"num_predict": 256})
+        self.assertEqual(sent_payload["options"], {"num_predict": 256, "num_ctx": 4096})
 
     @patch("assistant.ai_engine.local.urllib.request.urlopen")
     def test_request_scoped_num_predict_overrides_global_fallback(self, mock_urlopen):
@@ -408,7 +408,7 @@ class LocalLLMEngineMockedTests(TestCase):
 
         request_obj = mock_urlopen.call_args[0][0]
         sent_payload = json.loads(request_obj.data.decode("utf-8"))
-        self.assertEqual(sent_payload["options"], {"num_predict": 384})
+        self.assertEqual(sent_payload["options"], {"num_predict": 384, "num_ctx": 4096})
 
     @patch("assistant.ai_engine.local.logger.info")
     @patch("assistant.ai_engine.local.urllib.request.urlopen")
@@ -643,7 +643,7 @@ class AssistantServiceRequestInstructionTests(TestCase):
         self.assertEqual(text, "Normal response")
         call_kwargs = engine.generate.call_args.kwargs
         self.assertIn(
-            "Use this runtime capability state",
+            "Runtime capabilities:",
             call_kwargs["system_instruction"],
         )
         self.assertEqual(call_kwargs["num_predict"], 128)
@@ -672,7 +672,7 @@ class AssistantServiceRequestInstructionTests(TestCase):
         self.assertEqual(text, "Concise spoken response.")
         request_instruction = engine.generate.call_args.kwargs["system_instruction"]
         self.assertIn(instruction, request_instruction)
-        self.assertIn("Use this runtime capability state", request_instruction)
+        self.assertIn("Runtime capabilities:", request_instruction)
         self.assertEqual(
             list(
                 conversation.messages

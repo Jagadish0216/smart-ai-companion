@@ -67,9 +67,11 @@ API: {conversation_id, response, engine, model, mode}
 
 The reusable policy layer classifies requests as `BRIEF`, `NORMAL`, `DETAILED`, `ACTION`, or `CLARIFICATION`. The standalone voice loop uses this classification to select response depth and a request-scoped Ollama generation budget without changing the global `OLLAMA_NUM_PREDICT=128` fallback. Browser and service calls without a voice plan retain the same behavior while all LLM requests receive request-scoped capability grounding.
 
-Resource scheduling uses current CPU/load, memory, storage, temperature and active throttle flags. Latched historical throttle flags remain visible in telemetry, subsystem/overall health (`CAUTION`) and `THROTTLING_HISTORY` reasons, but do not themselves select ECO or become the explanation for current pressure. Active throttling and other critical conditions still select PROTECTIVE. For the validated Pi snapshot (no active flags, CPU 0%, load 0.74/4 cores, RAM 66.8%, storage 24.7%, temperature 43.5 C), runtime scheduling selects BALANCED, STANDARD, NORMAL and the configured 3B local model; RAM exceeds the default 65% PERFORMANCE headroom threshold. Diagnostic CAUTION and runtime BALANCED can legitimately coexist.
+Resource scheduling uses current CPU/load, memory, storage, temperature and active throttle flags. Latched historical throttle flags remain diagnostic CAUTION with `THROTTLING_HISTORY`, not current scheduling pressure. Active throttling and critical conditions still select PROTECTIVE and can block generation. BALANCED/PERFORMANCE/ECO use only `OLLAMA_MODEL` (default `qwen3.5:4b-q4_K_M`); profiles reduce output/history budgets, never select another model. For the earlier healthy snapshot with RAM 66.8%, runtime scheduling remains BALANCED/NORMAL because RAM exceeds the 65% PERFORMANCE threshold. Diagnostic CAUTION and runtime BALANCED can coexist.
 
-Voice plans default to no implicit RAG for generic world-knowledge questions, even if local documents happen to match. Explicit references to local documents, notes, a knowledge base, or the user's project/setup enable retrieval when matching context exists; explicit LOCAL_RAG actions retain their existing path. `ResponsePlan.allow_implicit_rag` defaults to `True` for compatibility with text callers. Retrieval scoring, model selection and grounding are unchanged; the gate does not guarantee a lexical match for every explicitly scoped question.
+Voice plans default to no implicit RAG for generic world-knowledge questions, even if local documents match. Explicit local-document/project intent enables retrieval. Known request wrappers are removed deterministically: "What does our knowledge base say about edge computing?" retrieves "edge computing"; "According to my notes, how is ESP32 relay wiring connected?" retrieves "ESP32 relay wiring connected". The complete original question still goes to the model and database. Lexical scoring is unchanged; implicit text-chat queries are unchanged. Optional `retrieval_query` metadata contains only the user-derived retrieval topic, never document contents; it is not logged, including on errors.
+
+Voice standalone topical requests omit recent turns and long-term recall. Deterministic deictic follow-ups (including "Why?" and "What about its GPIO pins?") and explicit conversational references receive up to `VOICE_RECENT_MESSAGES=2`, capped at four and further bounded by normal history/resource limits. Explicit user-fact recall enables Conversation Memory v2's existing lexical retrieval. Text chat retains its four-message recent window and existing memory behavior. Additive diagnostics report `recent_history_used`, `recent_history_messages` and `recent_history_chars`, separately from older-memory metrics.
 
 The capability registry reflects configured, implemented components such as conversation persistence, local generation, whisper.cpp STT, Piper TTS, local retrieval, optional online retrieval, and optional ESP32 MQTT control. `LOCAL_RAG` is available only when RAG is enabled, its configuration is valid, and at least one chunk belongs to an indexed document. `ONLINE_RETRIEVAL` is available only when online retrieval is enabled, the local Ollama engine is selected, the provider URL is valid, and limits are valid. `DEVICE_CONTROL` and `ENVIRONMENT_SENSING` are available only when the MQTT transport, broker settings, and ESP32 device ID are explicitly configured. Camera understanding, movement, and reminders remain unavailable. Recognized requests for unavailable actions receive a natural grounded response; the assistant must not claim that an action or observation occurred.
 
@@ -130,13 +132,15 @@ At request time, the retriever returns up to `RAG_TOP_K` chunks whose score meet
 
 Ordinary `LOCAL_RAG` answers are capped at `RAG_NUM_PREDICT=64` output tokens, further limited by any smaller request/resource budget. Requests classified as `DETAILED` by the existing response policy retain their normal request/resource budget. Normal `LOCAL` budgets are unchanged. RAG instructions require context-only answers without unsupported elaboration, one concise sentence for directly supported ordinary facts, and an explicit insufficient-knowledge response when needed. Detailed answers still require strict grounding but may use multiple sentences. This is a single streaming generation call, not a verification or summarization stage; model adherence still needs Pi quality validation. Generation metadata (including streaming start/done) exposes the actual `num_predict`; `max_output_tokens` remains the resource-policy ceiling.
 
-`LOCAL_RAG` selects installed `RAG_MODEL` (defaults to `AI_LIGHTWEIGHT_MODEL`, normally `llama3.2:1b`) for grounded synthesis. The Resource Manager still controls whether generation is permitted, output/context budgets and timeout. ECO/PROTECTIVE never upgrade to a larger configured RAG override. If the RAG model is absent or inventory is unavailable, the already-approved resource-selected model is retained. Metadata reports the actual `model`/`effective_model`, while `configured_model` remains the primary model. Normal `LOCAL` keeps the existing 3B path and incurs no new inventory preflight.
+`LOCAL_RAG`, LOCAL, ONLINE synthesis and memory-backed replies all use the same configured Qwen model. No inventory request or alternate-model selection occurs in request scheduling. Deprecated `AI_LIGHTWEIGHT_MODEL` and `RAG_MODEL` settings are parsed for compatibility but ignored. Resource safety, output/context budgets, timeout, capability grounding and factual RAG constraints remain enforced.
 
 Useful chunks are added only to the internal request instruction; user query and history remain unchanged. The shorter RAG instruction still treats local knowledge as factual reference data, ignores embedded instructions, prohibits invented missing facts, and hides retrieval details unless asked. No useful match follows the normal non-RAG path.
 
-To optionally warm the RAG model at boot, set `RAG_PREWARM_ENABLED=true` and `RAG_PREWARM_TIMEOUT_SECONDS=20`. The existing `warm_ai_model` command then attempts the installed RAG model/prefix first, within at most one third of the remaining overall timeout. Failure or absence is observable on stderr and does not prevent required primary warming. The primary model/prefix is always warmed last. No additional systemd service is required; the shared 90-second command budget and 120-second service limit remain. Leave optional warming disabled if residency/memory pressure or cold-load time makes it unsuitable for your Pi.
+The compact shared prompt preserves identity, factual/uncertainty rules and runtime capability/result grounding. Voice and RAG no longer repeat style rules. With local AI, Whisper, Piper and indexed RAG enabled, online/device control disabled, the reusable stable SYSTEM prefix decreased from 1607 to 752 characters (about 402 to 188 tokens using a rough four-characters/token estimate). NORMAL voice instructions decreased from 1386 to 543 characters; the duplicated 784-character RAG voice instruction was removed. Stable prefix plus NORMAL policy is approximately 1297 characters rather than 2993, before user/history/context text. These are measured character counts and approximate token counts, not measured Qwen tokenizer counts or new Pi latency results. No query, history, timestamp or resource profile is inserted into the stable prefix; genuinely changed capability availability still updates grounding truthfully.
 
-Measured baseline: warm 3B LOCAL TTFT was ~836 ms; 3B LOCAL_RAG TTFT was ~9.5 seconds despite ~2 ms lexical retrieval. This milestone targets dynamic RAG prefill with less context and 1B synthesis. Separate SYSTEM messages and moving RAG into a USER turn did not solve prefill cost, so the committed prompt architecture is preserved. Rebenchmark RAG TTFT, total time, answer quality, token counts and memory on the Pi; Windows tests do not establish a new latency figure.
+`warm_ai_model` warms one model's residency and the shared production prefix. Optional RAG prewarming is removed; old `RAG_PREWARM_*` environment values are ignored. API readiness retries and the single overall timeout remain, as does systemd's 120-second startup limit. Both warm stages use the same 4096-token context and non-thinking controls; keep-alive defaults to 24h. An explicit diagnostic `--model` override still warms only that one requested model.
+
+Historical Llama baseline: warm 3B LOCAL TTFT was ~836 ms; 3B LOCAL_RAG TTFT was ~9.5 seconds despite ~2 ms lexical retrieval. Qwen's quality is now accepted, with measured raw warm decode around 2.6-2.9 tokens/s. Short voice generation, bounded follow-up context and a compact reusable prefix address prompt/output overhead; separate SYSTEM-message experiments are not reinstated. Rebenchmark the full production path on the Pi; Windows tests do not establish a new latency figure.
 
 `LOCAL_RAG` is reported unavailable when the local LLM is not selected, RAG is disabled, configuration is invalid, or no indexed chunks exist. This conservative empty-index behavior prevents the assistant from claiming it can search local knowledge before ingestion has succeeded.
 
@@ -311,14 +315,14 @@ ollama --version
 #### Pull the Model
 
 ```bash
-ollama pull llama3.2:3b
+ollama pull qwen3.5:4b-q4_K_M
 ollama list
 ```
 
 #### Test Directly
 
 ```bash
-ollama run llama3.2:3b "Hello, what can you do?"
+curl http://localhost:11434/api/chat -d '{"model":"qwen3.5:4b-q4_K_M","messages":[{"role":"user","content":"What is an ESP32?"}],"stream":false,"think":false,"keep_alive":"24h","options":{"num_ctx":4096,"num_predict":96}}'
 ```
 
 #### Or use the setup script
@@ -337,7 +341,9 @@ Edit your `.env` file:
 ```env
 AI_ENGINE=local
 OLLAMA_HOST=http://localhost:11434
-OLLAMA_MODEL=llama3.2:3b
+OLLAMA_MODEL=qwen3.5:4b-q4_K_M
+OLLAMA_THINK=false
+OLLAMA_NUM_CTX=4096
 OLLAMA_KEEP_ALIVE=24h
 OLLAMA_NUM_PREDICT=128
 CHAT_REQUEST_TIMEOUT_SECONDS=30
@@ -366,27 +372,28 @@ Mock mode requires no external services and is useful for frontend development.
 |---|---|---|
 | `AI_ENGINE` | `mock` | Engine selection: `mock` or `local` |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
-| `OLLAMA_MODEL` | `llama3.2:3b` | Primary model identifier |
-| `AI_LIGHTWEIGHT_MODEL` | `llama3.2:1b` | Optional installed fallback selected only by ECO/PROTECTIVE resource policy |
+| `OLLAMA_MODEL` | `qwen3.5:4b-q4_K_M` | Sole runtime model identifier |
+| `AI_LIGHTWEIGHT_MODEL` | `OLLAMA_MODEL` | Deprecated and ignored for runtime selection |
+| `OLLAMA_THINK` | `false` | Top-level thinking control for Ollama chat requests |
+| `OLLAMA_NUM_CTX` | `4096` | Context window sent inside options for generation and residency/prefix warmup |
 | `OLLAMA_TIMEOUT` | `120` | Request timeout (seconds) |
-| `OLLAMA_KEEP_ALIVE` | `30m` (`24h` recommended in `.env.example`) | How long Ollama keeps the model loaded after a request |
+| `OLLAMA_KEEP_ALIVE` | `24h` | How long Ollama keeps the one model loaded after a request |
 | `OLLAMA_NUM_PREDICT` | `128` | Maximum number of tokens Ollama generates per response |
 | `CHAT_REQUEST_TIMEOUT_SECONDS` | `30` | Minimum timeout while waiting for initial stream activity; it is raised above the backend timeout when needed |
 | `CHAT_STREAM_IDLE_TIMEOUT_SECONDS` | `45` | Browser idle timeout reset whenever streamed bytes arrive; not a hard completion deadline |
 | `CONVERSATION_RECENT_MESSAGES` | `4` | Recent chat rows; capped further by the resource policy |
+| `VOICE_RECENT_MESSAGES` | `2` | Follow-up voice rows only; capped at four, chat-window and resource limits |
 | `CONVERSATION_MEMORY_TOP_K` | `2` | Maximum older USER excerpts; zero disables long-term context |
 | `CONVERSATION_MEMORY_MAX_CHARS` | `400` | Aggregate older-message history content character budget |
 | `CONVERSATION_MEMORY_MIN_RELEVANCE` | `0.5` | Minimum distinct lexical query-term coverage |
 | `RAG_ENABLED` | `false` | Enable local retrieval with `AI_ENGINE=local` after knowledge has been ingested |
 | `RAG_RETRIEVER` | `lexical` | Local retriever implementation; v1 supports `lexical` |
-| `RAG_MODEL` | `AI_LIGHTWEIGHT_MODEL` | Installed model for grounded synthesis, subject to resource policy |
+| `RAG_MODEL` | `OLLAMA_MODEL` | Deprecated and ignored for runtime selection |
 | `RAG_CHUNK_CHARS` | `700` | Approximate source chunk size in characters |
 | `RAG_CHUNK_OVERLAP_CHARS` | `100` | Approximate overlap between adjacent chunks |
 | `RAG_TOP_K` | `2` | Maximum relevant chunks supplied to one request |
 | `RAG_MAX_CONTEXT_CHARS` | `1200` | Maximum aggregate retrieved chunk content |
 | `RAG_NUM_PREDICT` | `64` | Ordinary LOCAL_RAG output token cap; DETAILED requests use their normal resource-bounded budget |
-| `RAG_PREWARM_ENABLED` | `false` | Optional best-effort RAG preload before required primary warm-up |
-| `RAG_PREWARM_TIMEOUT_SECONDS` | `20` | Optional stage cap; also capped by remaining overall warm-up budget |
 | `RAG_MIN_RELEVANCE` | `0.5` | Minimum lexical query-term coverage score from 0 to 1 |
 | `ONLINE_RETRIEVAL_ENABLED` | `false` | Enable online snippets only for requests routed to `ONLINE` |
 | `ONLINE_PROVIDER` | `searxng` | Online retriever implementation; v1 supports `searxng` |
@@ -433,9 +440,9 @@ Mock mode requires no external services and is useful for frontend development.
 | `VOICE_STREAM_INTER_CHUNK_SILENCE_SECONDS` | `0.12` | Persistent ALSA boundary pause target, counting retained Piper edge silence; finite range `0`–`1` |
 | `VOICE_TTS_CHUNK_CHARS` | `300` | Legacy batch speech-helper chunk size; streaming uses the setting above |
 | `VOICE_TTS_MAX_TOTAL_CHARS` | `0` | Legacy batch speech-helper safety limit; streaming speaks the full answer without truncation |
-| `VOICE_LLM_BRIEF_NUM_PREDICT` | `96` | Request-scoped Ollama budget for brief voice responses |
-| `VOICE_LLM_NORMAL_NUM_PREDICT` | `160` | Request-scoped Ollama budget for normal voice responses |
-| `VOICE_LLM_DETAILED_NUM_PREDICT` | `384` | Request-scoped Ollama budget for detailed voice responses |
+| `VOICE_LLM_BRIEF_NUM_PREDICT` | `48` | Request-scoped Ollama budget for brief voice responses |
+| `VOICE_LLM_NORMAL_NUM_PREDICT` | `96` | Request-scoped Ollama budget for normal voice responses |
+| `VOICE_LLM_DETAILED_NUM_PREDICT` | `192` | Request-scoped Ollama budget for detailed voice responses |
 | `AI_GENERATION_NORMAL_VOICE_NUM_PREDICT` | `384` | Voice-only healthy NORMAL resource ceiling; capped at 512, never raises ECO/PROTECTIVE limits |
 
 ## Standalone Raspberry Pi Voice Loop
@@ -504,9 +511,9 @@ VOICE_TTS_MAX_TOTAL_CHARS=0
 VOICE_STREAM_TTS_TARGET_CHARS=180
 VOICE_STREAM_FIRST_CHUNK_MIN_CHARS=60
 VOICE_STREAM_FIRST_CHUNK_TARGET_CHARS=100
-VOICE_LLM_BRIEF_NUM_PREDICT=96
-VOICE_LLM_NORMAL_NUM_PREDICT=160
-VOICE_LLM_DETAILED_NUM_PREDICT=384
+VOICE_LLM_BRIEF_NUM_PREDICT=48
+VOICE_LLM_NORMAL_NUM_PREDICT=96
+VOICE_LLM_DETAILED_NUM_PREDICT=192
 ```
 
 With the chosen backend configured, run:
@@ -521,7 +528,7 @@ The voice loop applies the assistant response policy before generation. Brief re
 
 The voice loop consumes `AssistantService.process_message_stream()` directly: `start` selects the conversation ID, `delta` feeds a sentence-aware speech buffer, `done` flushes the final speech remainder and supplies the canonical response/metadata, and `error` cancels audio and reports ERROR. Routing, grounding, memory, model selection, response budgets and persistence remain owned by the service; there is no additional AI call or browser endpoint change. The service still persists the complete canonical response, including any resource notices.
 
-Voice-only policy asks for one direct short sentence in BRIEF mode, and normally one or two short sentences (about 20-60 spoken words) in NORMAL mode. Background, examples and caveats belong only when needed to answer the request. Explicit detail, steps, examples and comparison requests remain conversational DETAILED answers; explicit formatting/length overrides the defaults (four sentences still means four). A plain "explain how X works" stays NORMAL. Avoid stock openings and project/internal tangents. History still resolves pronouns, follow-ups and user-provided facts, but must not redirect a standalone named-topic question to unrelated earlier project discussion. These are generation instructions, not a second summarization call or a text-chat policy change; actual model adherence needs Pi listening validation.
+Voice-only policy asks for one direct short sentence in BRIEF mode, and normally one or two short sentences (preferably 15-40 spoken words) in NORMAL mode. Background, examples and caveats belong only when needed to answer the request. Explicit detail, steps, examples and comparison requests remain conversational DETAILED answers; explicit formatting/length overrides the defaults (four sentences still means four). A plain "explain how X works" stays NORMAL. Avoid stock openings and project/internal tangents. History still resolves pronouns, follow-ups and user-provided facts, but must not redirect a standalone named-topic question to unrelated earlier project discussion. These are generation instructions, not a second summarization call or a text-chat policy change; actual model adherence needs Pi listening validation.
 
 The terminal prints `Assistant: ` once, then prints actual answer deltas immediately with `flush=True`, preserving their spaces/newlines and Markdown. It finishes the line at `done` (or on failure) and never reprints the full final answer. Terminal presentation runs on the producer; neither audio worker performs terminal writes or waits for them. Known initial resource notices appear once per distinct notice as `Status: ...`, not as assistant text or speech. A small leading-only filter handles notices split across deltas and repeated initial notices; it does not delete matching text inside an actual answer. Genuine direct answers, including resource-unavailability explanations, remain visible and spoken.
 
@@ -533,7 +540,7 @@ For example, `Solar panels convert sunlight into electricity by using photovolta
 
 Only at completion, after a unit containing a complete sentence has already been submitted to playback, speech may omit a clearly dangling final fragment (for example, ending in "a Linux-based", "the", or "and"). An unpunctuated answer is not automatically incomplete; a sole short answer and useful unpunctuated facts remain spoken. This conservative heuristic is presentation-only: terminal and persisted canonical text are never rewritten.
 
-Pi diagnostics confirmed dangling responses at `eval_count=96` and `num_predict=96` under ECO. Healthy BALANCED/PERFORMANCE voice requests with a NORMAL budget now use a separate bounded resource ceiling, `AI_GENERATION_NORMAL_VOICE_NUM_PREDICT=384` (hard maximum 512). Actual BRIEF/NORMAL/DETAILED defaults remain 96/160/384; concise generation instructions are unchanged. Text requests retain their existing NORMAL default of 128. ECO REDUCED 96, PROTECTIVE MINIMAL 48, policy-unavailable and safety-unknown reductions remain unchanged; blocked generation stays blocked. Ordinary explicit RAG still applies its 64-token cap, while detailed RAG remains resource-bounded. A larger healthy ceiling reduces predictable truncation but cannot guarantee arbitrarily long detailed answers finish.
+Pi diagnostics confirmed dangling responses at `eval_count=96` and `num_predict=96` under ECO. Healthy BALANCED/PERFORMANCE voice requests with a NORMAL budget now use a separate bounded resource ceiling, `AI_GENERATION_NORMAL_VOICE_NUM_PREDICT=384` (hard maximum 512). Actual BRIEF/NORMAL/DETAILED defaults are 48/96/192; BRIEF requests one direct 5-20-word sentence, and NORMAL prefers 15-40 words. Explicit three-or-more-sentence requests select DETAILED headroom, not a two-sentence limit. Text requests retain their existing NORMAL default of 128. ECO REDUCED 96, PROTECTIVE MINIMAL 48, policy-unavailable and safety-unknown reductions remain unchanged; blocked generation stays blocked. Ordinary explicit RAG still applies its 64-token cap, while detailed RAG remains resource-bounded. A larger healthy ceiling reduces predictable truncation but cannot guarantee arbitrarily long detailed answers finish.
 
 Final generation metadata adds `eval_count` and `output_limit_reached = eval_count >= num_predict` only when the engine supplies a nonnegative integer token count. Otherwise both are absent, not fabricated. This flags probable token exhaustion, not linguistic completeness; canonical output is persisted truthfully even if cut off. Closing a generated stream after its validated, persisted `done` event no longer logs an incomplete client disconnect; abandoning it before `done` still does. No additional inference stage, ALSA/Piper change, STT or model-TTFT improvement is claimed.
 
@@ -606,7 +613,7 @@ is retained for API clients and the voice path. Every stream line is one JSON
 object with one of these stable event shapes:
 
 ```json
-{"type":"start","conversation_id":12,"direct":false,"effective_model":"llama3.2:3b","route":"local"}
+{"type":"start","conversation_id":12,"direct":false,"effective_model":"qwen3.5:4b-q4_K_M","route":"local"}
 {"type":"delta","text":"Edge"}
 {"type":"done","conversation_id":12,"response":"Edge computing ...","ttft_ms":180,"generation_ms":8050,"execution_ms":8075}
 {"type":"error","error":"generation_error","detail":"The local AI service is currently unavailable or unreachable.","partial":true}
@@ -622,11 +629,11 @@ Run the explicit warm-up after Ollama starts:
 
 ```bash
 python manage.py warm_ai_model
-python manage.py warm_ai_model --model llama3.2:1b --timeout 90
+python manage.py warm_ai_model --model qwen3.5:4b-q4_K_M --timeout 90
 ```
 
-The default target is `OLLAMA_MODEL`; the lightweight resource-pressure fallback
-is not required at boot. `deployment/systemd/smart-ai-companion-model-warm.service`
+The sole default target is `OLLAMA_MODEL`; no alternate model is warmed.
+`deployment/systemd/smart-ai-companion-model-warm.service`
 weakly depends on the standard Ollama installer unit, `ollama.service`. The app
 unit wants and starts after the warm unit, but does not require it, so a temporary
 Ollama failure is visible in `systemctl`/`journalctl` without preventing the
@@ -653,7 +660,9 @@ Structured logs report safe stage timings for resource policy, routing, local
 RAG, online retrieval, prompt preparation, time to first token, generation, and
 total execution. Prompts, document contents, conversation history, and secrets
 are not logged. Ollama counts/durations and calculated token throughput remain
-internal structured metrics; only safe additive timing fields are public.
+internal structured metrics except the safe output-count/limit fields documented above.
+
+Ollama requests use top-level `think=false` and `options.num_ctx=4096`, rather than relying on model defaults. These controls also apply to prefix warmup; residency loading uses the same context size. See [Ollama thinking controls](https://docs.ollama.com/capabilities/thinking) and [context parameters](https://docs.ollama.com/modelfile#valid-parameters-and-values).
 
 ## Raspberry Pi Benchmark Results
 
@@ -676,8 +685,8 @@ total completion time remains bounded by Raspberry Pi CPU generation speed.
 For an acceptance run, execute one cold and three warm prompts at the normal
 budget, record client-observed first-delta time and final time, compare the final
 NDJSON metadata with Ollama metrics in the journal, verify `load_duration` is
-near zero after warm-up, then repeat under ECO pressure to confirm the approved
-1B fallback still applies. Also issue `/api/system/resource-manager/` requests
+near zero after warm-up, then repeat under ECO pressure to confirm reduced budgets on the same
+configured Qwen model, without switching or duplicate residency. Also issue `/api/system/resource-manager/` requests
 during generation to confirm the threaded worker remains responsive.
 
 ## Current Implementation Status
@@ -687,7 +696,7 @@ during generation to confirm the threaded worker remains responsive.
 | Control Center UI | ✅ Implemented |
 | Mock AI Engine | ✅ Implemented |
 | Local LLM Engine (Ollama) | ✅ Implemented (uses /api/chat with system prompt) |
-| Llama 3.2 3B primary / 1B fallback | ✅ Resource-aware local integration |
+| Qwen3.5 4B Q4_K_M single model | ✅ Resource-bounded local integration |
 | Conversation Persistence | ✅ Implemented |
 | Document Upload | ✅ Implemented |
 | Device Metrics (simulated) | ✅ Implemented |

@@ -465,11 +465,7 @@ def evaluate_resource_policy(snapshot: dict[str, Any]) -> dict[str, Any]:
         "local_ai_allowed": bool(
             local_configured and ollama_ready and profile != "PROTECTIVE"
         ),
-        "preferred_model_class": (
-            "LIGHTWEIGHT"
-            if profile in {"ECO", "PROTECTIVE"} or safety_unknown
-            else "STANDARD"
-        ),
+        "preferred_model_class": "STANDARD",  # One configured model; budgets provide load shedding.
         "generation_budget": {
             "PROTECTIVE": "MINIMAL",
             "ECO": "REDUCED",

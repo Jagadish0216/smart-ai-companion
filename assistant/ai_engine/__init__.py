@@ -74,7 +74,16 @@ def get_engine(engine_name: Optional[str] = None) -> AIEngine:
         return _engine_instance
 
     engine_class = _ENGINE_REGISTRY[engine_name]
-    _engine_instance = engine_class()
+    if engine_name == "local":
+        from django.conf import settings
+        _engine_instance = engine_class(
+            host=settings.OLLAMA_HOST, model=settings.OLLAMA_MODEL,
+            timeout=settings.OLLAMA_TIMEOUT, keep_alive=settings.OLLAMA_KEEP_ALIVE,
+            num_predict=settings.OLLAMA_NUM_PREDICT, num_ctx=settings.OLLAMA_NUM_CTX,
+            think=settings.OLLAMA_THINK,
+        )
+    else:
+        _engine_instance = engine_class()
     logger.info("AI engine initialized: %s (%s)", engine_name, engine_class.__name__)
 
     return _engine_instance

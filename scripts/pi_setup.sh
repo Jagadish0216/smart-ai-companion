@@ -6,8 +6,8 @@
 # This script:
 #   1. Collects hardware information
 #   2. Installs Ollama (if not installed)
-#   3. Pulls the Llama 3.2 1B model
-#   4. Runs direct CLI tests
+#   3. Pulls the single configured Qwen model
+#   4. Runs direct non-thinking API tests
 #   5. Runs a reproducible benchmark
 #
 # Usage:
@@ -19,7 +19,8 @@
 
 set -e
 
-MODEL="llama3.2:3b"
+MODEL="${OLLAMA_MODEL:-qwen3.5:4b-q4_K_M}"
+NUM_CTX="${OLLAMA_NUM_CTX:-4096}"
 BENCHMARK_FILE="benchmark_results.txt"
 
 echo "============================================================"
@@ -112,9 +113,9 @@ echo "Installed models:"
 ollama list
 echo ""
 
-# ── Step 4: Direct CLI Tests ─────────────────────────────────
+# ── Step 4: Direct API Tests ─────────────────────────────────
 
-echo "── STEP 4: Direct CLI Tests ──"
+echo "── STEP 4: Direct API Tests ──"
 echo ""
 
 PROMPTS=(
@@ -127,7 +128,12 @@ PROMPTS=(
 for prompt in "${PROMPTS[@]}"; do
     echo "--- Prompt: \"$prompt\" ---"
     START=$(date +%s%N)
-    RESPONSE=$(ollama run "$MODEL" "$prompt" 2>&1)
+    RESPONSE=$(curl -fsS http://localhost:11434/api/chat -d "{
+        \"model\": \"$MODEL\",
+        \"messages\": [{\"role\": \"user\", \"content\": \"$prompt\"}],
+        \"stream\": false, \"think\": false, \"keep_alive\": \"24h\",
+        \"options\": {\"num_ctx\": $NUM_CTX, \"num_predict\": 96}
+    }" | python3 -c "import sys,json; print(json.load(sys.stdin).get('message',{}).get('content','ERROR'))")
     END=$(date +%s%N)
     ELAPSED=$(( (END - START) / 1000000 ))
     echo "Response: $RESPONSE"
@@ -182,7 +188,8 @@ BENCH_PROMPTS=(
         RESULT=$(curl -s http://localhost:11434/api/chat -d "{
             \"model\": \"$MODEL\",
             \"messages\": [{\"role\": \"user\", \"content\": \"$prompt\"}],
-            \"stream\": false
+            \"stream\": false, \"think\": false, \"keep_alive\": \"24h\",
+            \"options\": {\"num_ctx\": $NUM_CTX, \"num_predict\": 96}
         }" 2>&1)
         END=$(date +%s%N)
 

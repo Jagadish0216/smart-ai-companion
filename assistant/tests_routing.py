@@ -8,7 +8,7 @@ from rest_framework.test import APIClient
 
 from assistant.ai_engine.base import AIEngineResult
 from assistant.policy import AssistantResponsePolicy, Capability, CapabilityRegistry, ResponsePlan, ResponseMode
-from assistant.routing import QueryRoute, QueryRouter
+from assistant.routing import QueryRoute, QueryRouter, normalize_rag_query
 from assistant.services import AssistantService
 from assistant.test_support import install_resource_report
 from knowledge_base.retrieval import RetrievedChunk
@@ -110,7 +110,7 @@ class QueryRouterTests(RouterTestCase):
                 expected = QueryRoute.ACTION if plan.required_capability == Capability.LOCAL_RAG else QueryRoute.LOCAL_RAG
                 self.assertEqual(decision.route, expected)
                 self.assertEqual(decision.rag_results, (source,))
-                retriever.retrieve.assert_called_once_with(query)
+                retriever.retrieve.assert_called_once_with(normalize_rag_query(query))
                 retriever.reset_mock()
 
     def test_general_knowledge_routes_local(self):
@@ -227,7 +227,7 @@ class QueryRouterServiceTests(RouterTestCase):
                 if route == "local":
                     get_retriever.return_value.retrieve.assert_not_called()
                 else:
-                    get_retriever.return_value.retrieve.assert_called_once_with(query)
+                    get_retriever.return_value.retrieve.assert_called_once_with(normalize_rag_query(query))
                 get_retriever.return_value.retrieve.reset_mock()
         self.assertEqual(engine.generate.call_count, 3)
 

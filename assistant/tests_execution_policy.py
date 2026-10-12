@@ -135,7 +135,7 @@ class ExecutionPolicyMappingTests(SimpleTestCase):
         report["reasons"] = [{"code": "THROTTLING_HISTORY"}, {"code": "MEMORY_PRESSURE"}]
         plan = build_execution_plan(report, available_models={"llama3.2:1b"})
         self.assertEqual(plan.policy_reason, "MEMORY_PRESSURE")
-        self.assertEqual(plan.model_reason, "MEMORY_PRESSURE")
+        self.assertEqual(plan.model_reason, "CONFIGURED_MODEL")
 
     def test_performance_selects_configured_standard_model(self):
         plan = build_execution_plan(
@@ -156,15 +156,15 @@ class ExecutionPolicyMappingTests(SimpleTestCase):
         self.assertEqual(plan.effective_model, "llama3.2:3b")
         self.assertEqual(plan.model_reason, "CONFIGURED_MODEL")
 
-    def test_eco_selects_approved_lightweight_model_when_installed(self):
+    def test_eco_keeps_configured_model_even_when_alternate_is_installed(self):
         plan = build_execution_plan(
             _report("ECO", reason="MEMORY_PRESSURE"),
             available_models={"llama3.2:1b", "llama3.2:3b"},
         )
 
         self.assertEqual(plan.configured_model, "llama3.2:3b")
-        self.assertEqual(plan.effective_model, "llama3.2:1b")
-        self.assertEqual(plan.model_reason, "MEMORY_PRESSURE")
+        self.assertEqual(plan.effective_model, "llama3.2:3b")
+        self.assertEqual(plan.model_reason, "CONFIGURED_MODEL")
         self.assertEqual(plan.generation_budget, "REDUCED")
         self.assertEqual(plan.max_output_tokens, 96)
 
@@ -176,29 +176,29 @@ class ExecutionPolicyMappingTests(SimpleTestCase):
 
         self.assertTrue(plan.generation_allowed)
         self.assertEqual(plan.effective_model, "llama3.2:3b")
-        self.assertEqual(plan.model_reason, "LIGHTWEIGHT_UNAVAILABLE")
+        self.assertEqual(plan.model_reason, "CONFIGURED_MODEL")
         self.assertEqual(plan.max_output_tokens, 96)
 
-    def test_protective_never_escalates_to_standard_when_lightweight_absent(self):
+    def test_protective_blocks_when_resource_policy_disallows_generation(self):
         plan = build_execution_plan(
-            _report("PROTECTIVE"),
+            _report("PROTECTIVE", local_ai_allowed=False),
             available_models={"llama3.2:3b"},
         )
 
         self.assertFalse(plan.generation_allowed)
         self.assertIsNone(plan.effective_model)
-        self.assertEqual(plan.model_reason, "LIGHTWEIGHT_UNAVAILABLE")
+        self.assertEqual(plan.model_reason, "RESOURCE_POLICY_BLOCK")
         self.assertEqual(plan.generation_budget, "MINIMAL")
         self.assertEqual(plan.max_output_tokens, 48)
 
-    def test_protective_uses_lightweight_only_when_allowed_and_installed(self):
+    def test_allowed_protective_generation_uses_configured_model_with_minimal_budget(self):
         plan = build_execution_plan(
             _report("PROTECTIVE", local_ai_allowed=True),
             available_models={"llama3.2:1b", "llama3.2:3b"},
         )
 
         self.assertTrue(plan.generation_allowed)
-        self.assertEqual(plan.effective_model, "llama3.2:1b")
+        self.assertEqual(plan.effective_model, "llama3.2:3b")
         self.assertEqual(plan.max_output_tokens, 48)
 
     def test_protective_local_ai_denial_blocks_generation(self):
@@ -508,7 +508,7 @@ class VoiceResourceBudgetTests(TestCase):
         for profile in ("BALANCED", "PERFORMANCE"):
             self.plan = _plan(profile=profile)
             for query, expected in (("Briefly explain RAM.", 96), ("Explain how Raspberry Pi works.", 160),
-                                    ("Explain RAM in four short sentences.", 160),
+                                    ("Explain RAM in four short sentences.", 384),
                                     ("Explain RAM in detail with examples.", 384)):
                 with self.subTest(profile=profile, query=query):
                     _, _, metadata, error = AssistantService.process_message(
