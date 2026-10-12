@@ -402,7 +402,7 @@ class AssistantPolicyServiceTests(TestCase):
         self.assertEqual(text, "A complete grounded answer.")
         self.assertEqual(
             engine.generate.call_args.kwargs["num_predict"],
-            min(plan.num_predict, settings.AI_GENERATION_NORMAL_NUM_PREDICT),
+            min(plan.num_predict, settings.AI_GENERATION_NORMAL_VOICE_NUM_PREDICT, 512),
         )
         request_instruction = engine.generate.call_args.kwargs["system_instruction"]
         self.assertIn(plan.system_instruction, request_instruction)

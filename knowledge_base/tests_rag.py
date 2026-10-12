@@ -243,7 +243,7 @@ class RagAssistantServiceTests(TemporaryMediaTestCase):
             latency_ms=2,
         )
         mock_get_engine.return_value = engine
-        query = "What is edge computing?"
+        query = "In my notes, what is edge computing?"
         plan = AssistantResponsePolicy.plan_voice_response(query)
 
         conversation, text, metadata, error = AssistantService.process_message(
@@ -257,7 +257,7 @@ class RagAssistantServiceTests(TemporaryMediaTestCase):
         self.assertEqual(call.args[0], query)
         self.assertEqual(
             call.kwargs["num_predict"],
-            min(plan.num_predict, settings.AI_GENERATION_NORMAL_NUM_PREDICT, settings.RAG_NUM_PREDICT),
+            min(plan.num_predict, settings.AI_GENERATION_NORMAL_VOICE_NUM_PREDICT, 512, settings.RAG_NUM_PREDICT),
         )
         self.assertIn(plan.system_instruction, instruction)
         self.assertIn("Use this runtime capability state", instruction)
@@ -295,7 +295,7 @@ class RagAssistantServiceTests(TemporaryMediaTestCase):
             latency_ms=2,
         )
         mock_get_engine.return_value = engine
-        query = "Explain edge computing in detail."
+        query = "In my notes, edge computing in detail."
         plan = AssistantResponsePolicy.plan_voice_response(query)
 
         _conversation, _text, metadata, error = AssistantService.process_message(
@@ -311,7 +311,7 @@ class RagAssistantServiceTests(TemporaryMediaTestCase):
         self.assertIn(EDGE_KNOWLEDGE, instruction)
         self.assertEqual(
             engine.generate.call_args.kwargs["num_predict"],
-            min(plan.num_predict, settings.AI_GENERATION_NORMAL_NUM_PREDICT),
+            min(plan.num_predict, settings.AI_GENERATION_NORMAL_VOICE_NUM_PREDICT, 512),
         )
         self.assertTrue(metadata["rag_used"])
         self.assertEqual(metadata["rag_chunks"], 1)

@@ -79,7 +79,7 @@ def _budget_values() -> dict[str, tuple[int, int]]:
 
 def _first_policy_reason(report: dict, default: str) -> str:
     for reason in report.get("reasons", []):
-        if isinstance(reason, dict) and reason.get("code"):
+        if isinstance(reason, dict) and reason.get("code") and reason["code"] != "THROTTLING_HISTORY":
             return str(reason["code"])
     return default
 
@@ -241,6 +241,16 @@ def get_ai_execution_plan(
         available_models=available_models,
         resource_policy_available=policy_available,
     )
+
+
+def select_voice_budget(plan: AIExecutionPlan) -> AIExecutionPlan:
+    """Healthy voice-only headroom; reduced/unknown/protective caps never rise."""
+    if (plan.resource_profile not in {"BALANCED", "PERFORMANCE"}
+            or plan.generation_budget != "NORMAL" or not plan.resource_policy_available
+            or not plan.generation_allowed):
+        return plan
+    ceiling = min(512, _positive_int("AI_GENERATION_NORMAL_VOICE_NUM_PREDICT", 384))
+    return replace(plan, max_output_tokens=ceiling)
 
 
 def select_rag_model(plan: AIExecutionPlan, available_models: Iterable[str]) -> AIExecutionPlan:

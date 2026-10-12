@@ -211,6 +211,8 @@ class ResponsePlan:
     required_capability: Capability | None = None
     direct_response: str | None = None
     rag_system_instruction: str | None = None
+    allow_implicit_rag: bool = True
+    is_voice: bool = False
 
 
 _DETAILED_PATTERNS = (
@@ -254,6 +256,13 @@ _INFORMATIONAL_PATTERNS = (
     r"^(?:describe|discuss)\b",
     r"^(?:compare|comparison)\b",
     r"^(?:what are the )?(?:advantages|disadvantages|pros and cons)\b",
+)
+
+_LOCAL_KNOWLEDGE_INTENT = re.compile(
+    r"\b(?:my|our|this|the)\s+(?:local\s+)?(?:documents?|files?|notes|knowledge base|project|setup)\b|"
+    r"\blocal\s+(?:documents?|files?|notes|knowledge base)\b|"
+    r"\b(?:according to|search|check|consult)\s+(?:the\s+)?(?:documents?|notes|knowledge base)\b",
+    re.IGNORECASE,
 )
 
 # Capability words alone do not imply execution. An action must be phrased as a
@@ -477,4 +486,7 @@ class AssistantResponsePolicy:
             required_capability=required_capability,
             direct_response=direct_response,
             rag_system_instruction=rag_instruction,
+            allow_implicit_rag=(required_capability == Capability.LOCAL_RAG
+                                or bool(_LOCAL_KNOWLEDGE_INTENT.search(" ".join(query.split())))),
+            is_voice=True,
         )

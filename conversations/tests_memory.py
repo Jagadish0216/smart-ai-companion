@@ -18,7 +18,7 @@ from assistant.services import AssistantService, _build_generation_instruction
 from knowledge_base.retrieval import RetrievedChunk
 from .memory import (
     LexicalConversationMemoryRetriever, MAX_MESSAGE_CHARS,
-    SCAN_MESSAGES, build_memory_history, tokenize,
+    SCAN_MESSAGES, build_memory_history, is_contentless_follow_up, tokenize,
 )
 from .models import Conversation, Message
 
@@ -48,6 +48,22 @@ class ConversationMemoryRetrievalTests(TestCase):
     def test_retrieves_relevant_user_statement(self):
         old = self.message("My robot's relay is connected to GPIO 18.")
         self.assertEqual(self.retrieve()[0].message_id, old.id)
+
+    def test_deictic_follow_ups_do_not_retrieve_lexical_memory_or_query_database(self):
+        self.message("Tell me about Smart AI Companion project. It works as an assistant.")
+        for query in ("Tell me about it.", "What about that?", "How does that work?",
+                      "Why is that?", "What does it do?", "Explain this more.",
+                      "What does it mean?", "Why did that happen?"):
+            with self.subTest(query=query), self.assertNumQueries(0):
+                self.assertTrue(is_contentless_follow_up(query))
+                self.assertEqual(self.retrieve_without_current(query), [])
+
+    def test_meaningful_topic_in_follow_up_keeps_old_memory_retrieval(self):
+        old = self.message("I used GPIO18 for my relay.")
+        query = "What GPIO did I say I used?"
+        self.assertFalse(is_contentless_follow_up(query))
+        self.assertEqual(self.retrieve(query)[0].message_id, old.id)
+        self.assertFalse(is_contentless_follow_up("What about that relay GPIO18?"))
 
     def test_irrelevant_user_and_matching_ai_are_not_memory(self):
         self.message("I prefer green tea.")
@@ -246,6 +262,26 @@ class ConversationMemoryServiceTests(TestCase):
         self.engine.available_models.assert_not_called()
         self.engine.generate_stream.assert_not_called()
         self.assertTrue(response[2]["memory_used"])
+
+    def test_contentless_voice_follow_up_uses_recent_antecedent_not_old_about_match(self):
+        from assistant.policy import AssistantResponsePolicy
+        self.seed("Tell me about Smart AI Companion project.")
+        query = "Explain how Raspberry Pi works."
+        Message.objects.create(conversation=self.conversation, sender="USER", text=query)
+        Message.objects.create(conversation=self.conversation, sender="AI", text="It is a small computer running Linux.")
+        follow_up = "Tell me about it."
+        events = list(AssistantService.process_message_stream(
+            follow_up, self.conversation.id, response_plan=AssistantResponsePolicy.plan_voice_response(follow_up)))
+        history = self.engine.generate_stream.call_args.kwargs["conversation_history"]
+        self.assertIn({"role": "USER", "content": query}, history)
+        self.assertNotIn("Smart AI Companion", str(history))
+        done = events[-1]
+        self.assertEqual(done["type"], "done")
+        self.assertFalse(done["memory_used"])
+        self.assertEqual(done["memory_messages"], 0)
+        self.assertEqual(done["memory_chars"], 0)
+        self.assertIn("memory_ms", done)
+        self.engine.generate_stream.assert_called_once()
 
     def test_project_name_beyond_recent_window(self):
         self.seed("Call this project Project Aurora.")

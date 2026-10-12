@@ -169,6 +169,66 @@ class ResourcePolicyTests(SimpleTestCase):
 
         self.assertEqual(result["subsystem_health"]["throttling"]["level"], "CAUTION")
         self.assertEqual(result["reasons"][0]["code"], "THROTTLING_HISTORY")
+        self.assertEqual(result["overall_health"], "CAUTION")
+        self.assertEqual(result["recommended_profile"], "BALANCED")
+
+    def test_each_historical_flag_is_diagnostic_not_current_pressure(self):
+        for flag in resource_manager.HISTORICAL_THROTTLE_FLAGS:
+            with self.subTest(flag=flag):
+                snapshot = healthy_snapshot()
+                snapshot["cpu"]["utilization_percent"] = 0
+                snapshot["thermal"]["throttling"][flag] = True
+                original = deepcopy(snapshot)
+                report = resource_manager.evaluate_resource_policy(snapshot)
+                self.assertEqual(snapshot, original)
+                self.assertEqual(report["overall_health"], "CAUTION")
+                self.assertEqual(report["recommended_profile"], "PERFORMANCE")
+                self.assertEqual(report["ai_recommendation"]["preferred_model_class"], "STANDARD")
+                self.assertEqual(report["ai_recommendation"]["generation_budget"], "NORMAL")
+                self.assertEqual(report["reasons"][0]["code"], "THROTTLING_HISTORY")
+
+    def test_real_pi_snapshot_keeps_history_but_selects_balanced_standard_model(self):
+        from assistant.execution_policy import build_execution_plan
+        snapshot = healthy_snapshot()
+        snapshot["cpu"]["utilization_percent"] = 0
+        snapshot["cpu"]["load_average"]["five_minutes"] = 0.74
+        snapshot["memory"]["used_percent"] = 66.8
+        snapshot["storage"]["used_percent"] = 24.7
+        snapshot["thermal"]["cpu_temperature_c"] = 43.5
+        snapshot["thermal"]["throttling"].update(
+            raw="0x50000", under_voltage_occurred=True, throttling_occurred=True)
+        report = resource_manager.evaluate_resource_policy(snapshot)
+        self.assertEqual(report["overall_health"], "CAUTION")
+        self.assertEqual(report["recommended_profile"], "BALANCED")
+        self.assertEqual(report["subsystem_health"]["throttling"]["level"], "CAUTION")
+        self.assertEqual(report["reasons"][0]["code"], "THROTTLING_HISTORY")
+        with override_settings(OLLAMA_MODEL="llama3.2:3b"):
+            plan = build_execution_plan(report, available_models={"llama3.2:3b", "llama3.2:1b"})
+        self.assertEqual(plan.effective_model, "llama3.2:3b")
+        self.assertEqual(plan.generation_budget, "NORMAL")
+        self.assertIsNone(plan.status_message)
+
+    def test_current_pressure_still_wins_over_historical_flags(self):
+        for section, key, value, expected in (
+            ("cpu", "utilization_percent", 80, "ECO"),
+            ("memory", "used_percent", 80, "ECO"),
+            ("thermal", "cpu_temperature_c", 65, "ECO"),
+            ("memory", "used_percent", 95, "PROTECTIVE"),
+            ("thermal", "cpu_temperature_c", 80, "PROTECTIVE"),
+            ("storage", "used_percent", 95, "PROTECTIVE"),
+        ):
+            with self.subTest(section=section, value=value):
+                snapshot = healthy_snapshot()
+                snapshot["thermal"]["throttling"]["throttling_occurred"] = True
+                snapshot[section][key] = value
+                self.assertEqual(resource_manager.evaluate_resource_policy(snapshot)["recommended_profile"], expected)
+        for flag in resource_manager.CURRENT_THROTTLE_FLAGS:
+            with self.subTest(flag=flag):
+                snapshot = healthy_snapshot()
+                snapshot["thermal"]["throttling"].update({flag: True, "throttling_occurred": True})
+                result = resource_manager.evaluate_resource_policy(snapshot)
+                self.assertEqual(result["recommended_profile"], "PROTECTIVE")
+                self.assertFalse(result["ai_recommendation"]["local_ai_allowed"])
 
     def test_low_storage_recommends_cleanup(self):
         snapshot = healthy_snapshot()

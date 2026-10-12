@@ -35,7 +35,7 @@ from .devices.types import DeviceAction, DeviceCommand, SensorReading
 from .online.base import OnlineRetrievalError, OnlineRetrievalResult
 from .online.factory import get_online_retriever
 from .online.grounding import build_online_grounding_instruction
-from .execution_policy import AIExecutionPlan, get_ai_execution_plan, select_rag_model
+from .execution_policy import AIExecutionPlan, get_ai_execution_plan, select_rag_model, select_voice_budget
 from .policy import (
     Capability,
     CapabilityRegistry,
@@ -149,21 +149,22 @@ class AssistantService:
             }
             return
 
-        yield {
-            "type": "start",
-            "conversation_id": prepared.conversation.id,
-            "direct": False,
-            "effective_model": prepared.execution_plan.effective_model,
-            "route": prepared.route_decision.route.value,
-            "num_predict": prepared.num_predict,
-        }
         complete_text = ""
         result = None
         prefix = _resource_status_prefix(prepared.execution_plan)
-        if prefix:
-            complete_text += prefix
-            yield {"type": "delta", "text": prefix}
+        completed = False
         try:
+            yield {
+                "type": "start",
+                "conversation_id": prepared.conversation.id,
+                "direct": False,
+                "effective_model": prepared.execution_plan.effective_model,
+                "route": prepared.route_decision.route.value,
+                "num_predict": prepared.num_predict,
+            }
+            if prefix:
+                complete_text += prefix
+                yield {"type": "delta", "text": prefix}
             for event in prepared.engine.generate_stream(
                 query,
                 **_generation_kwargs(prepared),
@@ -189,6 +190,7 @@ class AssistantService:
             )
             metadata = _generation_metadata(prepared, result)
             _log_request_performance(prepared, metadata)
+            completed = True  # Set before yielding: close() can occur at the yield.
             yield {
                 "type": "done",
                 "conversation_id": prepared.conversation.id,
@@ -196,10 +198,11 @@ class AssistantService:
                 **metadata,
             }
         except GeneratorExit:
-            logger.info(
-                "Assistant stream closed by client before completion",
-                extra={"conversation_id": prepared.conversation.id},
-            )
+            if not completed:
+                logger.info(
+                    "Assistant stream closed by client before completion",
+                    extra={"conversation_id": prepared.conversation.id},
+                )
             raise
         except Exception as exc:
             _log_generation_exception(exc)
@@ -244,6 +247,8 @@ def _prepare_message(
     execution_plan = get_ai_execution_plan(
         model_inventory_provider=local_model_inventory,
     )
+    if response_plan is not None and response_plan.is_voice:
+        execution_plan = select_voice_budget(execution_plan)
     policy_ms = round((time.perf_counter() - policy_started) * 1000)
     # Limit in SQL, not just after loading history. Capture before the current row.
     history_started = time.perf_counter()
@@ -281,6 +286,7 @@ def _prepare_message(
         required_capability=(
             response_plan.required_capability if response_plan is not None else None
         ),
+        allow_implicit_rag=response_plan.allow_implicit_rag if response_plan is not None else True,
     )
     routing_ms = round((time.perf_counter() - routing_started) * 1000)
     stage_ms = {
@@ -536,6 +542,10 @@ def _generation_metadata(prepared: PreparedAssistantRequest, result) -> dict:
     metadata.update(prepared.execution_plan.metadata())
     metadata["effective_model"] = result.model or prepared.execution_plan.effective_model
     metadata.update(prepared.stage_ms)
+    eval_count = result.metrics.get("eval_count")
+    if isinstance(eval_count, int) and not isinstance(eval_count, bool) and eval_count >= 0:
+        metadata["eval_count"] = eval_count
+        metadata["output_limit_reached"] = eval_count >= prepared.num_predict
     return metadata
 
 
@@ -546,6 +556,7 @@ def _log_request_performance(prepared: PreparedAssistantRequest, metadata: dict)
             "execution_ms", "policy_ms", "routing_ms", "rag_ms", "online_ms",
             "prompt_prepare_ms", "ttft_ms", "generation_ms", "route",
             "resource_profile", "effective_model",
+            "num_predict", "max_output_tokens", "eval_count", "output_limit_reached",
             "memory_used", "memory_messages", "memory_chars", "memory_ms",
         )
     }

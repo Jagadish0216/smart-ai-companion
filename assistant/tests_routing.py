@@ -7,7 +7,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from assistant.ai_engine.base import AIEngineResult
-from assistant.policy import CapabilityRegistry
+from assistant.policy import AssistantResponsePolicy, Capability, CapabilityRegistry, ResponsePlan, ResponseMode
 from assistant.routing import QueryRoute, QueryRouter
 from assistant.services import AssistantService
 from assistant.test_support import install_resource_report
@@ -72,6 +72,47 @@ class RouterTestCase(TestCase):
 
 
 class QueryRouterTests(RouterTestCase):
+    def test_voice_generic_topics_skip_even_matching_rag_without_affecting_web(self):
+        retriever = MagicMock()
+        source = RetrievedChunk(1, 1, "test", "notes.md", 0, EDGE_KNOWLEDGE, 1.0)
+        retriever.retrieve.return_value = [source]
+        router = QueryRouter(retriever)
+        registry = CapabilityRegistry.from_settings()
+        for query in ("Explain how Raspberry Pi works.", "What is ESP32?",
+                      "How does MQTT work?", "What is edge computing?"):
+            with self.subTest(query=query):
+                plan = AssistantResponsePolicy.plan_voice_response(query)
+                self.assertFalse(plan.allow_implicit_rag)
+                decision = router.decide(query, registry=registry, response_mode=plan.mode,
+                                         required_capability=plan.required_capability,
+                                         allow_implicit_rag=plan.allow_implicit_rag)
+                self.assertEqual(decision.route, QueryRoute.LOCAL)
+                self.assertEqual(decision.rag_results, ())
+                retriever.retrieve.assert_not_called()
+                self.assertEqual(router.decide(query, registry=registry).route, QueryRoute.LOCAL_RAG)
+                retriever.reset_mock()
+        self.assertTrue(ResponsePlan(ResponseMode.NORMAL, "", 128).allow_implicit_rag)
+
+    def test_voice_local_project_knowledge_and_explicit_action_keep_retrieval(self):
+        retriever = MagicMock()
+        source = RetrievedChunk(1, 1, "test", "notes.md", 0, RELAY_KNOWLEDGE, 1.0)
+        retriever.retrieve.return_value = [source]
+        for query in ("In our project, how did we connect the ESP32?",
+                      "What does our knowledge base say about edge computing?",
+                      "According to my notes, what pins did we use?",
+                      "Search my local documents for ESP32 relay wiring."):
+            with self.subTest(query=query):
+                plan = AssistantResponsePolicy.plan_voice_response(query)
+                self.assertTrue(plan.allow_implicit_rag)
+                decision = QueryRouter(retriever).decide(
+                    query, registry=CapabilityRegistry.from_settings(), response_mode=plan.mode,
+                    required_capability=plan.required_capability, allow_implicit_rag=plan.allow_implicit_rag)
+                expected = QueryRoute.ACTION if plan.required_capability == Capability.LOCAL_RAG else QueryRoute.LOCAL_RAG
+                self.assertEqual(decision.route, expected)
+                self.assertEqual(decision.rag_results, (source,))
+                retriever.retrieve.assert_called_once_with(query)
+                retriever.reset_mock()
+
     def test_general_knowledge_routes_local(self):
         for query in (
             "What is recursion?",
@@ -165,6 +206,31 @@ class QueryRouterTests(RouterTestCase):
 
 
 class QueryRouterServiceTests(RouterTestCase):
+    @patch("assistant.services.get_engine")
+    @patch("assistant.routing.get_retriever")
+    def test_voice_gate_is_forwarded_and_explicit_document_action_still_generates(self, get_retriever, get_engine):
+        source = RetrievedChunk(1, 1, "test", "notes.md", 0, RELAY_KNOWLEDGE, 1.0)
+        get_retriever.return_value.retrieve.return_value = [source]
+        engine = MagicMock()
+        engine.available_models.return_value = {"llama3.2:3b", "llama3.2:1b"}
+        engine.generate.return_value = AIEngineResult(text="A grounded answer.", engine="local", latency_ms=1)
+        get_engine.return_value = engine
+        for query, route in (("What is ESP32?", "local"),
+                             ("In our project, how did we connect the ESP32?", "local_rag"),
+                             ("Search my local documents for ESP32 relay wiring.", "action")):
+            with self.subTest(query=query):
+                _conversation, _text, metadata, error = AssistantService.process_message(
+                    query, response_plan=AssistantResponsePolicy.plan_voice_response(query))
+                self.assertIsNone(error)
+                self.assertEqual(metadata["route"], route)
+                self.assertEqual(metadata["rag_used"], route != "local")
+                if route == "local":
+                    get_retriever.return_value.retrieve.assert_not_called()
+                else:
+                    get_retriever.return_value.retrieve.assert_called_once_with(query)
+                get_retriever.return_value.retrieve.reset_mock()
+        self.assertEqual(engine.generate.call_count, 3)
+
     @patch("assistant.services.get_engine")
     @patch("assistant.routing.get_retriever")
     def test_rag_results_are_retrieved_once_and_reused(

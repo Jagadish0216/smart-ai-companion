@@ -440,8 +440,12 @@ def evaluate_resource_policy(snapshot: dict[str, Any]) -> dict[str, Any]:
     reasons = _policy_reasons(snapshot, health)
     resource_levels = {
         health[name]["level"]
-        for name in ("cpu", "memory", "storage", "temperature", "throttling")
+        for name in ("cpu", "memory", "storage", "temperature")
     }
+    # Latched history remains diagnostic CAUTION, not current scheduling
+    # pressure. Active flags are still CRITICAL; unknown safety stays unknown.
+    throttle_level = health["throttling"]["level"]
+    resource_levels.add("HEALTHY" if throttle_level == "CAUTION" else throttle_level)
     if "CRITICAL" in resource_levels:
         profile = "PROTECTIVE"
     elif resource_levels.intersection({"CAUTION", "CONSTRAINED"}):
@@ -488,7 +492,8 @@ def evaluate_resource_policy(snapshot: dict[str, Any]) -> dict[str, Any]:
     }
 
     first_pressure = next(
-        (reason["message"] for reason in reasons if reason["severity"] != "UNKNOWN"),
+        (reason["message"] for reason in reasons
+         if reason["severity"] != "UNKNOWN" and reason["code"] != "THROTTLING_HISTORY"),
         None,
     )
     explanation = {

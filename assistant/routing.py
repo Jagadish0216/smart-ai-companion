@@ -67,6 +67,7 @@ class QueryRouter:
         registry: CapabilityRegistry,
         response_mode: ResponseMode | None = None,
         required_capability: Capability | None = None,
+        allow_implicit_rag: bool = True,
     ) -> QueryRouteDecision:
         if response_mode is None:
             response_mode, required_capability = AssistantResponsePolicy.classify(query)
@@ -112,7 +113,7 @@ class QueryRouter:
             )
 
         rag_latency_ms = 0
-        if registry.is_available(Capability.LOCAL_RAG):
+        if allow_implicit_rag and registry.is_available(Capability.LOCAL_RAG):
             rag_started = time.perf_counter()
             rag_results = self._retrieve(query)
             rag_latency_ms = round((time.perf_counter() - rag_started) * 1000)

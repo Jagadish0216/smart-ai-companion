@@ -363,6 +363,54 @@ class FakeStreamingEngine:
     DEVICE_CONTROL_ENABLED=False,
 )
 class StreamingServiceTests(TestCase):
+    @patch("assistant.services.logger")
+    @patch("assistant.services.get_engine")
+    def test_close_after_valid_done_is_not_an_incomplete_client_disconnect(self, get_engine, logger):
+        get_engine.return_value = FakeStreamingEngine()
+        stream = AssistantService.process_message_stream("Hello")
+        try:
+            for event in stream:
+                if event["type"] == "done":
+                    break
+        finally:
+            stream.close()
+        self.assertEqual(event["type"], "done")
+        self.assertFalse(any(item.args and item.args[0] == "Assistant stream closed by client before completion"
+                             for item in logger.info.call_args_list))
+        self.assertEqual(Message.objects.filter(sender="AI").count(), 1)
+
+    @patch("assistant.services.logger")
+    @patch("assistant.services.get_engine")
+    def test_abandoned_stream_before_done_still_logs_and_does_not_persist_partial_ai(self, get_engine, logger):
+        get_engine.return_value = FakeStreamingEngine()
+        stream = AssistantService.process_message_stream("Hello")
+        start = next(stream)
+        self.assertEqual(next(stream)["type"], "delta")
+        stream.close()
+        logger.info.assert_any_call("Assistant stream closed by client before completion",
+                                    extra={"conversation_id": start["conversation_id"]})
+        self.assertEqual(Message.objects.filter(sender="AI").count(), 0)
+
+    @patch("assistant.services.logger")
+    @patch("assistant.services.get_engine")
+    def test_abandoned_at_start_or_resource_notice_also_logs(self, get_engine, logger):
+        get_engine.return_value = FakeStreamingEngine()
+        plan = build_execution_plan({
+            "recommended_profile": "ECO",
+            "ai_recommendation": {"local_ai_allowed": True, "generation_budget": "REDUCED"},
+        })
+        for after_notice in (False, True):
+            with self.subTest(after_notice=after_notice), patch("assistant.services.get_ai_execution_plan", return_value=plan):
+                logger.reset_mock()
+                stream = AssistantService.process_message_stream("Hello")
+                start = next(stream)
+                if after_notice:
+                    self.assertEqual(next(stream)["type"], "delta")
+                stream.close()
+                logger.info.assert_any_call("Assistant stream closed by client before completion",
+                                            extra={"conversation_id": start["conversation_id"]})
+        self.assertEqual(Message.objects.filter(sender="AI").count(), 0)
+
     @patch("assistant.services.get_engine")
     def test_generation_persists_one_user_and_one_complete_ai_message(self, get_engine):
         engine = FakeStreamingEngine()
