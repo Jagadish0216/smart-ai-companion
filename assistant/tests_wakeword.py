@@ -142,7 +142,8 @@ class WakeWordProviderTests(SimpleTestCase):
         self.engine = MagicMock()
         self.model = self.engine.Model.return_value
         self.provider = OpenWakeWordProvider(WakeWordConfig(enabled=True))
-        for name, value in (("load_engine", self.engine), ("validate_installed_assets", None)):
+        for name, value in (("load_engine", self.engine), ("validate_installed_assets", None),
+                            ("configure_cpu_onnx_logging", None)):
             patcher = patch("assistant.voice.wakeword.openwakeword_provider." + name, return_value=value)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -157,6 +158,26 @@ class WakeWordProviderTests(SimpleTestCase):
         self.provider.warm()
         self.provider.warm()
         self.engine.Model.assert_called_once_with(wakeword_models=["hey_jarvis"], inference_framework="onnx", vad_threshold=0.5, ncpu=1)
+        self.capture_factory.assert_not_called()
+
+    def test_optional_logging_runs_before_cpu_model_init_and_preserves_model_errors(self):
+        order = []
+
+        def logging():
+            order.append("logging")
+            return False
+
+        def load():
+            order.append("engine")
+            return self.engine
+
+        self.engine.Model.side_effect = ValueError("bad model")
+        with patch("assistant.voice.wakeword.openwakeword_provider.configure_cpu_onnx_logging", side_effect=logging), patch(
+            "assistant.voice.wakeword.openwakeword_provider.load_engine", side_effect=load
+        ):
+            with self.assertRaisesRegex(WakeWordError, "bad model"):
+                self.provider.warm()
+        self.assertEqual(order, ["logging", "engine"])
         self.capture_factory.assert_not_called()
 
     def test_custom_model_warm_passes_path(self):
@@ -434,7 +455,7 @@ class HandsFreeRuntimeTests(SimpleTestCase):
 
         def cycle(config, conversation_id, display, **kwargs):
             self.assertFalse(listening[0])
-            self.assertEqual(kwargs, {"hands_free_vad_max_start_threshold": 0.10})
+            self.assertEqual(kwargs, {"hands_free_capture": voice_loop.HandsFreeCaptureConfig()})
             events.extend(["request_capture", "thinking", "tts", "playback", "drained"])
             return 42
 
@@ -470,31 +491,42 @@ class HandsFreeRuntimeTests(SimpleTestCase):
         self.mocks["run_voice_cycle"].assert_called_once()
         self.assertEqual(self.provider.reset.call_count, 3)
 
-    def test_start_timeout_returns_to_ready_and_needs_a_new_wake_detection(self):
+    def test_no_speech_returns_to_ready_and_needs_a_new_wake_detection(self):
         self.provider.wait_for_wake_word.side_effect = [self.detection, WakeWordDetection(False), KeyboardInterrupt()]
-        self.mocks["run_voice_cycle"].side_effect = voice_loop.VoiceLoopError("Recording stopped: no speech detected before the start timeout.")
+        self.mocks["run_voice_cycle"].side_effect = voice_loop.NoSpeechDetected("No request speech recognized; returning to wake listening.")
         with patch("sys.stderr", new_callable=io.StringIO):
             self.assertEqual(voice_loop.main(["--hands-free"]), 130)
         self.mocks["run_voice_cycle"].assert_called_once()
         states = [c.args[0].value for c in self.display.set_state.call_args_list]
-        self.assertEqual(states, ["READY", "READY", "READY", "ERROR", "READY"])
+        self.assertEqual(states, ["READY", "READY", "READY", "READY"])
+        printed = [c.args[0] for c in self.mocks["builtins.print"].call_args_list]
+        self.assertEqual(printed.count("No request speech recognized; returning to wake listening."), 1)
+        self.assertFalse(any("Hands-free cycle error" in str(line) for line in printed))
         self.mocks["time.sleep"].assert_has_calls([call(0.75), call(0.75)])
         self.assertEqual(self.provider.wait_for_wake_word.call_count, 3)
 
-    def test_hands_free_ceiling_validation_is_finite_and_bounded_before_hardware(self):
-        for value in ("invalid", "nan", "inf", 0, -0.1, 1.01):
-            with self.subTest(value=value), override_settings(VOICE_HANDS_FREE_VAD_MAX_START_THRESHOLD=value), patch(
+    def test_no_speech_preserves_last_conversation_and_resumes_successfully(self):
+        self.provider.wait_for_wake_word.side_effect = [self.detection] * 3 + [KeyboardInterrupt()]
+        self.mocks["run_voice_cycle"].side_effect = [42, voice_loop.NoSpeechDetected("No request speech recognized; returning to wake listening."), 43]
+        self.assertEqual(voice_loop.main(["--hands-free"]), 130)
+        self.assertEqual([c.args[1] for c in self.mocks["run_voice_cycle"].call_args_list], [None, 42, 42])
+        self.assertNotIn("ERROR", [c.args[0].value for c in self.display.set_state.call_args_list])
+        self.assertEqual(self.provider.reset.call_count, 3)
+
+    def test_hands_free_duration_validation_precedes_hardware(self):
+        for value in ("invalid", "nan", "inf", 0, -0.1, 2.01):
+            with self.subTest(value=value), override_settings(VOICE_HANDS_FREE_WARMUP_SECONDS=value), patch(
                 "sys.stderr", new_callable=io.StringIO
             ) as error:
                 self.assertEqual(voice_loop.main(["--hands-free"]), 1)
-                self.assertIn("VOICE_HANDS_FREE_VAD_MAX_START_THRESHOLD", self.mocks["builtins.print"].call_args.args[0])
+                self.assertIn("VOICE_HANDS_FREE_WARMUP_SECONDS", self.mocks["builtins.print"].call_args.args[0])
         self.mocks["get_companion_display"].assert_not_called()
 
-    @override_settings(VOICE_HANDS_FREE_VAD_MAX_START_THRESHOLD="0.08")
-    def test_configured_ceiling_reaches_only_hands_free_request_cycle(self):
+    @override_settings(VOICE_HANDS_FREE_WARMUP_SECONDS="0.08", VOICE_HANDS_FREE_VAD_MAX_START_THRESHOLD="invalid")
+    def test_new_capture_configuration_ignores_deprecated_ceiling(self):
         self.assertEqual(voice_loop.main(["--hands-free"]), 130)
         self.mocks["run_voice_cycle"].assert_called_once_with(
-            self.config, None, display=self.display, hands_free_vad_max_start_threshold=0.08,
+            self.config, None, display=self.display, hands_free_capture=voice_loop.HandsFreeCaptureConfig(warmup_seconds=0.08),
         )
 
     def test_interrupt_during_cycle_cleans_all_providers(self):
@@ -535,12 +567,16 @@ class HandsFreeRuntimeTests(SimpleTestCase):
         self.mocks["get_companion_display"].assert_not_called()
         self.mocks["get_wake_word_provider"].assert_not_called()
 
-    def test_handsfree_requires_native_alsa_and_existing_capture_vad(self):
-        for config in (replace(self.config, audio_backend="pulse"), replace(self.config, capture_vad_enabled=False)):
-            self.mocks["VoiceLoopConfig.from_settings"].return_value = config
-            with patch("sys.stderr", new_callable=io.StringIO):
-                self.assertEqual(voice_loop.main(["--hands-free"]), 1)
+    def test_handsfree_requires_native_alsa(self):
+        self.mocks["VoiceLoopConfig.from_settings"].return_value = replace(self.config, audio_backend="pulse")
+        with patch("sys.stderr", new_callable=io.StringIO):
+            self.assertEqual(voice_loop.main(["--hands-free"]), 1)
         self.mocks["get_companion_display"].assert_not_called()
+
+    def test_handsfree_does_not_require_interactive_capture_vad(self):
+        self.mocks["VoiceLoopConfig.from_settings"].return_value = replace(self.config, capture_vad_enabled=False)
+        self.assertEqual(voice_loop.main(["--hands-free"]), 130)
+        self.mocks["run_voice_cycle"].assert_called_once()
 
     def test_handsfree_cli_conflicts_and_help_do_not_initialize_hardware(self):
         for extra in (["--text", "hello"], ["--text-mode"], ["--audio-file", "test.wav"]):
@@ -554,7 +590,7 @@ class HandsFreeRuntimeTests(SimpleTestCase):
         self.mocks["get_companion_display"].assert_not_called()
 
     @override_settings(VOICE_WAKE_WORD_THRESHOLD="invalid", VOICE_WAKE_WORD_ENGINE="unsupported",
-                       VOICE_HANDS_FREE_VAD_MAX_START_THRESHOLD="invalid")
+                       VOICE_HANDS_FREE_VAD_MAX_START_THRESHOLD="invalid", VOICE_HANDS_FREE_WARMUP_SECONDS="invalid")
     def test_injection_and_interactive_modes_bypass_even_invalid_enabled_wake_settings(self):
         for argv in (["--text", "hello"], ["--audio-file", "test.wav"], ["--text-mode"], []):
             with self.subTest(argv=argv), patch("builtins.input", side_effect=["", "q"]):
@@ -625,7 +661,7 @@ class HandsFreeProductionCycleTests(SimpleTestCase):
             stage("request_capture")
             self.assertEqual(display.set_state.call_args.args[0].value, "READY")
             events.extend(["warmup", "calibration"])
-            self.assertEqual(kwargs["max_start_threshold"], 0.10)
+            self.assertEqual(args[1], voice_loop.HandsFreeCaptureConfig())
             kwargs["on_capture_ready"]()
             self.assertEqual(display.set_state.call_args.args[0].value, "LISTENING")
             events.append("capture_ready")
@@ -658,6 +694,7 @@ class HandsFreeProductionCycleTests(SimpleTestCase):
         tts.synthesize.side_effect = synthesize
         provider = OpenWakeWordProvider(WakeWordConfig(enabled=True))
         replacements = {
+            "assistant.voice.wakeword.openwakeword_provider.configure_cpu_onnx_logging": None,
             "assistant.voice.wakeword.openwakeword_provider.load_engine": engine,
             "assistant.voice.wakeword.openwakeword_provider.validate_installed_assets": None,
             "scripts.voice_loop.VoiceLoopConfig.from_settings": config,
@@ -673,7 +710,7 @@ class HandsFreeProductionCycleTests(SimpleTestCase):
         with ExitStack() as stack:
             stack.enter_context(patch("assistant.voice.wakeword.openwakeword_provider.AlsaWakeCapture", Capture))
             stack.enter_context(patch("scripts.voice_loop.PersistentAlsaPlayer", Player))
-            stack.enter_context(patch("scripts.voice_loop.record_audio_with_capture_vad", side_effect=record))
+            stack.enter_context(patch("scripts.voice_loop.record_audio_hands_free", side_effect=record))
             stack.enter_context(patch("scripts.voice_loop.normalize_audio"))
             stt = stack.enter_context(patch("scripts.voice_loop.get_stt_provider"))
             stt.return_value.transcribe.return_value = "What is an ESP32?"

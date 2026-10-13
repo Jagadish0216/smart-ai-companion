@@ -6,6 +6,7 @@ import time
 from .audio import AlsaWakeCapture, KWS_FRAME_SAMPLES, LeftChannelConverter
 from .base import WakeWordDetection, WakeWordError, WakeWordProvider
 from .models import load_engine, validate_installed_assets
+from ..onnx_logging import configure_cpu_onnx_logging
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,8 @@ class OpenWakeWordProvider(WakeWordProvider):
         if self.model is not None:
             return
         try:
+            if self.config.inference_framework == "onnx" or self.config.vad_threshold > 0:
+                configure_cpu_onnx_logging()
             engine = load_engine()
             validate_installed_assets(self.config, engine)
             self.model = engine.Model(

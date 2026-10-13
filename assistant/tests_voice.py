@@ -186,6 +186,9 @@ class PiperWorkerProtocolTests(SimpleTestCase):
         patcher = patch("assistant.voice.piper_worker.signal.signal")
         self.worker_signal = patcher.start()
         self.addCleanup(patcher.stop)
+        logging_patch = patch("assistant.voice.piper_worker.configure_cpu_onnx_logging")
+        self.worker_logging = logging_patch.start()
+        self.addCleanup(logging_patch.stop)
 
     def test_worker_loads_once_and_returns_complete_wav_for_multiple_requests(self):
         module = ModuleType("piper.voice")
@@ -231,6 +234,7 @@ class PiperWorkerProtocolTests(SimpleTestCase):
 
         def load(*args, **kwargs):
             self.worker_signal.assert_called_once_with(signal.SIGINT, signal.SIG_IGN)
+            self.worker_logging.assert_called_once_with()
             return MagicMock()
 
         module.PiperVoice.load.side_effect = load

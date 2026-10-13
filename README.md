@@ -198,7 +198,7 @@ This is an example, not a universal identifier or source-code default. Check `ls
 
 The supported states exactly match firmware: `BOOTING`, `SETUP`, `CONNECTING`, `READY`, `LISTENING`, `THINKING`, `SPEAKING`, `OFFLINE`, `ECO`, `PROTECTIVE`, `ERROR`. The controller also supports `set_text()`/`clear_text()`: labels become a single printable ASCII line, capped at the firmware's 40 characters; blank text clears the label. Application code never builds raw protocol commands.
 
-Interactive voice lifecycle: initialization → READY; immediately before capture → LISTENING (through recording, normalization and STT); valid transcript, immediately before AI → THINKING; immediately before first audio playback → SPEAKING exactly once, not at TTS synthesis; successful final playback → ECO/PROTECTIVE for those exact metadata profiles, otherwise READY. Recording/STT/AI/TTS/playback or unexpected cycle failures → ERROR, retained until the next attempt starts LISTENING. Hands-free capture stays READY through warm-up/calibration and enters LISTENING at its capture-ready callback, as described below. Display failures never turn voice success into an error.
+Interactive voice lifecycle: initialization → READY; immediately before capture → LISTENING (through recording, normalization and STT); valid transcript, immediately before AI → THINKING; immediately before first audio playback → SPEAKING exactly once, not at TTS synthesis; successful final playback → ECO/PROTECTIVE for those exact metadata profiles, otherwise READY. Recording/STT/AI/TTS/playback or unexpected cycle failures → ERROR, retained until the next attempt starts LISTENING. Hands-free capture stays READY through active warm-up/calibration, enters LISTENING at its capture-ready callback, then THINKING immediately after recording (including normalization/STT). Hands-free no-speech returns nonfatally to READY. Display failures never turn voice success into an error.
 
 The port stays open across transitions. Writes are locked and newline-terminated, with a 50 ms write timeout, non-blocking read configuration and **no acknowledgment wait or flush**. DTR/RTS are set inactive before opening, with no per-state reset toggles. Some OS/drivers may still glitch reset lines on open; see the [pyserial API documentation](https://pyserial.readthedocs.io/en/latest/pyserial_api.html#serial.Serial.open). A configurable startup delay (0–10 seconds) runs once at initial connection, before READY, not on every state change.
 
@@ -657,7 +657,6 @@ Set these overrides yourself for the existing Pi I2S setup:
 
 ```dotenv
 VOICE_AUDIO_BACKEND=alsa
-VOICE_CAPTURE_VAD_ENABLED=true
 VOICE_WAKE_WORD_ENABLED=true
 VOICE_WAKE_WORD_ENGINE=openwakeword
 VOICE_WAKE_WORD_MODEL=hey_jarvis
@@ -666,7 +665,10 @@ VOICE_WAKE_WORD_THRESHOLD=0.5
 VOICE_WAKE_WORD_VAD_THRESHOLD=0.5
 VOICE_WAKE_WORD_TIMEOUT_SECONDS=0
 VOICE_WAKE_WORD_COOLDOWN_SECONDS=0.75
-VOICE_HANDS_FREE_VAD_MAX_START_THRESHOLD=0.10
+VOICE_HANDS_FREE_WARMUP_SECONDS=0.25
+VOICE_HANDS_FREE_CALIBRATION_SECONDS=0.25
+VOICE_HANDS_FREE_MAX_SECONDS=6.0
+VOICE_HANDS_FREE_END_SILENCE_SECONDS=0.9
 ```
 
 ```bash
@@ -674,16 +676,19 @@ python scripts/voice_loop.py --hands-free
 ```
 
 Say "Hey Jarvis", then speak your request after LISTENING appears. Phase 1 closes
-wake capture and starts a fresh production request capture, including the existing
-microphone warm-up/calibration. The display stays READY throughout those stages.
-The capture-ready callback fires once, after adaptive calibration freezes its
-thresholds, and changes the display to LISTENING at "Speak now...". Speech
+wake capture and starts a separate production request recorder. It actively reads
+and discards 0.25 seconds of native PCM, then reads 0.25 seconds of ambient PCM
+for calibration. It never sleeps with an unread capture pipe. The display stays
+READY throughout those stages. The capture-ready callback fires once after
+calibration and changes the display to LISTENING at "Speak now...". Speech
 immediately attached to the wake phrase is not carried into request capture.
 
 The display initializes, Piper warms once, and the wake model warms once. READY
 waits for detection and remains READY during request warm-up/calibration;
-LISTENING means speech can now be accepted by the adaptive microphone VAD; THINKING
-and SPEAKING use the existing STT/service/TTS/playback cycle. After playback fully
+LISTENING means **every input chunk is now retained**, including quiet/weak speech.
+No speech-start confirmation, rejected-burst reset or start timeout can discard
+the request. THINKING begins immediately after recording and includes normalization,
+Whisper/Silero and the existing service. SPEAKING uses the existing TTS/playback cycle. After playback fully
 drains, the cycle retains its READY/ECO/PROTECTIVE idle state, waits the cooldown,
 resets detector history, and resumes wake listening. No wake capture runs during
 request capture, inference, synthesis or playback. Exactly one microphone owner
@@ -708,17 +713,37 @@ The wake model stays resident; Whisper is reached only by the existing voice cyc
 | `VOICE_WAKE_WORD_VAD_THRESHOLD` | `0.5` | Finite 0..1; 0 disables wake-engine VAD, independently of capture VAD |
 | `VOICE_WAKE_WORD_TIMEOUT_SECONDS` | `0` | Finite, nonnegative; 0 waits indefinitely; timeout resumes listening |
 | `VOICE_WAKE_WORD_COOLDOWN_SECONDS` | `0.75` | Finite 0..5 seconds after fully drained playback |
-| `VOICE_HANDS_FREE_VAD_MAX_START_THRESHOLD` | `0.10` | Finite, greater than 0 and at most 1; adaptive start ceiling only for hands-free request capture |
+| `VOICE_HANDS_FREE_WARMUP_SECONDS` | `0.25` | Finite 0.02..2 seconds; native PCM actively read/discarded |
+| `VOICE_HANDS_FREE_CALIBRATION_SECONDS` | `0.25` | Finite 0.02..2 seconds; ambient median RMS, excluded from WAV |
+| `VOICE_HANDS_FREE_MAX_SECONDS` | `6.0` | Finite 0.1..30 seconds; hard post-ready audio window |
+| `VOICE_HANDS_FREE_END_SILENCE_SECONDS` | `0.9` | Finite 0.1..5 seconds; sustained quiet after speech evidence |
+| `VOICE_HANDS_FREE_VAD_MAX_START_THRESHOLD` | `0.10` | Deprecated compatibility setting, ignored by the new recorder |
 
-Hands-free request capture caps the normal adaptive start threshold at
-`VOICE_HANDS_FREE_VAD_MAX_START_THRESHOLD`: `min(normal adaptive threshold, ceiling)`.
-The calibrated noise floor stays frozen. Continuation is recomputed from that
-same noise floor and the effective capped start: clip the floor to 95% of start,
-then add 25% of the floor-to-start gap. Thus continuation stays strictly below
-start even with very noisy calibration. Ordinary Enter-to-record capture omits
-the ceiling and retains its existing threshold and display timing; text/audio-file
-injection still bypasses microphone capture. Calibration, warm-up, confirmation,
-minimum speech, silence duration, gain and Whisper settings are unchanged.
+The hands-free endpoint detector is an optional latency optimization, independent
+of interactive `AdaptiveCaptureVAD`. From the frozen ambient median it calculates
+`speech_threshold = min(0.08, max(0.035, noise_floor * 1.15 + 0.003))` and
+`continue_threshold = min(speech_threshold * 0.95, max(0.015, noise_floor * 1.05 + 0.001))`.
+Two above-speech chunks among the last five 20 ms chunks establish evidence;
+they need not be consecutive. One strong chunk also suffices (threshold
+`min(1, max(speech_threshold * 1.4, noise_floor * 1.6 + 0.005))`). With a floor
+around 0.062, peaks of 0.10..0.12 count as evidence. After evidence, any chunk
+above continuation resets the quiet timer; approximately 0.9 seconds of sustained
+quiet ends capture early. Every chunk, including the endpoint silence, is retained.
+If classification is uncertain or silence never completes, the recorder writes
+the entire maximum window and sends it through normal normalization and Whisper.
+An end-silence setting longer than the maximum simply leaves the maximum in charge.
+
+One final `Hands-free capture:` line reports frozen noise floor, speech/continuation
+thresholds, `speech_seen=true|false`, retained `capture_duration` and
+`stop_reason=silence|max_duration`. No per-frame RMS or hands-free start timeout
+is logged. Native-frame counts define each phase precisely, including short pipe
+reads. A separate wall deadline (warm-up + calibration + maximum + 5 seconds)
+bounds a stalled process; hardware failures still report ERROR and reap arecord.
+
+Ordinary Enter-to-record retains its accepted adaptive VAD, thresholds, confirmation,
+minimum speech, warm-up, silence durations and display timing. The new recorder
+does not require `VOICE_CAPTURE_VAD_ENABLED`; that setting controls interactive
+capture only. Text/audio-file injection still bypasses microphone capture.
 
 For a future custom phrase, set `VOICE_WAKE_WORD_MODEL_PATH=/absolute/path/custom.onnx`
 and run preparation again to install shared assets. The custom file must already
@@ -730,8 +755,12 @@ and do not establish acoustic detection accuracy.
 
 Startup prints engine/model/threshold; detections print model/score/elapsed wait.
 Per-frame scores are debug-level logging only. Recoverable request or microphone
-errors (including request start_timeout) show ERROR and resume wake listening after
-at least 0.5 seconds in READY, retaining the last successful conversation. Request
+hardware/process errors show ERROR and resume wake listening after at least
+0.5 seconds in READY, retaining the last successful conversation. A completed
+recording whose Whisper result is empty/a no-speech placeholder prints only
+"No request speech recognized; returning to wake listening.", returns to READY
+and resumes wake detection after bounded cooldown. It does not run AI/TTS or speak
+an error message. Request
 capture is attempted again only after another wake detection. A missing
 dependency/model fails at startup with a preparation hint.
 Ctrl+C stops and reaps wake arecord, closes the wake provider and Piper, then closes
@@ -739,6 +768,11 @@ the display; the existing cycle remains responsible for request/playback cleanup
 The persistent Piper child ignores SIGINT so terminal Ctrl+C is handled by the
 parent without a child KeyboardInterrupt traceback. Shutdown IPC, parent-connection
 EOF and terminate fallback still stop the worker; SIGTERM is not ignored.
+Before openWakeWord/Piper CPU model initialization, a best-effort call to
+ONNX Runtime's supported `set_default_logger_severity(3)` keeps ERROR logs while
+reducing noisy GPU-discovery warnings. A missing package/API or logging-setter
+failure is harmless; model exceptions and application errors are still surfaced.
+This changes neither providers nor CPU inference and never enables CUDA.
 
 To disable, set `VOICE_WAKE_WORD_ENABLED=false` and run `python scripts/voice_loop.py`
 without `--hands-free` for the original Enter-to-record operation. `--text`,

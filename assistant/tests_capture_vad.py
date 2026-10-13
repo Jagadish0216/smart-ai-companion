@@ -511,19 +511,18 @@ class CaptureReadyCallbackTests(SimpleTestCase):
         callback.assert_not_called()
         self.process.terminate.assert_called_once()
 
-    def test_real_hands_free_voice_cycle_stays_ready_until_capture_calibrates(self):
+    def test_real_interactive_voice_cycle_preserves_accepted_vad_timing(self):
         display = MagicMock()
         states = ["READY"]
         display.set_state.side_effect = lambda state: states.append(state.value)
-        chunks = iter([self.pcm(0.0638)] * 25 + [self.pcm(0.11)] * 20 + [self.pcm(0)] * 2)
+        chunks = iter([self.pcm(0.01)] * 25 + [self.pcm(0.06)] * 20 + [self.pcm(0)] * 2)
 
         def warmup(seconds):
-            self.assertEqual(states, ["READY"])
+            self.assertEqual(states, ["READY", "LISTENING"])
             self.process.stdout.read.assert_not_called()
 
         def read(size):
-            # The final calibration chunk also arrives while still READY.
-            self.assertEqual(states[-1], "READY" if self.process.stdout.read.call_count <= 25 else "LISTENING")
+            self.assertEqual(states[-1], "LISTENING")
             return next(chunks)
 
         self.mocks["time.sleep"].side_effect = warmup
@@ -536,7 +535,7 @@ class CaptureReadyCallbackTests(SimpleTestCase):
         ):
             stt.return_value.transcribe.return_value = "What is an ESP32?"
             with self.assertRaisesRegex(VoiceLoopError, "unavailable"):
-                self.voice_loop.run_voice_cycle(config, display=display, hands_free_vad_max_start_threshold=0.10)
+                self.voice_loop.run_voice_cycle(config, display=display)
         self.assertEqual(states, ["READY", "LISTENING", "THINKING", "ERROR"])
-        self.assertEqual(self.vads[-1].start_threshold, 0.10)
+        self.assertAlmostEqual(self.vads[-1].start_threshold, 0.027, places=6)
         self.process.terminate.assert_called_once()
