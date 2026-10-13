@@ -432,8 +432,9 @@ class HandsFreeRuntimeTests(SimpleTestCase):
                 raise KeyboardInterrupt
             return self.detection
 
-        def cycle(config, conversation_id, display):
+        def cycle(config, conversation_id, display, **kwargs):
             self.assertFalse(listening[0])
+            self.assertEqual(kwargs, {"hands_free_vad_max_start_threshold": 0.10})
             events.extend(["request_capture", "thinking", "tts", "playback", "drained"])
             return 42
 
@@ -468,6 +469,33 @@ class HandsFreeRuntimeTests(SimpleTestCase):
             self.assertEqual(voice_loop.main(["--hands-free"]), 130)
         self.mocks["run_voice_cycle"].assert_called_once()
         self.assertEqual(self.provider.reset.call_count, 3)
+
+    def test_start_timeout_returns_to_ready_and_needs_a_new_wake_detection(self):
+        self.provider.wait_for_wake_word.side_effect = [self.detection, WakeWordDetection(False), KeyboardInterrupt()]
+        self.mocks["run_voice_cycle"].side_effect = voice_loop.VoiceLoopError("Recording stopped: no speech detected before the start timeout.")
+        with patch("sys.stderr", new_callable=io.StringIO):
+            self.assertEqual(voice_loop.main(["--hands-free"]), 130)
+        self.mocks["run_voice_cycle"].assert_called_once()
+        states = [c.args[0].value for c in self.display.set_state.call_args_list]
+        self.assertEqual(states, ["READY", "READY", "READY", "ERROR", "READY"])
+        self.mocks["time.sleep"].assert_has_calls([call(0.75), call(0.75)])
+        self.assertEqual(self.provider.wait_for_wake_word.call_count, 3)
+
+    def test_hands_free_ceiling_validation_is_finite_and_bounded_before_hardware(self):
+        for value in ("invalid", "nan", "inf", 0, -0.1, 1.01):
+            with self.subTest(value=value), override_settings(VOICE_HANDS_FREE_VAD_MAX_START_THRESHOLD=value), patch(
+                "sys.stderr", new_callable=io.StringIO
+            ) as error:
+                self.assertEqual(voice_loop.main(["--hands-free"]), 1)
+                self.assertIn("VOICE_HANDS_FREE_VAD_MAX_START_THRESHOLD", self.mocks["builtins.print"].call_args.args[0])
+        self.mocks["get_companion_display"].assert_not_called()
+
+    @override_settings(VOICE_HANDS_FREE_VAD_MAX_START_THRESHOLD="0.08")
+    def test_configured_ceiling_reaches_only_hands_free_request_cycle(self):
+        self.assertEqual(voice_loop.main(["--hands-free"]), 130)
+        self.mocks["run_voice_cycle"].assert_called_once_with(
+            self.config, None, display=self.display, hands_free_vad_max_start_threshold=0.08,
+        )
 
     def test_interrupt_during_cycle_cleans_all_providers(self):
         self.mocks["run_voice_cycle"].side_effect = KeyboardInterrupt
@@ -525,7 +553,8 @@ class HandsFreeRuntimeTests(SimpleTestCase):
         self.assertIn("--hands-free", help_text.getvalue())
         self.mocks["get_companion_display"].assert_not_called()
 
-    @override_settings(VOICE_WAKE_WORD_THRESHOLD="invalid", VOICE_WAKE_WORD_ENGINE="unsupported")
+    @override_settings(VOICE_WAKE_WORD_THRESHOLD="invalid", VOICE_WAKE_WORD_ENGINE="unsupported",
+                       VOICE_HANDS_FREE_VAD_MAX_START_THRESHOLD="invalid")
     def test_injection_and_interactive_modes_bypass_even_invalid_enabled_wake_settings(self):
         for argv in (["--text", "hello"], ["--audio-file", "test.wav"], ["--text-mode"], []):
             with self.subTest(argv=argv), patch("builtins.input", side_effect=["", "q"]):
@@ -594,6 +623,12 @@ class HandsFreeProductionCycleTests(SimpleTestCase):
 
         def record(path, *args, **kwargs):
             stage("request_capture")
+            self.assertEqual(display.set_state.call_args.args[0].value, "READY")
+            events.extend(["warmup", "calibration"])
+            self.assertEqual(kwargs["max_start_threshold"], 0.10)
+            kwargs["on_capture_ready"]()
+            self.assertEqual(display.set_state.call_args.args[0].value, "LISTENING")
+            events.append("capture_ready")
             path.write_bytes(b"fake recording")
 
         def synthesize(text):
@@ -650,11 +685,11 @@ class HandsFreeProductionCycleTests(SimpleTestCase):
         self.assertEqual([c.kwargs["conversation_id"] for c in service.call_args_list], [None, 42])
         self.assertFalse(active["wake"])
         self.assertFalse(active["playback"])
-        self.assertEqual(events, ["wake_start", "wake_released", "request_capture", "thinking", "tts", "audio_prepare",
+        self.assertEqual(events, ["wake_start", "wake_released", "request_capture", "warmup", "calibration", "capture_ready", "thinking", "tts", "audio_prepare",
                                   "playback_start", "playback_write", "playback_drained", "cooldown", "reset"] * 2
                          + ["wake_start", "wake_released"])
         states = [c.args[0].value for c in display.set_state.call_args_list]
-        self.assertEqual(states, ["READY", "READY"] + ["LISTENING", "LISTENING", "THINKING", "SPEAKING", "ECO"] * 2)
+        self.assertEqual(states, ["READY", "READY"] + ["READY", "LISTENING", "THINKING", "SPEAKING", "ECO"] * 2)
         engine.Model.assert_called_once()
         self.assertIsNone(provider.model)
         tts.close.assert_called_once()

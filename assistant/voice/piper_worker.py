@@ -3,6 +3,7 @@
 import base64
 import io
 import json
+import signal
 import wave
 
 MAX_REQUEST_BYTES = 1024 * 1024
@@ -16,6 +17,9 @@ def send_message(connection, message):
 
 def worker_main(connection, voice_path):
     """Load one CPU voice and return one complete WAV per synthesis request."""
+    # Terminal SIGINT also reaches the child on the Pi. The parent owns Ctrl+C
+    # handling and shuts us down through IPC (or its terminate fallback).
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     request_id = None
     try:
         try:

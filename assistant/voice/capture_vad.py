@@ -12,7 +12,9 @@ class AdaptiveCaptureVAD:
     calibration the ambient floor and both thresholds remain frozen, including
     while waiting for speech. Internal constants deliberately remain bounded:
     start = max(configured, min(1, 2.5 * noise + .002)); continue uses 25% of
-    the floor-to-start gap. Clip the continuation floor to 95% of start so
+    the floor-to-start gap. An optional adaptive start ceiling caps only that
+    calculated start; continuation is then derived from the same frozen floor.
+    Clip the continuation floor to 95% of start so
     hysteresis remains strict even with saturated/clipped ambient input.
     Continuation-level activity needs 60 ms consecutively to cancel end silence;
     definite above-start speech cancels it immediately.
@@ -21,7 +23,7 @@ class AdaptiveCaptureVAD:
     def __init__(self, *, start_threshold=0.02, silence_seconds=0.8,
                  max_seconds=10.0, start_timeout_seconds=5.0, adaptive=True,
                  noise_calibration_seconds=0.5, start_confirm_ms=60,
-                 min_speech_ms=300, chunk_seconds=0.02):
+                 min_speech_ms=300, chunk_seconds=0.02, max_start_threshold=None):
         values = (start_threshold, silence_seconds, max_seconds,
                   start_timeout_seconds, noise_calibration_seconds,
                   start_confirm_ms, min_speech_ms, chunk_seconds)
@@ -29,7 +31,12 @@ class AdaptiveCaptureVAD:
             raise ValueError("Capture VAD settings must be finite and positive.")
         if start_threshold > 1:
             raise ValueError("Capture VAD start threshold must be at most 1.")
+        if max_start_threshold is not None and (
+            not math.isfinite(max_start_threshold) or not 0 < max_start_threshold <= 1
+        ):
+            raise ValueError("Capture VAD max start threshold must be finite, greater than 0 and at most 1.")
         self.configured_start = start_threshold
+        self.max_start_threshold = max_start_threshold
         self.silence_seconds = silence_seconds
         self.max_seconds = max_seconds
         self.start_timeout_seconds = start_timeout_seconds
@@ -49,6 +56,7 @@ class AdaptiveCaptureVAD:
         self.silence_duration = 0.0
         self.resume_duration = 0.0
         self.speech_started = False
+        self.max_wait_rms = 0.0
         self.stop_reason = None
         if adaptive:
             self._thresholds()
@@ -67,6 +75,8 @@ class AdaptiveCaptureVAD:
         self.noise_floor = median(self.noise_samples) if self.noise_samples else 0.0
         self.calibrated_noise_floor = self.noise_floor
         self.start_threshold = max(self.configured_start, min(1.0, self.noise_floor * 2.5 + 0.002))
+        if self.max_start_threshold is not None:
+            self.start_threshold = min(self.start_threshold, self.max_start_threshold)
         floor = min(self.noise_floor, self.start_threshold * 0.95)
         self.continue_threshold = floor + 0.25 * (self.start_threshold - floor)
 
@@ -78,6 +88,8 @@ class AdaptiveCaptureVAD:
         was_calibrated = self.calibrated
         self.elapsed += seconds
         if not self.speech_started:
+            if was_calibrated:
+                self.max_wait_rms = max(self.max_wait_rms, rms)
             # Includes calibration and rejected bursts: no fresh waiting budget.
             if self.elapsed + 1e-9 >= self.start_timeout_seconds and (
                 self.adaptive or rms < self.start_threshold

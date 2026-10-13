@@ -47,3 +47,29 @@ def fake_piper_worker(connection, voice_path):
                   "wav": base64.b64encode(b"not WAV" if text == "invalidwav" else wav_bytes(text)).decode()})
     finally:
         connection.close()
+
+
+def sigint_probe_piper_worker(connection, voice_path):
+    """Run the production worker with a fake voice that raises real SIGINT."""
+    import signal
+    import sys
+    from types import ModuleType
+    from assistant.voice.piper_worker import worker_main
+
+    class FakeVoice:
+        @staticmethod
+        def load(path, use_cuda=False):
+            return FakeVoice()
+
+        def synthesize_wav(self, text, wav):
+            signal.raise_signal(signal.SIGINT)
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(22050)
+            wav.writeframes(b"\x01\x00" * 160)
+
+    module = ModuleType("piper.voice")
+    module.PiperVoice = FakeVoice
+    sys.modules["piper"] = ModuleType("piper")
+    sys.modules["piper.voice"] = module
+    worker_main(connection, voice_path)

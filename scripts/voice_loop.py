@@ -349,14 +349,21 @@ def record_audio_with_capture_vad(
     *, backend: str = "pulse", adaptive: bool = True,
     noise_calibration_seconds: float = 0.5, start_confirm_ms: int = 60,
     min_speech_ms: int = 300,
+    on_capture_ready: Callable[[], None] | None = None,
+    max_start_threshold: float | None = None,
 ) -> None:
-    """Record raw PCM until speech ends, retaining a short pre-roll buffer."""
+    """Record until speech ends; signal ready once after warm-up/calibration.
+
+    Callback errors follow the same terminate/reap path as capture errors.
+    Omitting it and the optional adaptive ceiling preserves ordinary capture.
+    """
     vad = AdaptiveCaptureVAD(
         start_threshold=start_threshold, silence_seconds=silence_seconds,
         max_seconds=max_seconds, start_timeout_seconds=start_timeout_seconds,
         adaptive=adaptive, noise_calibration_seconds=noise_calibration_seconds,
         start_confirm_ms=start_confirm_ms, min_speech_ms=min_speech_ms,
         chunk_seconds=CAPTURE_CHUNK_SECONDS,
+        max_start_threshold=max_start_threshold,
     )
     sample_rate, sample_width, channels = CAPTURE_SAMPLE_RATE, CAPTURE_SAMPLE_WIDTH, 1
     command = [
@@ -420,6 +427,8 @@ def record_audio_with_capture_vad(
             print(f"Keep quiet: calibrating capture noise for {noise_calibration_seconds:g}s...")
         else:
             print("Speak now...")
+            if on_capture_ready is not None:
+                on_capture_ready()
         if process.stdout is None:
             raise VoiceLoopError(f"Recording failed: {binary} audio stream is unavailable.")
 
@@ -438,8 +447,10 @@ def record_audio_with_capture_vad(
             )
             was_started, was_calibrated = vad.speech_started, vad.calibrated
             event = vad.feed(rms, chunk_duration)
-            if not was_calibrated and vad.calibrated:
+            if not was_calibrated and vad.calibrated and vad.stop_reason is None:
                 print("Speak now...")
+                if on_capture_ready is not None:
+                    on_capture_ready()
             if not was_started:
                 preroll.append(chunk)
                 if event == "start":
@@ -489,6 +500,7 @@ def record_audio_with_capture_vad(
                 f"Capture VAD: noise_floor={vad.noise_floor:.4f} "
                 f"start_threshold={vad.start_threshold:.4f} "
                 f"continue_threshold={vad.continue_threshold:.4f} "
+                f"max_wait_rms={vad.max_wait_rms:.4f} "
                 f"speech_duration={vad.speech_duration:.2f}s "
                 f"capture_duration={vad.capture_duration:.2f}s "
                 f"elapsed={vad.elapsed:.2f}s stop_reason={vad.stop_reason}"
@@ -1379,10 +1391,14 @@ def run_voice_cycle(
     *,
     audio_file: Path | None = None,
     text: str | None = None,
+    hands_free_vad_max_start_threshold: float | None = None,
 ) -> int | None:
     """Run a cycle; hardware display failures are isolated from voice failures."""
     try:
-        return _run_voice_cycle(config, conversation_id, display, audio_file=audio_file, text=text)
+        return _run_voice_cycle(
+            config, conversation_id, display, audio_file=audio_file, text=text,
+            hands_free_vad_max_start_threshold=hands_free_vad_max_start_threshold,
+        )
     except (Exception, KeyboardInterrupt):
         _set_display_state(display, DisplayState.ERROR)
         try:
@@ -1392,7 +1408,8 @@ def run_voice_cycle(
         raise
 
 
-def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=None):
+def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=None,
+                     hands_free_vad_max_start_threshold=None):
     """Select an input, then reuse the production respond/speak cycle."""
     if audio_file is not None and text is not None:
         raise VoiceLoopError("Choose either audio-file or text input, not both.")
@@ -1415,7 +1432,8 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
                     raise VoiceLoopError(f"Input audio is not a file: {recorded_path}")
                 print(f"Input audio: {recorded_path}")
             else:
-                _set_display_state(display, DisplayState.LISTENING)
+                if hands_free_vad_max_start_threshold is None:
+                    _set_display_state(display, DisplayState.LISTENING)
                 source = config.alsa_capture_device if config.audio_backend == "alsa" else config.input_source
                 if config.capture_vad_enabled:
                     print(
@@ -1437,6 +1455,10 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
                         noise_calibration_seconds=config.capture_vad_noise_calibration_seconds,
                         start_confirm_ms=config.capture_vad_start_confirm_ms,
                         min_speech_ms=config.capture_vad_min_speech_ms,
+                        **({
+                            "max_start_threshold": hands_free_vad_max_start_threshold,
+                            "on_capture_ready": lambda: _set_display_state(display, DisplayState.LISTENING),
+                        } if hands_free_vad_max_start_threshold is not None else {}),
                         **({"backend": "alsa"} if config.audio_backend == "alsa" else {}),
                     )
                 else:
@@ -1498,7 +1520,7 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
     return next_conversation_id
 
 
-def run_hands_free(config, wake_config, provider, display):
+def run_hands_free(config, wake_config, provider, display, *, vad_max_start_threshold=0.10):
     """Serialize wake capture, the complete production cycle and cooldown.
 
     The provider releases arecord before returning. run_voice_cycle returns
@@ -1521,8 +1543,11 @@ def run_hands_free(config, wake_config, provider, display):
                 time.sleep(max(0.1, wake_config.cooldown_seconds))
                 continue
             print(f"Wake detected: model={detection.model} score={detection.score:.3f} latency={detection.elapsed_seconds:.3f}s")
-            _set_display_state(display, DisplayState.LISTENING)
-            conversation_id = run_voice_cycle(config, conversation_id, display=display)
+            _set_display_state(display, DisplayState.READY)
+            conversation_id = run_voice_cycle(
+                config, conversation_id, display=display,
+                hands_free_vad_max_start_threshold=vad_max_start_threshold,
+            )
             time.sleep(wake_config.cooldown_seconds)
             provider.reset()
         except KeyboardInterrupt:
@@ -1547,6 +1572,7 @@ def main(argv=None) -> int:
         parser.error("--text must not be empty")
     single_input = args.audio_file is not None or args.text is not None
     wake_config = None
+    hands_free_vad_max_start_threshold = None
     try:
         config = (
             VoiceLoopConfig.from_settings(require_capture=False) if single_input or args.text_mode
@@ -1558,6 +1584,12 @@ def main(argv=None) -> int:
                 raise WakeWordError("--hands-free requires VOICE_WAKE_WORD_ENABLED=true. Omit the flag for Enter-to-record mode.")
             if config.audio_backend != "alsa" or not config.capture_vad_enabled:
                 raise WakeWordError("--hands-free requires VOICE_AUDIO_BACKEND=alsa and VOICE_CAPTURE_VAD_ENABLED=true.")
+            try:
+                hands_free_vad_max_start_threshold = float(getattr(settings, "VOICE_HANDS_FREE_VAD_MAX_START_THRESHOLD", 0.10))
+            except (TypeError, ValueError) as exc:
+                raise VoiceLoopError("VOICE_HANDS_FREE_VAD_MAX_START_THRESHOLD must be a finite number.") from exc
+            if not math.isfinite(hands_free_vad_max_start_threshold) or not 0 < hands_free_vad_max_start_threshold <= 1:
+                raise VoiceLoopError("VOICE_HANDS_FREE_VAD_MAX_START_THRESHOLD must be finite, greater than 0 and at most 1.")
     except (TypeError, ValueError, VoiceLoopError, WakeWordError) as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 1
@@ -1589,7 +1621,10 @@ def main(argv=None) -> int:
         if args.hands_free:
             try:
                 wake_provider = get_wake_word_provider(wake_config)
-                run_hands_free(config, wake_config, wake_provider, display)
+                run_hands_free(
+                    config, wake_config, wake_provider, display,
+                    vad_max_start_threshold=hands_free_vad_max_start_threshold,
+                )
             except KeyboardInterrupt:
                 print("\nExiting hands-free voice loop.")
                 return 130
