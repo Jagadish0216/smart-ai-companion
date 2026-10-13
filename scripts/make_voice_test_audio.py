@@ -34,8 +34,10 @@ def main(argv=None) -> int:
     if not text:
         parser.error("--text must not be empty")
     output = args.output.expanduser()
+    provider = None
     try:
-        audio = get_tts_provider().synthesize(text)
+        provider = get_tts_provider()
+        audio = provider.synthesize(text)
         with wave.open(io.BytesIO(audio), "rb") as wav:
             if wav.getnframes() == 0:
                 raise ValueError("TTS returned a WAV with no audio frames.")
@@ -43,6 +45,9 @@ def main(argv=None) -> int:
     except Exception as exc:
         print(f"Test audio generation failed: {exc}", file=sys.stderr)
         return 1
+    finally:
+        if provider is not None:
+            provider.close()
     print(f"Test audio: {output} (configured TTS: {settings.TTS_ENGINE})")
     print("Synthetic integration input only; not a microphone/VAD validation.")
     return 0

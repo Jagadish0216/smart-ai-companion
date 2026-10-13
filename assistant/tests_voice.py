@@ -2,9 +2,15 @@ import io
 import json
 import base64
 import subprocess
+import multiprocessing
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event, Timer, enumerate as threads
+import time
+from types import ModuleType
+import wave
 from unittest.mock import patch, MagicMock
 
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 from rest_framework import status
@@ -14,6 +20,8 @@ from assistant.test_support import install_resource_report
 from assistant.voice.stt import WhisperCppProvider, STTError
 from assistant.voice.tts import PiperProvider, TTSError
 from assistant.voice.factory import get_stt_provider, reset_voice_providers
+from assistant.voice.piper_worker import worker_main
+from assistant.tests_piper_support import fake_piper_worker, wav_bytes
 
 class VoiceProviderTests(TestCase):
     def setUp(self):
@@ -161,17 +169,245 @@ class VoiceProviderTests(TestCase):
         with self.assertRaises(STTError):
             self.stt.transcribe("/fake/audio.wav")
 
-    @patch('os.path.exists')
-    @patch('subprocess.run')
-    def test_piper_success(self, mock_run, mock_exists):
-        mock_exists.return_value = True
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = b"WAV_DATA"
-        mock_run.return_value = mock_result
+    def test_piper_success(self):
+        self.addCleanup(self.tts.close)
+        audio = wav_bytes()
+        with patch.object(self.tts, "_ensure_ready"), patch.object(self.tts, "_exchange", return_value={
+            "type": "result", "request_id": 1, "wav": base64.b64encode(audio).decode(),
+        }):
+            self.assertEqual(self.tts.synthesize("Hello"), audio)
 
-        audio = self.tts.synthesize("Hello")
-        self.assertEqual(audio, b"WAV_DATA")
+
+class PiperWorkerProtocolTests(SimpleTestCase):
+    def test_worker_loads_once_and_returns_complete_wav_for_multiple_requests(self):
+        module = ModuleType("piper.voice")
+        module.PiperVoice = MagicMock()
+        def synthesize(text, wav):
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(22050)
+            wav.writeframes(b"\x01\x00" * 160)
+        module.PiperVoice.load.return_value.synthesize_wav.side_effect = synthesize
+        connection = MagicMock()
+        connection.recv_bytes.side_effect = [json.dumps(message).encode() for message in (
+            {"type": "synthesize", "request_id": 1, "text": "First"},
+            {"type": "synthesize", "request_id": 2, "text": "Second"}, {"type": "shutdown"},
+        )]
+        with patch.dict("sys.modules", {"piper": ModuleType("piper"), "piper.voice": module}):
+            worker_main(connection, "configured-voice.onnx")
+        module.PiperVoice.load.assert_called_once_with("configured-voice.onnx", use_cuda=False)
+        self.assertEqual(module.PiperVoice.load.return_value.synthesize_wav.call_count, 2)
+        messages = [json.loads(item.args[0]) for item in connection.send_bytes.call_args_list]
+        self.assertEqual(messages[0], {"type": "ready"})
+        self.assertEqual(messages[-1], {"type": "closed"})
+        for message, request_id in zip(messages[1:3], (1, 2)):
+            self.assertEqual(message["request_id"], request_id)
+            with wave.open(io.BytesIO(base64.b64decode(message["wav"]))) as wav:
+                self.assertEqual(wav.getnframes(), 160)
+        connection.close.assert_called_once()
+
+    def test_worker_error_codes_do_not_expose_native_exception(self):
+        module = ModuleType("piper.voice")
+        module.PiperVoice = MagicMock()
+        module.PiperVoice.load.side_effect = RuntimeError("private-token-and-path")
+        connection = MagicMock()
+        with patch.dict("sys.modules", {"piper": ModuleType("piper"), "piper.voice": module}):
+            worker_main(connection, "voice.onnx")
+        self.assertEqual(json.loads(connection.send_bytes.call_args.args[0]),
+                         {"type": "error", "request_id": None, "code": "LOAD_FAILED"})
+        self.assertNotIn("private", str(connection.send_bytes.call_args_list))
+
+
+class PersistentPiperLifecycleTests(SimpleTestCase):
+    def setUp(self):
+        for target, kwargs in (("assistant.voice.tts.worker_main", {"new": fake_piper_worker}),
+                               ("assistant.voice.tts.os.path.exists", {"return_value": True})):
+            patcher = patch(target, **kwargs)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.provider = PiperProvider("legacy-cli", "fake-voice", timeout=5)
+        self.addCleanup(self.provider.close)
+
+    def assert_stopped(self, pid):
+        self.assertIsNone(self.provider._worker)
+        self.assertIsNone(self.provider._connection)
+        self.assertNotIn(pid, [child.pid for child in multiprocessing.active_children()])
+        self.assertFalse(any(thread.name in {"piper-ipc", "piper-shutdown"} for thread in threads()))
+
+    def test_warm_and_normal_cancellable_syntheses_reuse_one_spawn_worker(self):
+        self.provider.warm()
+        worker, pid = self.provider._worker, self.provider._worker.pid
+        self.provider.warm()
+        self.assertEqual(self.provider.synthesize("First"), wav_bytes("First"))
+        self.assertEqual(self.provider.synthesize_cancellable("Second", Event()), wav_bytes("Second"))
+        self.assertIs(self.provider._worker, worker)
+        self.assertEqual(self.provider._context.get_start_method(), "spawn")
+        self.provider.close()
+        self.provider.close()
+        self.assert_stopped(pid)
+
+    def test_preset_cancel_starts_no_worker(self):
+        stopped = Event()
+        stopped.set()
+        with self.assertRaisesRegex(TTSError, "TTS synthesis cancelled"):
+            self.provider.synthesize_cancellable("Hello", stopped)
+        self.assertIsNone(self.provider._worker)
+
+    def test_preset_cancel_stops_an_already_warmed_idle_worker(self):
+        self.provider.warm()
+        pid = self.provider._worker.pid
+        stopped = Event()
+        stopped.set()
+        with self.assertRaisesRegex(TTSError, "cancelled"):
+            self.provider.synthesize_cancellable("Hello", stopped)
+        self.assert_stopped(pid)
+
+    def test_idle_worker_crash_fails_current_call_then_allows_recovery(self):
+        self.provider.warm()
+        worker, pid = self.provider._worker, self.provider._worker.pid
+        worker.kill()
+        worker.join(timeout=2)
+        with self.assertRaisesRegex(TTSError, "exited unexpectedly"):
+            self.provider.synthesize("Next")
+        self.assert_stopped(pid)
+        self.assertEqual(self.provider.synthesize("Recovered"), wav_bytes("Recovered"))
+
+    def test_cancellation_reaps_worker_and_later_request_recovers(self):
+        self.provider.warm()
+        pid = self.provider._worker.pid
+        stopped = Event()
+        timer = Timer(0.1, stopped.set)
+        timer.start()
+        try:
+            with self.assertRaisesRegex(TTSError, "TTS synthesis cancelled"):
+                self.provider.synthesize_cancellable("hang", stopped)
+        finally:
+            timer.cancel()
+        self.assert_stopped(pid)
+        self.assertEqual(self.provider.synthesize("Recovered"), wav_bytes("Recovered"))
+        self.assertNotEqual(self.provider._worker.pid, pid)
+
+    def test_timeout_terminates_and_reaps_worker(self):
+        self.provider.warm()
+        pid = self.provider._worker.pid
+        self.provider.timeout = 0.15
+        started = time.monotonic()
+        with self.assertRaisesRegex(TTSError, "TTS synthesis timed out"):
+            self.provider.synthesize("hang")
+        self.assertLess(time.monotonic() - started, 3)
+        self.assert_stopped(pid)
+
+    def test_warmup_timeout_leaves_no_worker(self):
+        self.provider.voice_path = "hang-load"
+        self.provider.timeout = 0.15
+        with self.assertRaisesRegex(TTSError, "timed out"):
+            self.provider.warm()
+        self.assert_stopped(None)
+
+    def test_crash_stale_malformed_invalid_wav_and_worker_error_fail_safely(self):
+        for text in ("crash", "stale", "malformed", "invalidwav", "error"):
+            with self.subTest(text=text):
+                self.provider.warm()
+                pid = self.provider._worker.pid
+                with self.assertRaises(TTSError):
+                    self.provider.synthesize(text)
+                self.assert_stopped(pid)
+                self.assertEqual(self.provider.synthesize("Recovered"), wav_bytes("Recovered"))
+
+    def test_cancelled_lock_wait_does_not_stop_someone_elses_worker(self):
+        self.provider.warm()
+        pid = self.provider._worker.pid
+        self.provider._lock.acquire()
+        stopped = Event()
+        timer = Timer(0.1, stopped.set)
+        timer.start()
+        try:
+            with self.assertRaisesRegex(TTSError, "cancelled"):
+                self.provider.synthesize_cancellable("waiting", stopped)
+        finally:
+            self.provider._lock.release()
+            timer.cancel()
+        self.assertEqual(self.provider._worker.pid, pid)
+        self.assertEqual(self.provider.synthesize("Still alive"), wav_bytes("Still alive"))
+
+    def test_lock_wait_also_consumes_timeout_budget(self):
+        self.provider._lock.acquire()
+        self.provider.timeout = 0.1
+        try:
+            with self.assertRaisesRegex(TTSError, "timed out"):
+                self.provider.synthesize("waiting")
+        finally:
+            self.provider._lock.release()
+
+    def test_concurrent_requests_are_serialized_and_have_distinct_ids(self):
+        self.provider.warm()
+        pid = self.provider._worker.pid
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(self.provider.synthesize, ("One", "Another")))
+        self.assertEqual(results, [wav_bytes("One"), wav_bytes("Another")])
+        self.assertEqual(self.provider._request_id, 2)
+        self.assertEqual(self.provider._worker.pid, pid)
+
+    def test_close_interrupts_active_request_and_later_warm_can_restart(self):
+        self.provider.warm()
+        pid = self.provider._worker.pid
+        sent = Event()
+        from assistant.voice.tts import send_message as actual_send
+        def send(connection, message):
+            actual_send(connection, message)
+            if message.get("text") == "hang":
+                sent.set()
+        with patch("assistant.voice.tts.send_message", side_effect=send), ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(self.provider.synthesize, "hang")
+            self.assertTrue(sent.wait(2))
+            self.provider.close()
+            with self.assertRaisesRegex(TTSError, "closed"):
+                future.result(timeout=2)
+        self.assert_stopped(pid)
+        self.provider.warm()
+        self.assertNotEqual(self.provider._worker.pid, pid)
+
+    def test_reset_cache_closes_cached_provider(self):
+        from assistant.voice import factory
+        self.provider.warm()
+        pid = self.provider._worker.pid
+        with patch.object(factory, "_tts_provider_cache", self.provider):
+            reset_voice_providers()
+            self.assertIsNone(factory._tts_provider_cache)
+        self.assert_stopped(pid)
+
+    def test_blocking_partial_ipc_is_cancellable_and_cannot_deliver_stale_audio(self):
+        self.provider.warm()
+        pid = self.provider._worker.pid
+        connection = self.provider._connection
+        closed, stopped = Event(), Event()
+        real_close = connection.close
+        def close():
+            real_close()
+            closed.set()
+        def receive(*args):
+            if not closed.wait(2):
+                raise RuntimeError("test IPC was not closed")
+            raise EOFError
+        timer = Timer(0.1, stopped.set)
+        with patch.object(connection, "recv_bytes", side_effect=receive), patch.object(connection, "close", side_effect=close):
+            timer.start()
+            try:
+                with self.assertRaisesRegex(TTSError, "cancelled"):
+                    self.provider.synthesize_cancellable("Old audio", stopped)
+            finally:
+                timer.cancel()
+        self.assert_stopped(pid)
+        self.assertEqual(self.provider.synthesize("New request"), wav_bytes("New request"))
+
+    def test_close_uses_kill_fallback_when_terminate_does_not_stop_child(self):
+        self.provider.voice_path = "hang-shutdown"
+        self.provider.warm()
+        worker, pid = self.provider._worker, self.provider._worker.pid
+        with patch.object(worker, "terminate"), patch.object(worker, "kill", wraps=worker.kill) as kill:
+            self.provider.close()
+            kill.assert_called_once()
+        self.assert_stopped(pid)
 
 
 class VoiceAPITests(TestCase):

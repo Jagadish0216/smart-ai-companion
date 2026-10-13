@@ -424,8 +424,9 @@ Mock mode requires no external services and is useful for frontend development.
 | `STT_VAD_MIN_SILENCE_MS` | `700` | Silence duration used to split speech segments |
 | `STT_VAD_SPEECH_PAD_MS` | `100` | Padding added around detected speech segments |
 | `TTS_ENGINE` | `mock` | Text-to-Speech: `mock` or `piper` |
-| `TTS_PIPER_BIN` | `/opt/piper/piper` | Path to Piper binary |
+| `TTS_PIPER_BIN` | `/opt/piper/piper` | Legacy compatibility setting; not executed by the persistent Python worker |
 | `TTS_PIPER_VOICE` | `/opt/piper/en_US-lessac-medium.onnx` | Path to Piper ONNX model |
+| `TTS_TIMEOUT` | `30` | Overall operation budget including lock wait, lazy load and synthesis/IPC; also bounds warm-up |
 | `VOICE_AUDIO_BACKEND` | `pulse` | Standalone audio backend: `alsa` for Pi I2S, `pulse` for optional development audio |
 | `VOICE_ALSA_CAPTURE_DEVICE` | `hw:CARD=sndrpigooglevoi,DEV=0` | Stable named ALSA capture device (not a numeric card index) |
 | `VOICE_ALSA_PLAYBACK_DEVICE` | `hw:CARD=sndrpigooglevoi,DEV=0` | Stable named ALSA speaker device |
@@ -531,6 +532,22 @@ python scripts/voice_loop.py
 ```
 
 Press Enter to record one cycle, wait for `Speak now...`, or type `q` and press Enter to exit. By default, the microphone remains open for the warm-up plus the full `VOICE_RECORD_SECONDS` window, preserving the original fixed-duration behavior. Set `VOICE_CAPTURE_VAD_ENABLED=true` to wait for speech and stop after trailing silence instead. This live mode uses a lightweight PCM RMS gate and keeps 300 ms of pre-roll to avoid clipping the first word; whisper.cpp Silero VAD remains a separate downstream validation option. The `record` timing includes the complete microphone-open operation, and live mode also prints the captured audio duration.
+
+#### Persistent Piper initialization and cleanup
+
+`PiperProvider` owns a dedicated `multiprocessing.get_context("spawn")` Python worker. The child imports `piper.voice.PiperVoice`, loads the configured `TTS_PIPER_VOICE` once with `use_cuda=False`, and reuses it across chunks and voice cycles. Native ONNX inference never runs in the voice-loop process. No voice, gain/limiter, PCM conversion, silence, edge trimming or persistent ALSA architecture changes are made.
+
+The existing `synthesize(text)` and `synthesize_cancellable(text, cancel_event)` APIs still return complete standard WAV bytes. The internal duplex Connection carries bounded, framed JSON byte messages (not external pickle input): `ready`, `synthesize(request_id, text)`, `result(request_id, base64 WAV)`, safe error codes, and `shutdown`/`closed`. Request IDs increase monotonically and are validated by both sides. Invalid/stale/malformed replies or incomplete WAVs fail without audio reuse. A provider lock serializes requests; cancelled waiters do not interrupt someone else's active synthesis.
+
+The parent checks cancellation, worker death and the monotonic deadline at intervals of at most 50 ms. Blocking sends/receives, including partial WAV frames, are isolated in an IPC helper thread so native/IPC stalls do not trap the deadline owner. Cancellation, timeout or protocol/crash failure stops/reaps the worker, closes handles and clears state; a later request can start a fresh worker, never consume old audio. The overall `TTS_TIMEOUT` includes lock wait, readiness/model loading and synthesis/IPC rather than giving each stage a fresh budget. Cleanup can add bounded terminate/kill/reap time after that deadline.
+
+`warm()` explicitly starts/loads the voice. Standalone `voice_loop.py` calls it once before accepting the first interaction in microphone, `--text`, `--audio-file` and `--text-mode` modes, outside all per-cycle timings. `--help` does not initialize/warm speech. A failed warm-up reports a startup error, closes the display/provider and does not begin a cycle. After a later worker failure, lazy recovery can include model load in that recovery request's timing. All existing first-text/audio/speech, total-TTS, preparation and starvation metrics retain their meanings.
+
+`close()` is idempotent and asks an idle child to shut down gracefully (0.5-second grace), then uses terminate/join (2 seconds) and kill/join (2 seconds) as needed. IPC helper joins are also bounded. Explicit cleanup runs on q/EOF/Ctrl+C, single-input completion, stream failure and fixture utility exit; display cleanup remains independent. Cached-provider reset closes its worker before dropping the cache. A weak-reference atexit fallback and daemon-child process cleanup provide additional exit safety, not a substitute for explicit close. `close()` tears down the model but permits a later explicit/lazy restart on the reusable provider.
+
+Compatibility: `TTS_PIPER_BIN` and the constructor's `binary_path` argument remain accepted, but the persistent backend does not execute that CLI. The **same Python environment as the application must have the already-used `piper-tts` 1.8 package**; a Piper CLI installed only in another environment is insufficient. No new requirement/dependency is added here. Keep the existing Lessac medium `.onnx` path and adjacent voice configuration in the Pi's deployment `.env`; no Jagadish-specific source default is introduced. Package/model load failures produce safe, clear errors without logging request text or native exception details.
+
+To validate on the Pi, keep existing settings and run `python scripts/voice_loop.py --text-mode`: the startup warm-up should occur once, followed by repeated text requests without repeated model loads. Compare `first_audio_ready - first_tts_text_ready`, `tts` and playback starvation with the previous measurements. Also test an injected response cancellation and normal q exit, checking that neither the Piper worker nor aplay remains after exit. Existing supplied Pi API timings (roughly 0.7-0.9 seconds per synthesis after a 1.855-second load, versus 2.9-3.2 seconds for fresh CLI processes) motivate this change; they are not new acceptance measurements of this implementation.
 
 #### Development input injection (no microphone required)
 

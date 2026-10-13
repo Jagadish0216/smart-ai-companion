@@ -40,7 +40,7 @@ from assistant.services import AssistantService  # noqa: E402
 from assistant.display import DisplayState, get_companion_display  # noqa: E402
 from assistant.policy import AssistantResponsePolicy  # noqa: E402
 from assistant.execution_policy import CONSTRAINED_RESOURCE_STATUS, REDUCED_RESOURCE_STATUS  # noqa: E402
-from assistant.voice.factory import get_stt_provider, get_tts_provider  # noqa: E402
+from assistant.voice.factory import close_tts_provider, get_stt_provider, get_tts_provider  # noqa: E402
 from assistant.voice.processes import run_cancellable  # noqa: E402
 from assistant.voice.tts import TextToSpeechProvider  # noqa: E402
 from assistant.voice.alsa_stream import PersistentAlsaPlayer, trim_pcm_edges  # noqa: E402
@@ -1357,6 +1357,10 @@ def run_voice_cycle(
         return _run_voice_cycle(config, conversation_id, display, audio_file=audio_file, text=text)
     except (Exception, KeyboardInterrupt):
         _set_display_state(display, DisplayState.ERROR)
+        try:
+            close_tts_provider()
+        except Exception:
+            logger.warning("Piper cleanup after voice failure failed")
         raise
 
 
@@ -1488,8 +1492,21 @@ def main(argv=None) -> int:
         print("Press Enter to record, or type q and press Enter to quit.")
     conversation_id = None
     display = get_companion_display()
+    tts_provider = None
     try:
         _set_display_state(display, DisplayState.READY)
+        try:
+            tts_provider = get_tts_provider()
+            print("Warming configured speech provider...")
+            tts_provider.warm()
+        except KeyboardInterrupt:
+            _set_display_state(display, DisplayState.ERROR)
+            print("TTS warm-up cancelled.", file=sys.stderr)
+            return 130
+        except Exception as exc:
+            _set_display_state(display, DisplayState.ERROR)
+            print(f"TTS warm-up failed: {exc}", file=sys.stderr)
+            return 1
         while True:
             injection = {}
             if single_input:
@@ -1516,20 +1533,29 @@ def main(argv=None) -> int:
                 conversation_id = run_voice_cycle(config, conversation_id, display=display, **injection)
             except VoiceLoopError as exc:
                 print(f"Voice cycle error: {exc}", file=sys.stderr)
+                tts_provider.close()
                 exit_code = 1
             except KeyboardInterrupt:
                 print("\nVoice cycle cancelled.", file=sys.stderr)
+                tts_provider.close()
                 exit_code = 130
             except Exception as exc:
                 print(f"Voice cycle error: unexpected failure ({exc}).", file=sys.stderr)
+                tts_provider.close()
                 exit_code = 1
             if single_input:
                 return exit_code
     finally:
         try:
-            display.close()
+            if tts_provider is not None:
+                tts_provider.close()
         except Exception:
-            logger.warning("Companion display cleanup failed")
+            logger.warning("Speech provider cleanup failed")
+        finally:
+            try:
+                display.close()
+            except Exception:
+                logger.warning("Companion display cleanup failed")
 
 
 if __name__ == "__main__":

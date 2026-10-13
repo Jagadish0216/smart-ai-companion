@@ -1207,18 +1207,13 @@ class CancellableProcessTests(SimpleTestCase):
         popen.return_value.terminate.assert_called_once()
         popen.return_value.communicate.assert_called_once_with(timeout=2)
 
-    @patch("assistant.voice.tts.os.path.exists", return_value=True)
-    @patch("assistant.voice.tts.run_cancellable")
-    def test_piper_cancellation_uses_same_provider_and_error_contract(self, run, exists):
+    def test_piper_cancellation_uses_same_provider_and_error_contract(self):
         provider = PiperProvider("piper", "voice.onnx")
+        self.addCleanup(provider.close)
         stopped = Event()
-        run.return_value = subprocess.CompletedProcess([], 0, b"wav", b"")
-        self.assertEqual(provider.synthesize_cancellable("A sentence.", stopped), b"wav")
-        run.assert_called_once_with(["piper", "-m", "voice.onnx", "-f", "-"],
-                                    input=b"A sentence.", timeout=30, cancel_event=stopped)
-        run.side_effect = AudioCancelledError()
-        with self.assertRaisesRegex(TTSError, "cancelled"):
-            provider.synthesize_cancellable("A sentence.", stopped)
+        with patch.object(provider, "_ensure_ready"), patch.object(provider, "_exchange", side_effect=TTSError("TTS synthesis cancelled.")):
+            with self.assertRaisesRegex(TTSError, "cancelled"):
+                provider.synthesize_cancellable("A sentence.", stopped)
 
 
 @override_settings(AI_ENGINE="mock", RAG_ENABLED=False, ONLINE_RETRIEVAL_ENABLED=False,

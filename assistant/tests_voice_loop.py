@@ -12,6 +12,9 @@ from django.test import SimpleTestCase, override_settings
 from assistant.policy import AssistantResponsePolicy, ResponseMode
 from assistant.tests_voice_stream import FIRST_SENTENCE, SECOND_SENTENCE, THIRD_SENTENCE, stream_events
 from scripts import make_voice_test_audio, voice_loop
+from assistant.voice.tts import PiperProvider, TTSError
+from assistant.tests_piper_support import fake_piper_worker
+import multiprocessing
 from scripts.voice_loop import (
     VoiceLoopConfig,
     VoiceLoopError,
@@ -958,6 +961,70 @@ class VoiceInputInjectionTests(SimpleTestCase):
             VoiceLoopConfig("").validate()
         with self.assertRaises(VoiceLoopError):
             VoiceLoopConfig("", audio_backend="alsa", alsa_playback_device="").validate(require_capture=False)
+
+    def test_main_warms_once_before_inputs_and_excludes_warmup_from_cycle_timings(self):
+        clock = [0.0]
+        provider = self.mocks["get_tts_provider"].return_value
+        provider.warm.side_effect = lambda: clock.__setitem__(0, 7.0)
+        queries = iter(("What is an ESP32?", "Tell me about it.", "q"))
+        def input_text(prompt):
+            provider.warm.assert_called_once()
+            self.assertEqual(clock[0], 7.0)
+            return next(queries)
+        with patch("builtins.input", side_effect=input_text), patch("scripts.voice_loop.time.perf_counter", side_effect=lambda: clock[0]):
+            self.assertEqual(voice_loop.main(["--text-mode"]), 0)
+        summaries = [args[0] for args, _ in self.mocks["builtins.print"].call_args_list
+                     if args and str(args[0]).startswith("Timing:")]
+        self.assertEqual(len(summaries), 2)
+        self.assertTrue(all("total=0.000s" in summary and "first_audio_ready=0.000s" in summary for summary in summaries))
+        provider.close.assert_called_once()
+
+    def test_help_does_not_initialize_or_warm_speech_provider(self):
+        with self.assertRaises(SystemExit) as exit:
+            voice_loop.main(["--help"])
+        self.assertEqual(exit.exception.code, 0)
+        self.mocks["get_tts_provider"].assert_not_called()
+
+    def test_warm_failure_prevents_interaction_and_still_closes_display_and_provider(self):
+        provider = self.mocks["get_tts_provider"].return_value
+        provider.warm.side_effect = TTSError("Unable to load configured voice")
+        with patch("builtins.input") as inputs, patch("sys.stderr", new_callable=io.StringIO) as error:
+            self.assertEqual(voice_loop.main(["--text-mode"]), 1)
+        inputs.assert_not_called()
+        self.mocks["builtins.print"].assert_any_call("TTS warm-up failed: Unable to load configured voice", file=error)
+        provider.close.assert_called_once()
+        self.display.close.assert_called_once()
+        self.assertEqual(self.states[-1], "ERROR")
+
+    def test_main_reaps_real_synthetic_worker_on_normal_and_exceptional_exit(self):
+        for failed in (False, True):
+            with self.subTest(failed=failed):
+                provider = PiperProvider("legacy", "fake-voice", timeout=5)
+                self.addCleanup(provider.close)
+                self.mocks["get_tts_provider"].return_value = provider
+                service = self.mocks["AssistantService.process_message_stream"]
+                service.side_effect = None
+                service.return_value = ([{"type": "error", "detail": "AI failed"}] if failed
+                                        else stream_events("It is a microcontroller.", conversation_id=42))
+                pid = []
+                real_warm = provider.warm
+                def warm():
+                    real_warm()
+                    pid.append(provider._worker.pid)
+                with patch("assistant.voice.tts.worker_main", fake_piper_worker), patch(
+                    "assistant.voice.tts.os.path.exists", return_value=True), patch.object(provider, "warm", side_effect=warm), patch(
+                    "sys.stderr", new_callable=io.StringIO):
+                    self.assertEqual(voice_loop.main(["--text", "What is an ESP32?"]), 1 if failed else 0)
+                self.assertIsNone(provider._worker)
+                self.assertNotIn(pid[0], [child.pid for child in multiprocessing.active_children()])
+                self.assert_reaped()
+
+    def test_speech_cleanup_failure_does_not_prevent_display_cleanup(self):
+        provider = self.mocks["get_tts_provider"].return_value
+        provider.close.side_effect = RuntimeError("cleanup failed")
+        with patch("builtins.input", return_value="q"), self.assertLogs("scripts.voice_loop", level="WARNING"):
+            self.assertEqual(voice_loop.main(["--text-mode"]), 0)
+        self.display.close.assert_called_once()
 
 
 class VoiceTestAudioFixtureTests(SimpleTestCase):
