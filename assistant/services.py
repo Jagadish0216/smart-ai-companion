@@ -35,6 +35,7 @@ from .devices.intents import map_device_command
 from .devices.types import DeviceAction, DeviceCommand, SensorReading
 from .online.base import OnlineRetrievalError, OnlineRetrievalResult
 from .online.factory import get_online_retriever
+from knowledge_base.online_sync import persist_used_online_results
 from .online.grounding import build_online_grounding_instruction
 from .execution_policy import AIExecutionPlan, get_ai_execution_plan, select_voice_budget
 from .policy import (
@@ -372,6 +373,10 @@ def _prepare_message(
             )
             if not online_results:
                 raise OnlineRetrievalError("The online provider returned no useful results.")
+            try:
+                persist_used_online_results(query, online_results)
+            except Exception:
+                logger.warning("Automatic online knowledge persistence unavailable")
         except OnlineRetrievalError as exc:
             online_latency_ms = round((time.perf_counter() - retrieval_started) * 1000)
             logger.warning("Online retrieval failed: %s", exc.__class__.__name__)

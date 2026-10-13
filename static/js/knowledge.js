@@ -5,6 +5,7 @@
     const canManage = zone.dataset.canManage === 'true';
     const picker = document.getElementById('knowledge-file-picker');
     const uploadButton = document.getElementById('btn-upload-doc');
+    const syncButton = document.getElementById('knowledge-sync-stale');
     const rows = document.getElementById('knowledge-documents');
     const status = document.getElementById('knowledge-operation-status');
     const progress = document.getElementById('knowledge-upload-progress');
@@ -27,6 +28,7 @@
         busy = value;
         status.textContent = message || '';
         if (uploadButton) uploadButton.disabled = value;
+        if (syncButton) syncButton.disabled = value;
         rows.querySelectorAll('button').forEach(button => { button.disabled = value; });
     }
 
@@ -52,31 +54,52 @@
         if (!data.documents.length) {
             const row = document.createElement('tr');
             const empty = cell(row, 'No documents yet. Upload a document to build local knowledge.');
-            empty.colSpan = 7;
+            empty.colSpan = 8;
             empty.className = 'empty-state';
             rows.appendChild(row);
         }
         data.documents.forEach(doc => {
             const row = document.createElement('tr');
-            cell(row, doc.filename);
+            const online = doc.source_type === 'ONLINE';
+            const source = cell(row, online ? (doc.source_title || doc.filename) : doc.filename);
+            if (online && doc.source_url) {
+                const url = document.createElement('div');
+                url.className = 'text-sm text-muted';
+                url.textContent = doc.source_url;
+                source.appendChild(url);
+            }
+            const origin = cell(row, doc.source_type);
+            if (online) {
+                const provider = document.createElement('div');
+                provider.textContent = doc.provider;
+                origin.appendChild(provider);
+                const fresh = document.createElement('span');
+                fresh.className = 'badge ' + (doc.freshness === 'FRESH' ? 'badge-success' : 'badge-warning');
+                fresh.textContent = doc.freshness;
+                origin.appendChild(fresh);
+                const expiry = document.createElement('div');
+                expiry.className = 'text-sm text-muted';
+                expiry.textContent = 'Expires: ' + timestamp(doc.expires_at);
+                origin.appendChild(expiry);
+            }
             cell(row, doc.file_type + (doc.file_size === null ? '' : ' · ' + (doc.file_size / 1024).toFixed(1) + ' KB'));
             const state = cell(row, '');
             const badge = document.createElement('span');
             badge.className = 'badge ' + (doc.status === 'INDEXED' ? 'badge-success' : doc.status === 'ERROR' ? 'badge-error' : 'badge-warning');
             badge.textContent = doc.status;
             state.appendChild(badge);
-            if (doc.error_message) {
+            if (doc.error_message || doc.sync_error_message) {
                 const error = document.createElement('div');
                 error.className = 'text-sm text-muted';
-                error.textContent = doc.error_message;
+                error.textContent = doc.sync_error_message || doc.error_message;
                 state.appendChild(error);
             }
             cell(row, doc.chunk_count);
-            cell(row, timestamp(doc.uploaded_at));
-            cell(row, timestamp(doc.indexed_at));
+            cell(row, timestamp(online ? doc.retrieved_at : doc.uploaded_at));
+            cell(row, timestamp(online ? doc.last_synced_at : doc.indexed_at));
             const actions = cell(row, canManage ? '' : 'Administrator only');
             if (canManage) {
-                ['Reindex', 'Delete'].forEach(label => {
+                [online ? 'Sync' : 'Reindex', 'Delete'].forEach(label => {
                     const button = document.createElement('button');
                     button.className = 'btn btn-sm';
                     button.textContent = label;
@@ -92,17 +115,21 @@
     async function performAction(doc, action) {
         if (busy) return;
         if (action === 'Delete' && !window.confirm('Delete "' + doc.filename + '" and its indexed text?')) return;
-        setBusy(true, action === 'Delete' ? 'Deleting document…' : 'Extracting and reindexing…');
+        setBusy(true, action === 'Delete' ? 'Deleting document…' : action === 'Sync' ? 'Synchronizing online source…' : 'Extracting and reindexing…');
         try {
-            const response = await fetch(endpoint + doc.id + (action === 'Reindex' ? '/reindex/' : '/'), {
-                method: action === 'Reindex' ? 'POST' : 'DELETE',
+            const response = await fetch(endpoint + doc.id + (action === 'Sync' ? '/sync/' : action === 'Reindex' ? '/reindex/' : '/'), {
+                method: action === 'Delete' ? 'DELETE' : 'POST',
                 headers: { 'X-CSRFToken': csrftoken },
             });
             if (!response.ok) {
                 const data = await response.json();
                 throw new Error(data.error || (data.document && data.document.error_message) || 'The operation failed. Please sign in and try again.');
             }
-            toast(action === 'Delete' ? 'Document deleted.' : 'Document reindexed.', 'success');
+            if (action === 'Sync') {
+                const data = await response.json();
+                const summary = data.sync.disabled ? 'Synchronization is disabled.' : data.sync.failed ? 'Sync incomplete; last known content retained. See source status.' : 'Source synchronized.';
+                toast(summary, data.sync.failed ? 'error' : 'success');
+            } else toast(action === 'Delete' ? 'Document deleted.' : 'Document reindexed.', 'success');
         } catch (error) {
             toast(error.message, 'error');
         } finally {
@@ -163,6 +190,18 @@
     }
 
     if (canManage) {
+        syncButton.addEventListener('click', async () => {
+            if (busy) return;
+            setBusy(true, 'Synchronizing stale online knowledge…');
+            try {
+                const response = await fetch('/api/knowledge/sync-stale/', { method: 'POST', headers: { 'X-CSRFToken': csrftoken } });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || 'Synchronization failed.');
+                const result = data.sync;
+                toast(result.disabled ? 'Synchronization is disabled.' : 'Sync: ' + result.queries + ' queries, ' + result.created + ' created, ' + result.updated + ' updated, ' + result.unchanged + ' unchanged, ' + result.failed + ' failed.', result.failed ? 'error' : 'success');
+            } catch (error) { toast(error.message, 'error'); }
+            finally { setBusy(false); await refresh().catch(error => { status.textContent = error.message; }); }
+        });
         uploadButton.addEventListener('click', () => picker.click());
         picker.addEventListener('change', () => uploadFiles(Array.from(picker.files)));
         zone.addEventListener('dragover', event => {

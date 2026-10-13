@@ -5,7 +5,7 @@
 {% block content %}
 <div class="page-header">
     <div class="page-header-title">Knowledge Base</div>
-    <div class="page-header-desc">Manage local text, Markdown and PDF documents for grounded answers. Retrieval uses lexical matching.</div>
+    <div class="page-header-desc">Manage uploaded documents and saved online sources. Fresh sources support offline answers; expired online sources stay visible but are excluded from retrieval.</div>
 </div>
 <div class="grid grid-3 mb-5">
     <div class="card"><div class="label mb-2">Total Documents</div><div class="metric-value" id="knowledge-total">{{ documents|length }}</div></div>
@@ -27,13 +27,14 @@
     {% if request.user.is_staff %}
     <div class="flex items-center gap-2">
         <button class="btn btn-primary btn-sm" id="btn-upload-doc">Upload Document</button>
+        <button class="btn btn-sm" id="knowledge-sync-stale">Sync Stale Online Knowledge</button>
         <input id="knowledge-file-picker" type="file" accept=".txt,.md,.markdown,.pdf" multiple hidden>
         <span class="text-sm text-muted">Choose files or drop them here · up to 10 MB each</span>
     </div>
     <progress id="knowledge-upload-progress" max="100" value="0" hidden style="width:100%;margin-top:12px"></progress>
     {% else %}
     <div class="card-title">Administrator access required</div>
-    <p class="text-sm text-muted">Sign in as an administrator to upload, reindex or delete documents.</p>
+    <p class="text-sm text-muted">Sign in as an administrator to upload, reindex, synchronize or delete sources.</p>
     <a class="btn btn-primary btn-sm" href="/admin/login/?next=/knowledge/">Sign In</a>
     {% endif %}
     <div id="knowledge-operation-status" role="status" aria-live="polite" class="text-sm text-muted mt-3"></div>
@@ -42,11 +43,17 @@
     <div class="card-header"><span class="card-title">Documents</span><button class="btn btn-sm" id="knowledge-refresh">Refresh</button></div>
     <div style="overflow-x:auto">
         <table class="data-table">
-            <thead><tr><th>Filename</th><th>Type / Size</th><th>Status</th><th>Chunks</th><th>Uploaded</th><th>Indexed</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Source / Filename</th><th>Origin / Freshness</th><th>Type / Size</th><th>Status</th><th>Chunks</th><th>Retrieved / Uploaded</th><th>Last Sync / Indexed</th><th>Actions</th></tr></thead>
             <tbody id="knowledge-documents">
             {% for doc in documents %}
-            <tr><td>{{ doc.filename }}</td><td>{{ doc.file_type }}</td><td>{{ doc.status }}</td><td>{{ doc.chunks.count }}</td><td>{{ doc.uploaded_at|date:"M d, Y H:i" }}</td><td>{{ doc.indexed_at|date:"M d, Y H:i"|default:"—" }}</td><td>Loading controls…</td></tr>
-            {% empty %}<tr><td colspan="7"><div class="empty-state">No documents yet. Upload a document to build local knowledge.</div></td></tr>{% endfor %}
+            <tr>
+                <td>{% if doc.source_type == 'ONLINE' %}{{ doc.source_title }}<div class="text-sm text-muted">{{ doc.source_url }}</div>{% else %}{{ doc.filename }}{% endif %}</td>
+                <td>{{ doc.source_type }}{% if doc.source_type == 'ONLINE' %}<div>{{ doc.provider }}</div><span class="badge {% if doc.freshness == 'FRESH' %}badge-success{% else %}badge-warning{% endif %}">{{ doc.freshness }}</span><div class="text-sm text-muted">Expires: {{ doc.expires_at|date:"M d, Y H:i"|default:"—" }}</div>{% endif %}</td>
+                <td>{{ doc.file_type }}</td><td>{{ doc.status }}{% if doc.sync_error_message %}<div class="text-sm text-muted">{{ doc.sync_error_message }}</div>{% endif %}</td><td>{{ doc.chunks.count }}</td>
+                <td>{% if doc.source_type == 'ONLINE' %}{{ doc.retrieved_at|date:"M d, Y H:i"|default:"—" }}{% else %}{{ doc.uploaded_at|date:"M d, Y H:i" }}{% endif %}</td>
+                <td>{% if doc.source_type == 'ONLINE' %}{{ doc.last_synced_at|date:"M d, Y H:i"|default:"—" }}{% else %}{{ doc.indexed_at|date:"M d, Y H:i"|default:"—" }}{% endif %}</td><td>Loading controls…</td>
+            </tr>
+            {% empty %}<tr><td colspan="8"><div class="empty-state">No documents yet. Upload a document to build local knowledge.</div></td></tr>{% endfor %}
             </tbody>
         </table>
     </div>

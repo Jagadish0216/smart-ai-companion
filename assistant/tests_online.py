@@ -421,6 +421,7 @@ class OnlineAvailabilityTests(SimpleTestCase):
     ONLINE_MAX_CONTEXT_CHARS=6000,
     SEARXNG_BASE_URL="http://127.0.0.1:8888",
     DEVICE_CONTROL_ENABLED=False,
+    ONLINE_KNOWLEDGE_AUTO_PERSIST=False,  # Legacy answer-path coverage; sync has isolated storage tests.
 )
 class OnlineServiceTests(TestCase):
     def setUp(self):
