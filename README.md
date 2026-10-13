@@ -174,6 +174,132 @@ Retrieved snippets are treated as untrusted reference data. The request-scoped i
 
 Online latency and local generation latency are separate: `online_latency_ms` measures the provider request, while `latency_ms` remains the local generation measurement. Total perceived latency is approximately their sum plus application overhead. On a Pi, network response time varies independently from Ollama CPU inference time; the provider uses one explicit timeout and no indefinite retries.
 
+### Automatic Knowledge Synchronization
+
+Useful SearXNG snippets can now become offline local knowledge. The ONLINE route
+still makes its existing single bounded search request and grounds the same local
+LLM. After bounded grounding selects its `used_results`, a best-effort local hook
+persists only those selected sources through the existing `KnowledgeIngestionService`
+and chunking pipeline. No result URL is fetched, no crawler is added, and no extra
+provider request is made during automatic persistence. An indexing/storage error
+is logged without query/snippet/secret contents and cannot fail the online answer.
+Conversation history and public assistant response metadata retain their behavior.
+
+**Knowledge synchronization updates the local retrieval database. It does not
+retrain or fine-tune the local language model.**
+
+Apply the new schema before running the updated web/voice application:
+
+```bash
+python manage.py migrate
+```
+
+Migration `knowledge_base/0004_document_online_sync.py` extends `Document` with
+`source_type` (MANUAL/ONLINE, indexed, default MANUAL), `provider` (32 characters),
+`source_url` (2048), `source_title` (255), `sync_query` (600), `retrieved_at`,
+`last_synced_at`, indexed `expires_at`, SHA-256 `content_hash` (64), and bounded
+`sync_error_message` (255). Existing upload/indexing fields are retained; migration
+defaults preserve existing manual documents. A conditional database uniqueness
+constraint prevents duplicate ONLINE rows for the same provider + canonical URL
+without restricting repeated manual uploads.
+
+Defaults in `.env.example` (the application never edits your actual `.env`):
+
+```dotenv
+ONLINE_KNOWLEDGE_SYNC_ENABLED=true
+ONLINE_KNOWLEDGE_AUTO_PERSIST=true
+ONLINE_KNOWLEDGE_TTL_HOURS=24
+ONLINE_KNOWLEDGE_SYNC_MAX_QUERIES=20
+```
+
+Actual search still requires the existing `ONLINE_RETRIEVAL_ENABLED=true` and a
+configured SearXNG instance. TTL is finite, greater than zero and at most 8760
+hours. The query-group limit is an integer 1..100; each query uses the existing
+`ONLINE_MAX_RESULTS` limit (1..20). `manage.py check` validates these settings.
+SYNC_ENABLED=false makes explicit/background synchronization a controlled no-op,
+and also stops automatic persistence. AUTO_PERSIST=false stops only answer-path
+persistence; administrator/command refreshes remain available.
+
+Identity is a SHA-256 of provider + canonical URL, represented as
+`online:searxng:<hash>`. Stored filenames are deterministic `online-<hash>.md`
+basenames inside the existing managed storage; remote titles/URLs never control
+paths. Existing retrieval sanitization is reused, with additional bounded plain
+text and public URL validation. The file contains Title, Source and Snippet fields;
+retrieval timestamps live only in metadata. Canonical content hashes exclude
+timestamps, so identical content refreshes only metadata: no file write or chunk
+replacement. Changed content stages a new file and atomically replaces chunks and
+metadata; the prior file is deleted only after commit. Failure rolls back the
+replacement, removes its staged file and preserves the last good index. A unique
+constraint and one integrity-race retry protect deduplication; an older delayed
+response cannot overwrite newer knowledge.
+
+ONLINE sources are FRESH when `expires_at > now`, otherwise STALE (also when expiry
+is missing). Expiry is retrieval time + TTL; successful sync time is stored separately
+in `last_synced_at`, rather than misusing `uploaded_at`. Both RAG availability and
+lexical retrieval allow indexed MANUAL sources plus indexed fresh ONLINE sources.
+Stale online chunks stay stored and visible but are excluded from normal RAG.
+No scheduled boolean/status flip is needed, and manual documents never expire.
+Online snippets remain untrusted reference data when used in offline grounding.
+Lexical scoring, ranking, chunk sizes, relevance thresholds and generation budgets
+are unchanged.
+
+The existing Knowledge page distinguishes MANUAL/ONLINE and displays provider,
+title/URL, retrieval time, expiry, FRESH/STALE, last successful sync and concise sync
+errors. Administrator controls include Sync for online sources and Sync Stale
+Online Knowledge. Manual Upload/Reindex/Delete remain; online Delete remains
+available, while online Reindex requests are directed to Sync. New endpoints are
+`POST /api/knowledge/documents/<id>/sync/` and `POST /api/knowledge/sync-stale/`, using
+SessionAuthentication, IsAdminUser and normal session CSRF protection. Public GET
+listing remains read-only and exposes provenance/freshness without storage paths.
+Django admin provides read-only provenance/hash/timestamp diagnostics, without
+bulk network actions.
+
+```bash
+# Default: stale online sources only, grouped by provider + normalized saved query.
+python manage.py sync_online_knowledge
+python manage.py sync_online_knowledge --all
+python manage.py sync_online_knowledge --document 12
+python manage.py sync_online_knowledge --query "current edge computing research"
+python manage.py sync_online_knowledge --dry-run
+python manage.py sync_online_knowledge --all --dry-run
+```
+
+All/document/query selectors are mutually exclusive. Dry-run lists selected groups
+or explicit query/document without network or database/storage writes. Default/all
+runs order groups by oldest last-successful-sync, expiry and document ID, then apply
+the global query-group limit. Shared case/whitespace-normalized queries make one
+provider request per group. Document sync searches its saved query and updates only
+the matching provider+URL; it never fetches that URL. Query sync refreshes returned
+sources and can add new URLs. A source no longer returned stays intact, receives a
+concise message and gets no expiry extension. Provider failures preserve file,
+chunks, retrieved timestamp and expiry; fresh sources remain usable until expiry,
+while stale sources remain excluded. There is no immediate retry loop. Command
+output reports queries/created/updated/unchanged/failed totals with clean expected
+errors rather than tracebacks.
+
+Optional Raspberry Pi scheduling uses a separate oneshot service and hourly timer,
+with `Persistent=true` and up to five minutes randomized delay. The web application
+does not depend on it. Review the existing `jagadish` user/project/venv paths in the
+new unit files if your installation differs; nothing installs or enables them
+automatically:
+
+```bash
+sudo cp deployment/systemd/smart-ai-companion-knowledge-sync.service /etc/systemd/system/
+sudo cp deployment/systemd/smart-ai-companion-knowledge-sync.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now smart-ai-companion-knowledge-sync.timer
+systemctl list-timers smart-ai-companion-knowledge-sync.timer
+journalctl -u smart-ai-companion-knowledge-sync.service -n 50 --no-pager
+# Optional disable:
+sudo systemctl disable --now smart-ai-companion-knowledge-sync.timer
+```
+
+No internet, timeout, malformed response or unavailable SearXNG leaves existing
+manual/local RAG working normally and records online sync failure separately.
+Synchronization adds no LLM inference, embeddings, vector database, cloud API,
+Celery/Redis, background web thread or dependency. Gunicorn, Ollama, voice/wake,
+Piper/playback, MQTT, TFT firmware and resource-management services are independent.
+
 ### ESP32 Companion Display USB Serial Bridge
 
 The optional physical face uses Raspberry Pi → USB/CP2102 UART → existing ESP32 companion-display firmware → TFT. `assistant/display/` supplies the firmware-state enum, no-op controller, settings-driven factory and persistent pyserial transport. This is separate from MQTT actions/sensing: it does not alter routing, models, RAG, memory, response policy or display firmware. `scripts/voice_loop.py` creates one controller in `main()`, reuses it across cycles and closes it on exit. Django imports do not open hardware; only the voice loop and explicit manual command create a controller.

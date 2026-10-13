@@ -196,6 +196,10 @@ RAG_MIN_RELEVANCE = float(os.environ.get('RAG_MIN_RELEVANCE', '0.5'))
 
 # Optional online retrieval. Generation remains on the configured local LLM.
 ONLINE_RETRIEVAL_ENABLED = os.environ.get('ONLINE_RETRIEVAL_ENABLED', 'false').lower() in ('1', 'true', 'yes', 'on')
+ONLINE_KNOWLEDGE_SYNC_ENABLED = os.environ.get('ONLINE_KNOWLEDGE_SYNC_ENABLED', 'true').lower() in ('1', 'true', 'yes', 'on')
+ONLINE_KNOWLEDGE_AUTO_PERSIST = os.environ.get('ONLINE_KNOWLEDGE_AUTO_PERSIST', 'true').lower() in ('1', 'true', 'yes', 'on')
+ONLINE_KNOWLEDGE_TTL_HOURS = os.environ.get('ONLINE_KNOWLEDGE_TTL_HOURS', '24')
+ONLINE_KNOWLEDGE_SYNC_MAX_QUERIES = os.environ.get('ONLINE_KNOWLEDGE_SYNC_MAX_QUERIES', '20')
 ONLINE_PROVIDER = os.environ.get('ONLINE_PROVIDER', 'searxng')
 ONLINE_TIMEOUT_SECONDS = float(os.environ.get('ONLINE_TIMEOUT_SECONDS', '8'))
 ONLINE_MAX_RESULTS = int(os.environ.get('ONLINE_MAX_RESULTS', '4'))
