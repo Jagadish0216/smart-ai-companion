@@ -3,6 +3,7 @@ import json
 import base64
 import subprocess
 import multiprocessing
+import signal
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event, Timer, enumerate as threads
 import time
@@ -21,7 +22,7 @@ from assistant.voice.stt import WhisperCppProvider, STTError
 from assistant.voice.tts import PiperProvider, TTSError
 from assistant.voice.factory import get_stt_provider, reset_voice_providers
 from assistant.voice.piper_worker import worker_main
-from assistant.tests_piper_support import fake_piper_worker, wav_bytes
+from assistant.tests_piper_support import fake_piper_worker, sigint_probe_piper_worker, wav_bytes
 
 class VoiceProviderTests(TestCase):
     def setUp(self):
@@ -179,6 +180,16 @@ class VoiceProviderTests(TestCase):
 
 
 class PiperWorkerProtocolTests(SimpleTestCase):
+    def setUp(self):
+        # These protocol tests run the worker in-process; do not change the
+        # test runner/parent's real Ctrl+C handler.
+        patcher = patch("assistant.voice.piper_worker.signal.signal")
+        self.worker_signal = patcher.start()
+        self.addCleanup(patcher.stop)
+        logging_patch = patch("assistant.voice.piper_worker.configure_cpu_onnx_logging")
+        self.worker_logging = logging_patch.start()
+        self.addCleanup(logging_patch.stop)
+
     def test_worker_loads_once_and_returns_complete_wav_for_multiple_requests(self):
         module = ModuleType("piper.voice")
         module.PiperVoice = MagicMock()
@@ -216,6 +227,68 @@ class PiperWorkerProtocolTests(SimpleTestCase):
         self.assertEqual(json.loads(connection.send_bytes.call_args.args[0]),
                          {"type": "error", "request_id": None, "code": "LOAD_FAILED"})
         self.assertNotIn("private", str(connection.send_bytes.call_args_list))
+
+    def test_worker_ignores_only_sigint_before_voice_load_and_exits_on_parent_eof(self):
+        module = ModuleType("piper.voice")
+        module.PiperVoice = MagicMock()
+
+        def load(*args, **kwargs):
+            self.worker_signal.assert_called_once_with(signal.SIGINT, signal.SIG_IGN)
+            self.worker_logging.assert_called_once_with()
+            return MagicMock()
+
+        module.PiperVoice.load.side_effect = load
+        connection = MagicMock()
+        connection.recv_bytes.side_effect = EOFError
+        with patch.dict("sys.modules", {"piper": ModuleType("piper"), "piper.voice": module}):
+            worker_main(connection, "voice.onnx")
+        self.worker_signal.assert_called_once_with(signal.SIGINT, signal.SIG_IGN)
+        connection.close.assert_called_once()
+        self.assertEqual(json.loads(connection.send_bytes.call_args.args[0]), {"type": "ready"})
+
+
+class PiperWorkerSignalTests(SimpleTestCase):
+    def start_worker(self):
+        context = multiprocessing.get_context("spawn")
+        parent, child = context.Pipe(duplex=True)
+        process = context.Process(target=sigint_probe_piper_worker, args=(child, "fake-voice"))
+        process.start()
+        child.close()
+
+        def cleanup():
+            parent.close()
+            process.join(timeout=2)
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+            process.close()
+
+        self.addCleanup(cleanup)
+        self.assertTrue(parent.poll(5), "Worker did not become ready")
+        self.assertEqual(json.loads(parent.recv_bytes()), {"type": "ready"})
+        return parent, process
+
+    def test_spawned_worker_ignores_real_sigint_and_preserves_shutdown_ipc(self):
+        parent_handler = signal.getsignal(signal.SIGINT)
+        parent, process = self.start_worker()
+        parent.send_bytes(json.dumps({"type": "synthesize", "request_id": 1, "text": "probe SIGINT"}).encode())
+        self.assertTrue(parent.poll(5))
+        response = json.loads(parent.recv_bytes())
+        self.assertEqual(response["type"], "result")
+        with wave.open(io.BytesIO(base64.b64decode(response["wav"]))) as wav:
+            self.assertGreater(wav.getnframes(), 0)
+        parent.send_bytes(json.dumps({"type": "shutdown"}).encode())
+        self.assertTrue(parent.poll(5))
+        self.assertEqual(json.loads(parent.recv_bytes()), {"type": "closed"})
+        process.join(timeout=5)
+        self.assertEqual(process.exitcode, 0)
+        self.assertEqual(signal.getsignal(signal.SIGINT), parent_handler)
+
+    def test_spawned_worker_exits_when_parent_connection_closes(self):
+        parent, process = self.start_worker()
+        parent.close()
+        process.join(timeout=5)
+        self.assertEqual(process.exitcode, 0)
 
 
 class PersistentPiperLifecycleTests(SimpleTestCase):

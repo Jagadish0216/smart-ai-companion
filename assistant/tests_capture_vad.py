@@ -267,6 +267,70 @@ class AdaptiveCaptureVADTests(SimpleTestCase):
         self.assertIsNone(vad.feed(0.005, 0.02))
         self.assertEqual(vad.feed(0.03, 0.02), "start")
 
+    def test_hands_free_ceiling_handles_observed_noisy_calibration(self):
+        for noise in (0.0497, 0.0638):
+            with self.subTest(noise=noise):
+                ordinary = AdaptiveCaptureVAD()
+                capped = AdaptiveCaptureVAD(max_start_threshold=0.10)
+                self.feed(noise, 25, ordinary)
+                self.feed(noise, 25, capped)
+                self.assertAlmostEqual(ordinary.start_threshold, noise * 2.5 + 0.002)
+                self.assertEqual(capped.start_threshold, 0.10)
+                self.assertEqual(capped.noise_floor, ordinary.noise_floor)
+                floor = min(noise, capped.start_threshold * 0.95)
+                self.assertAlmostEqual(capped.continue_threshold, floor + 0.25 * (0.10 - floor))
+                self.assertLess(capped.continue_threshold, capped.start_threshold)
+                self.assertEqual(self.feed(0.11, 3, capped), [None, None, "start"])
+                self.assertEqual(self.feed(0.11, 3, ordinary), [None, None, None])
+
+    def test_ceiling_preserves_lower_normal_threshold_and_frozen_floor(self):
+        vad = AdaptiveCaptureVAD(max_start_threshold=0.10)
+        self.feed(0.0304, 25, vad)
+        self.assertAlmostEqual(vad.start_threshold, 0.078)
+        baseline = (vad.noise_floor, vad.start_threshold, vad.continue_threshold)
+        self.feed(0.04, 30, vad)
+        self.assertEqual((vad.noise_floor, vad.start_threshold, vad.continue_threshold), baseline)
+
+    def test_capped_hysteresis_remains_strict_at_saturation(self):
+        for noise in (0, 0.01, 0.1, 0.5, 1):
+            for ceiling in (0.001, 0.10, 1):
+                with self.subTest(noise=noise, ceiling=ceiling):
+                    vad = AdaptiveCaptureVAD(max_start_threshold=ceiling)
+                    self.feed(noise, 25, vad)
+                    self.assertEqual(vad.start_threshold, min(max(0.02, min(1, noise * 2.5 + 0.002)), ceiling))
+                    self.assertLess(vad.continue_threshold, vad.start_threshold)
+
+    def test_ceiling_validates_bounds_and_does_not_change_nonadaptive_gate(self):
+        for ceiling in (0, -1, 1.01, float("nan"), float("inf")):
+            with self.subTest(ceiling=ceiling), self.assertRaisesRegex(ValueError, "max start threshold"):
+                AdaptiveCaptureVAD(max_start_threshold=ceiling)
+        vad = AdaptiveCaptureVAD(adaptive=False, start_threshold=0.2, max_start_threshold=0.10)
+        self.assertEqual(vad.start_threshold, 0.2)
+        self.assertIsNone(vad.feed(0.15, 0.02))
+        self.assertEqual(vad.feed(0.3, 0.02), "start")
+
+    def test_max_wait_rms_excludes_calibration_and_active_speech(self):
+        self.calibrate(0.05)
+        self.assertEqual(self.vad.max_wait_rms, 0)
+        self.feed(0.07, 2)
+        self.feed(0.13, 3)
+        self.assertAlmostEqual(self.vad.max_wait_rms, 0.13)
+        self.feed(0.9, 20)
+        self.assertAlmostEqual(self.vad.max_wait_rms, 0.13)
+
+    def test_max_wait_rms_includes_timeout_chunk_and_rejected_burst_waits(self):
+        vad = AdaptiveCaptureVAD(start_timeout_seconds=0.54)
+        self.feed(0.01, 25, vad)
+        self.feed(0.015, 1, vad)
+        self.feed(0.019, 1, vad)
+        self.assertEqual(vad.stop_reason, "start_timeout")
+        self.assertEqual(vad.max_wait_rms, 0.019)
+        self.calibrate()
+        self.feed(0.06, 3)
+        self.feed(0.005, 40)
+        self.feed(0.08, 1)
+        self.assertEqual(self.vad.max_wait_rms, 0.08)
+
 
 class AdaptiveCaptureIntegrationTests(SimpleTestCase):
     @override_settings(
@@ -333,3 +397,145 @@ class AdaptiveCaptureIntegrationTests(SimpleTestCase):
             self.assertFalse(path.exists())
         popen.return_value.terminate.assert_called_once()
         popen.return_value.communicate.assert_called_once_with(timeout=5)
+
+
+class CaptureReadyCallbackTests(SimpleTestCase):
+    def setUp(self):
+        from scripts import voice_loop
+        self.voice_loop = voice_loop
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.output_path = Path(directory.name) / "recorded.wav"
+        self.process = MagicMock()
+        self.process.communicate.return_value = (b"", b"")
+        self.vads = []
+
+        def create_vad(**kwargs):
+            vad = AdaptiveCaptureVAD(**kwargs)
+            self.vads.append(vad)
+            return vad
+
+        self.mocks = {}
+        for name, kwargs in (
+            ("subprocess.Popen", {"return_value": self.process}), ("Timer", {}),
+            ("time.sleep", {}), ("AdaptiveCaptureVAD", {"side_effect": create_vad}),
+        ):
+            patcher = patch("scripts.voice_loop." + name, **kwargs)
+            self.mocks[name] = patcher.start()
+            self.addCleanup(patcher.stop)
+        print_patch = patch("builtins.print")
+        self.printed = print_patch.start()
+        self.addCleanup(print_patch.stop)
+
+    def pcm(self, rms):
+        return struct.pack("<ii", int(rms * 2147483648), 0) * 960
+
+    def record(self, **kwargs):
+        record_audio_with_capture_vad(self.output_path, "hw:test", 1, 0.02, 0.04, 10, 2, backend="alsa", **kwargs)
+
+    def test_ready_once_after_adaptive_thresholds_are_frozen(self):
+        self.process.stdout.read.side_effect = [self.pcm(0.0638)] * 25 + [self.pcm(0.11)] * 20 + [self.pcm(0.001)] * 2
+
+        def ready():
+            self.assertEqual(self.process.stdout.read.call_count, 25)
+            vad = self.vads[0]
+            self.assertTrue(vad.calibrated)
+            self.assertFalse(vad.speech_started)
+            self.assertAlmostEqual(vad.noise_floor, 0.0638, places=6)
+            self.assertEqual(vad.start_threshold, 0.10)
+            self.assertLess(vad.continue_threshold, vad.start_threshold)
+            self.assertEqual(self.printed.call_args.args, ("Speak now...",))
+
+        callback = MagicMock(side_effect=ready)
+        self.record(on_capture_ready=callback, max_start_threshold=0.10)
+        callback.assert_called_once_with()
+        self.process.terminate.assert_called_once()
+        self.process.communicate.assert_called_once_with(timeout=5)
+        diagnostic = next(c.args[0] for c in self.printed.call_args_list if c.args[0].startswith("Capture VAD:"))
+        self.assertIn("max_wait_rms=0.1100", diagnostic)
+
+    def test_nonadaptive_ready_after_warmup_before_first_speech_chunk(self):
+        self.process.stdout.read.side_effect = [self.pcm(0.06), self.pcm(0), self.pcm(0)]
+
+        def ready():
+            self.mocks["time.sleep"].assert_called_once_with(1)
+            self.process.stdout.read.assert_not_called()
+            self.assertEqual(self.printed.call_args.args, ("Speak now...",))
+
+        callback = MagicMock(side_effect=ready)
+        self.record(adaptive=False, on_capture_ready=callback)
+        callback.assert_called_once_with()
+
+    def test_rejected_burst_does_not_fire_ready_callback_again(self):
+        self.process.stdout.read.side_effect = ([self.pcm(0.01)] * 25 + [self.pcm(0.06)] * 3
+                                               + [self.pcm(0)] * 2 + [self.pcm(0.06)] * 20 + [self.pcm(0)] * 2)
+        callback = MagicMock()
+        self.record(on_capture_ready=callback)
+        callback.assert_called_once_with()
+        self.assertTrue(self.vads[-1].accepted)
+
+    def test_omitted_callback_preserves_identical_audio_and_thresholds(self):
+        chunks = [self.pcm(0.01)] * 25 + [self.pcm(0.06)] * 20 + [self.pcm(0)] * 2
+        self.process.stdout.read.side_effect = chunks
+        self.record()
+        original_audio = self.output_path.read_bytes()
+        original_thresholds = (self.vads[-1].start_threshold, self.vads[-1].continue_threshold)
+        self.process.stdout.read.side_effect = chunks
+        self.record(on_capture_ready=MagicMock())
+        self.assertEqual(self.output_path.read_bytes(), original_audio)
+        self.assertEqual((self.vads[-1].start_threshold, self.vads[-1].continue_threshold), original_thresholds)
+
+    def test_callback_failure_and_interrupt_reap_capture_and_cancel_watchdog(self):
+        for adaptive in (True, False):
+            for error in (RuntimeError("ready failed"), KeyboardInterrupt()):
+                with self.subTest(adaptive=adaptive, error=error):
+                    self.process.reset_mock()
+                    self.process.stdout.read.side_effect = [self.pcm(0.01)] * 25
+                    self.mocks["Timer"].reset_mock()
+                    callback = MagicMock(side_effect=error)
+                    expected = KeyboardInterrupt if isinstance(error, KeyboardInterrupt) else VoiceLoopError
+                    with self.assertRaises(expected):
+                        self.record(adaptive=adaptive, on_capture_ready=callback)
+                    callback.assert_called_once()
+                    self.process.terminate.assert_called_once()
+                    self.process.communicate.assert_called_once_with(timeout=5)
+                    self.mocks["Timer"].return_value.cancel.assert_called_once()
+                    self.assertFalse(self.output_path.exists())
+
+    def test_calibration_timeout_does_not_signal_ready(self):
+        self.process.stdout.read.side_effect = [self.pcm(0.01)] * 25
+        callback = MagicMock()
+        with self.assertRaisesRegex(VoiceLoopError, "start timeout"):
+            record_audio_with_capture_vad(self.output_path, "hw:test", 0, 0.02, 0.8, 10, 0.5,
+                                          backend="alsa", on_capture_ready=callback)
+        callback.assert_not_called()
+        self.process.terminate.assert_called_once()
+
+    def test_real_interactive_voice_cycle_preserves_accepted_vad_timing(self):
+        display = MagicMock()
+        states = ["READY"]
+        display.set_state.side_effect = lambda state: states.append(state.value)
+        chunks = iter([self.pcm(0.01)] * 25 + [self.pcm(0.06)] * 20 + [self.pcm(0)] * 2)
+
+        def warmup(seconds):
+            self.assertEqual(states, ["READY", "LISTENING"])
+            self.process.stdout.read.assert_not_called()
+
+        def read(size):
+            self.assertEqual(states[-1], "LISTENING")
+            return next(chunks)
+
+        self.mocks["time.sleep"].side_effect = warmup
+        self.process.stdout.read.side_effect = read
+        config = VoiceLoopConfig("", audio_backend="alsa", capture_vad_enabled=True, capture_vad_silence_seconds=0.04)
+        with patch("scripts.voice_loop.normalize_audio"), patch("scripts.voice_loop.get_stt_provider") as stt, patch(
+            "scripts.voice_loop.get_tts_provider"
+        ), patch("scripts.voice_loop.AssistantService.process_message_stream", return_value=[{"type": "error", "detail": "unavailable"}]), patch(
+            "scripts.voice_loop.close_tts_provider"
+        ):
+            stt.return_value.transcribe.return_value = "What is an ESP32?"
+            with self.assertRaisesRegex(VoiceLoopError, "unavailable"):
+                self.voice_loop.run_voice_cycle(config, display=display)
+        self.assertEqual(states, ["READY", "LISTENING", "THINKING", "ERROR"])
+        self.assertAlmostEqual(self.vads[-1].start_threshold, 0.027, places=6)
+        self.process.terminate.assert_called_once()

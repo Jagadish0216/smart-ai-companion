@@ -6,3 +6,13 @@ gunicorn==26.2.0
 paho-mqtt==2.1.0
 pypdf==6.19.0
 pyserial==3.5
+# PyPI 0.6.0 requires tflite-runtime on Linux; its wheels stop at Python 3.11.
+# Linux Python >=3.12 uses ONNX prerequisites below, then explicit --no-deps
+# installation of the same pinned openwakeword release (see README).
+openwakeword==0.6.0 ; platform_system != "Linux" or python_version < "3.12"
+numpy==2.2.6 ; platform_system == "Linux" and python_version >= "3.12"
+onnxruntime==1.23.2 ; platform_system == "Linux" and python_version >= "3.12"
+scipy==1.16.3 ; platform_system == "Linux" and python_version >= "3.12"
+scikit-learn==1.7.2 ; platform_system == "Linux" and python_version >= "3.12"
+requests==2.32.5 ; platform_system == "Linux" and python_version >= "3.12"
+tqdm==4.67.1 ; platform_system == "Linux" and python_version >= "3.12"
