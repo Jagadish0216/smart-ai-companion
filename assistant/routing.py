@@ -32,6 +32,7 @@ class QueryRouteDecision:
     required_capability: Capability | None = None
     rag_results: tuple[RetrievedChunk, ...] = field(default_factory=tuple)
     rag_latency_ms: int = field(default=0, compare=False)
+    retrieval_query: str | None = None
 
 
 _EXPLICIT_ONLINE_PATTERNS = (
@@ -53,6 +54,30 @@ _ONLINE_SUBJECT_PATTERN = re.compile(
     r"president|prime minister|governor|mayor|releases?|versions?|availability)\b"
 )
 
+_RAG_WRAPPERS = re.compile(
+    r"^(?:(?:please )?(?:(?:can|could|would) you )?)?(?:"
+    r"what (?:does|do) (?:my|our|the) (?:local )?knowledge base (?:say|contain) (?:about|on)|"
+    r"according to (?:my|our|the) (?:local )?(?:notes|documents|files|knowledge base)[,:]?|"
+    r"(?:search|check|consult) (?:my|our|the) (?:local )?(?:documents|files|notes|knowledge base) for|"
+    r"look in (?:my|our|the) (?:local )?(?:files|documents|notes|knowledge base) for|"
+    r"in (?:our|my|this|the) project[,:]?"
+    r")\s*", re.IGNORECASE,
+)
+
+
+def normalize_rag_query(query: str) -> str:
+    """Strip only recognized local-request wrappers; retain topical wording/scoring."""
+    candidate = " ".join(query.split())
+    match = _RAG_WRAPPERS.match(candidate)
+    if not match:
+        return query  # Implicit text-chat retrieval stays byte-for-byte unchanged.
+    candidate = candidate[match.end():].strip()
+    candidate = re.sub(
+        r"^(?:what|how|which|where|why|when)\s+(?:(?:is|are|was|were|does|do|did)\s+)?(?:(?:we|i|you)\s+)?",
+        "", candidate, flags=re.IGNORECASE,
+    )
+    return candidate.rstrip(" .?!")
+
 
 class QueryRouter:
     """Route one query without LLM classification or mutable global state."""
@@ -67,6 +92,7 @@ class QueryRouter:
         registry: CapabilityRegistry,
         response_mode: ResponseMode | None = None,
         required_capability: Capability | None = None,
+        allow_implicit_rag: bool = True,
     ) -> QueryRouteDecision:
         if response_mode is None:
             response_mode, required_capability = AssistantResponsePolicy.classify(query)
@@ -87,12 +113,14 @@ class QueryRouter:
                 )
 
             rag_results = ()
+            retrieval_query = None
             if (
                 required_capability == Capability.LOCAL_RAG
                 and registry.is_available(Capability.LOCAL_RAG)
             ):
                 rag_started = time.perf_counter()
-                rag_results = self._retrieve(query)
+                retrieval_query = normalize_rag_query(query)
+                rag_results = self._retrieve(retrieval_query)
                 rag_latency_ms = round((time.perf_counter() - rag_started) * 1000)
             else:
                 rag_latency_ms = 0
@@ -102,6 +130,7 @@ class QueryRouter:
                 required_capability,
                 rag_results,
                 rag_latency_ms,
+                retrieval_query,
             )
 
         if self.requires_online(query):
@@ -112,9 +141,11 @@ class QueryRouter:
             )
 
         rag_latency_ms = 0
-        if registry.is_available(Capability.LOCAL_RAG):
+        retrieval_query = None
+        if allow_implicit_rag and registry.is_available(Capability.LOCAL_RAG):
             rag_started = time.perf_counter()
-            rag_results = self._retrieve(query)
+            retrieval_query = normalize_rag_query(query)
+            rag_results = self._retrieve(retrieval_query)
             rag_latency_ms = round((time.perf_counter() - rag_started) * 1000)
             if rag_results:
                 return QueryRouteDecision(
@@ -123,6 +154,7 @@ class QueryRouter:
                     Capability.LOCAL_RAG,
                     rag_results,
                     rag_latency_ms,
+                    retrieval_query,
                 )
 
         return QueryRouteDecision(
@@ -131,6 +163,7 @@ class QueryRouter:
             required_capability,
             (),
             rag_latency_ms,
+            retrieval_query,
         )
 
     @staticmethod

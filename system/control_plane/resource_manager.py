@@ -220,16 +220,13 @@ def _classify_cpu(snapshot: dict[str, Any], limits: dict[str, float]) -> dict[st
         if isinstance(load, (int, float)) and isinstance(count, int) and count > 0
         else None
     )
+    # A short utilization sample includes intentional inference work. Only
+    # normalized five-minute load establishes sustained scheduling pressure.
     constrained = (
-        isinstance(percent, (int, float))
-        and percent >= limits["cpu_constrained_percent"]
-    ) or (
         normalized_load is not None
         and normalized_load >= limits["load_constrained_per_cpu"]
     )
     caution = (
-        isinstance(percent, (int, float)) and percent >= limits["cpu_caution_percent"]
-    ) or (
         normalized_load is not None
         and normalized_load >= limits["load_caution_per_cpu"]
     )
@@ -237,8 +234,12 @@ def _classify_cpu(snapshot: dict[str, Any], limits: dict[str, float]) -> dict[st
         return _component("CONSTRAINED", "CPU demand is near sustained capacity.")
     if caution:
         return _component("CAUTION", "CPU demand is elevated.")
-    if percent is None and normalized_load is None:
-        return _component("UNKNOWN", "CPU utilization could not be measured.")
+    if normalized_load is None:
+        return _component("UNKNOWN", "Sustained CPU load could not be measured.")
+    if isinstance(percent, (int, float)) and percent >= limits["cpu_constrained_percent"]:
+        return _component("HEALTHY", "CPU is fully busy; sustained load is within capacity.")
+    if isinstance(percent, (int, float)) and percent >= limits["cpu_caution_percent"]:
+        return _component("HEALTHY", "CPU is busy; sustained load is within capacity.")
     return _component("HEALTHY", "CPU demand is within the preferred range.")
 
 
@@ -440,8 +441,16 @@ def evaluate_resource_policy(snapshot: dict[str, Any]) -> dict[str, Any]:
     reasons = _policy_reasons(snapshot, health)
     resource_levels = {
         health[name]["level"]
-        for name in ("cpu", "memory", "storage", "temperature", "throttling")
+        for name in ("cpu", "memory", "storage")
     }
+    # Latched history remains diagnostic CAUTION, not current scheduling
+    # pressure. Active flags are still CRITICAL; unknown safety stays unknown.
+    throttle_level = health["throttling"]["level"]
+    resource_levels.add("HEALTHY" if throttle_level == "CAUTION" else throttle_level)
+    # Warmth below the constrained threshold is diagnostic, not load shedding.
+    # Critical temperature and active throttle flags still select PROTECTIVE.
+    temperature_level = health["temperature"]["level"]
+    resource_levels.add("HEALTHY" if temperature_level == "CAUTION" else temperature_level)
     if "CRITICAL" in resource_levels:
         profile = "PROTECTIVE"
     elif resource_levels.intersection({"CAUTION", "CONSTRAINED"}):
@@ -461,11 +470,7 @@ def evaluate_resource_policy(snapshot: dict[str, Any]) -> dict[str, Any]:
         "local_ai_allowed": bool(
             local_configured and ollama_ready and profile != "PROTECTIVE"
         ),
-        "preferred_model_class": (
-            "LIGHTWEIGHT"
-            if profile in {"ECO", "PROTECTIVE"} or safety_unknown
-            else "STANDARD"
-        ),
+        "preferred_model_class": "STANDARD",  # One configured model; budgets provide load shedding.
         "generation_budget": {
             "PROTECTIVE": "MINIMAL",
             "ECO": "REDUCED",
@@ -488,7 +493,8 @@ def evaluate_resource_policy(snapshot: dict[str, Any]) -> dict[str, Any]:
     }
 
     first_pressure = next(
-        (reason["message"] for reason in reasons if reason["severity"] != "UNKNOWN"),
+        (reason["message"] for reason in reasons
+         if reason["severity"] != "UNKNOWN" and reason["code"] not in {"THROTTLING_HISTORY", "TEMPERATURE_WARM"}),
         None,
     )
     explanation = {

@@ -11,6 +11,8 @@ WorkingDirectory=/home/jagadish/apps/smart-ai-companion
 EnvironmentFile=-/home/jagadish/apps/smart-ai-companion/.env
 ExecStart=/home/jagadish/apps/smart-ai-companion/venv/bin/python /home/jagadish/apps/smart-ai-companion/manage.py warm_ai_model --timeout 90
 TimeoutStartSec=120
+Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target

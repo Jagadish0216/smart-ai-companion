@@ -21,6 +21,17 @@ _STOP_WORDS = set("""a an and are as at be been by can could did do does for fro
     had has have how i in is it its me my of on or our please said say tell that
     the their them this to us was were what when where which who why with would
     you your s call called name named use uses using""".split())
+_DEICTIC_WORDS = {"it", "that", "this", "those", "these", "them", "its"}
+_FOLLOW_UP_WORDS = _STOP_WORDS | set(
+    "about work works working doing explain describe more again further elaborate then "
+    "mean means meaning happen happens happened".split()
+)
+
+
+def is_contentless_follow_up(query: str) -> bool:
+    """Resolve deictic, topic-free questions from recent history, not old keywords."""
+    words = set(_TOKEN.findall(query.lower()))
+    return bool(words & _DEICTIC_WORDS) and not (words - _FOLLOW_UP_WORDS - _DEICTIC_WORDS)
 
 
 def tokenize(text: str) -> set[str]:
@@ -53,6 +64,8 @@ class ConversationMemoryRetriever(ABC):
 class LexicalConversationMemoryRetriever(ConversationMemoryRetriever):
     def retrieve(self, query: str, *, conversation_id: int, before_id: int,
                  recent_ids: list[int], recent_texts: list[str] | None = None) -> list[MemoryMessage]:
+        if is_contentless_follow_up(query):
+            return []
         top_k = max(0, int(settings.CONVERSATION_MEMORY_TOP_K))
         budget = max(0, int(settings.CONVERSATION_MEMORY_MAX_CHARS))
         terms = sorted(tokenize(query))[:MAX_QUERY_TERMS]

@@ -106,17 +106,62 @@ class ResourcePolicyTests(SimpleTestCase):
             "STANDARD",
         )
 
-    def test_high_cpu_alone_is_caution_not_critical(self):
+    def test_busy_inference_is_not_sustained_cpu_pressure(self):
         snapshot = healthy_snapshot()
-        snapshot["cpu"]["utilization_percent"] = 80.0
+        snapshot["cpu"]["utilization_percent"] = 100.0
+        snapshot["cpu"]["load_average"]["five_minutes"] = 1.1
 
         result = resource_manager.evaluate_resource_policy(snapshot)
 
-        self.assertEqual(result["subsystem_health"]["cpu"]["level"], "CAUTION")
-        self.assertEqual(result["overall_health"], "CAUTION")
-        self.assertEqual(result["recommended_profile"], "ECO")
+        self.assertEqual(result["subsystem_health"]["cpu"]["level"], "HEALTHY")
+        self.assertEqual(result["recommended_profile"], "BALANCED")
+        self.assertNotIn("CPU_PRESSURE", [reason["code"] for reason in result["reasons"]])
 
-    def test_memory_pressure_recommends_eco_and_lightweight(self):
+    @override_settings(RESOURCE_LOAD_CAUTION_PER_CPU=0.8, RESOURCE_LOAD_CONSTRAINED_PER_CPU=1.2)
+    def test_sustained_load_uses_configurable_normalized_thresholds(self):
+        for load, level in ((3.2, "CAUTION"), (4.8, "CONSTRAINED")):
+            with self.subTest(load=load):
+                snapshot = healthy_snapshot()
+                snapshot["cpu"]["utilization_percent"] = 10
+                snapshot["cpu"]["load_average"]["five_minutes"] = load
+                result = resource_manager.evaluate_resource_policy(snapshot)
+                self.assertEqual(result["subsystem_health"]["cpu"]["level"], level)
+                self.assertEqual(result["recommended_profile"], "ECO")
+
+    def test_missing_sustained_load_does_not_promote_one_busy_sample_to_pressure(self):
+        snapshot = healthy_snapshot()
+        snapshot["cpu"]["utilization_percent"] = 100
+        snapshot["cpu"]["load_average"]["five_minutes"] = None
+        result = resource_manager.evaluate_resource_policy(snapshot)
+        self.assertEqual(result["subsystem_health"]["cpu"]["level"], "UNKNOWN")
+        self.assertEqual(result["recommended_profile"], "BALANCED")
+
+    @override_settings(AI_ENGINE="local")
+    def test_warm_inference_is_diagnostic_but_only_real_pressure_emits_notice(self):
+        from assistant.execution_policy import build_execution_plan
+        for temperature, load, profile in ((65, 1.1, "BALANCED"), (73.8, 1.1, "BALANCED"),
+                                            (73.8, 4.0, "ECO"), (75, 1.1, "ECO"), (80, 1.1, "PROTECTIVE")):
+            with self.subTest(temperature=temperature, load=load):
+                snapshot = healthy_snapshot()
+                snapshot["cpu"]["utilization_percent"] = 100
+                snapshot["cpu"]["load_average"]["five_minutes"] = load
+                snapshot["memory"]["used_percent"] = 63
+                snapshot["thermal"]["cpu_temperature_c"] = temperature
+                report = resource_manager.evaluate_resource_policy(snapshot)
+                self.assertEqual(report["recommended_profile"], profile)
+                plan = build_execution_plan(report)
+                if profile == "BALANCED":
+                    self.assertEqual(report["subsystem_health"]["temperature"]["level"], "CAUTION")
+                    self.assertIn("TEMPERATURE_WARM", [reason["code"] for reason in report["reasons"]])
+                    self.assertIsNone(plan.status_message)
+                    self.assertEqual(plan.generation_budget, "NORMAL")
+                elif profile == "ECO":
+                    self.assertEqual(plan.status_message, "Running in reduced-resource mode.")
+                    self.assertNotEqual(plan.policy_reason, "TEMPERATURE_WARM")
+                else:
+                    self.assertFalse(plan.generation_allowed)
+
+    def test_memory_pressure_recommends_eco_budget_for_configured_model(self):
         snapshot = healthy_snapshot()
         snapshot["memory"]["used_percent"] = 80.0
 
@@ -125,7 +170,7 @@ class ResourcePolicyTests(SimpleTestCase):
         self.assertEqual(result["recommended_profile"], "ECO")
         self.assertEqual(
             result["ai_recommendation"]["preferred_model_class"],
-            "LIGHTWEIGHT",
+            "STANDARD",
         )
         self.assertEqual(result["reasons"][0]["code"], "MEMORY_PRESSURE")
 
@@ -169,6 +214,65 @@ class ResourcePolicyTests(SimpleTestCase):
 
         self.assertEqual(result["subsystem_health"]["throttling"]["level"], "CAUTION")
         self.assertEqual(result["reasons"][0]["code"], "THROTTLING_HISTORY")
+        self.assertEqual(result["overall_health"], "CAUTION")
+        self.assertEqual(result["recommended_profile"], "BALANCED")
+
+    def test_each_historical_flag_is_diagnostic_not_current_pressure(self):
+        for flag in resource_manager.HISTORICAL_THROTTLE_FLAGS:
+            with self.subTest(flag=flag):
+                snapshot = healthy_snapshot()
+                snapshot["cpu"]["utilization_percent"] = 0
+                snapshot["thermal"]["throttling"][flag] = True
+                original = deepcopy(snapshot)
+                report = resource_manager.evaluate_resource_policy(snapshot)
+                self.assertEqual(snapshot, original)
+                self.assertEqual(report["overall_health"], "CAUTION")
+                self.assertEqual(report["recommended_profile"], "PERFORMANCE")
+                self.assertEqual(report["ai_recommendation"]["preferred_model_class"], "STANDARD")
+                self.assertEqual(report["ai_recommendation"]["generation_budget"], "NORMAL")
+                self.assertEqual(report["reasons"][0]["code"], "THROTTLING_HISTORY")
+
+    def test_real_pi_snapshot_keeps_history_but_selects_balanced_standard_model(self):
+        from assistant.execution_policy import build_execution_plan
+        snapshot = healthy_snapshot()
+        snapshot["cpu"]["utilization_percent"] = 0
+        snapshot["cpu"]["load_average"]["five_minutes"] = 0.74
+        snapshot["memory"]["used_percent"] = 66.8
+        snapshot["storage"]["used_percent"] = 24.7
+        snapshot["thermal"]["cpu_temperature_c"] = 43.5
+        snapshot["thermal"]["throttling"].update(
+            raw="0x50000", under_voltage_occurred=True, throttling_occurred=True)
+        report = resource_manager.evaluate_resource_policy(snapshot)
+        self.assertEqual(report["overall_health"], "CAUTION")
+        self.assertEqual(report["recommended_profile"], "BALANCED")
+        self.assertEqual(report["subsystem_health"]["throttling"]["level"], "CAUTION")
+        self.assertEqual(report["reasons"][0]["code"], "THROTTLING_HISTORY")
+        with override_settings(OLLAMA_MODEL="llama3.2:3b"):
+            plan = build_execution_plan(report, available_models={"llama3.2:3b", "llama3.2:1b"})
+        self.assertEqual(plan.effective_model, "llama3.2:3b")
+        self.assertEqual(plan.generation_budget, "NORMAL")
+        self.assertIsNone(plan.status_message)
+
+    def test_current_pressure_still_wins_over_historical_flags(self):
+        for section, key, value, expected in (
+            ("memory", "used_percent", 80, "ECO"),
+            ("thermal", "cpu_temperature_c", 75, "ECO"),
+            ("memory", "used_percent", 95, "PROTECTIVE"),
+            ("thermal", "cpu_temperature_c", 80, "PROTECTIVE"),
+            ("storage", "used_percent", 95, "PROTECTIVE"),
+        ):
+            with self.subTest(section=section, value=value):
+                snapshot = healthy_snapshot()
+                snapshot["thermal"]["throttling"]["throttling_occurred"] = True
+                snapshot[section][key] = value
+                self.assertEqual(resource_manager.evaluate_resource_policy(snapshot)["recommended_profile"], expected)
+        for flag in resource_manager.CURRENT_THROTTLE_FLAGS:
+            with self.subTest(flag=flag):
+                snapshot = healthy_snapshot()
+                snapshot["thermal"]["throttling"].update({flag: True, "throttling_occurred": True})
+                result = resource_manager.evaluate_resource_policy(snapshot)
+                self.assertEqual(result["recommended_profile"], "PROTECTIVE")
+                self.assertFalse(result["ai_recommendation"]["local_ai_allowed"])
 
     def test_low_storage_recommends_cleanup(self):
         snapshot = healthy_snapshot()
@@ -250,7 +354,7 @@ class ResourcePolicyTests(SimpleTestCase):
         self.assertEqual(result["overall_health"], "UNKNOWN")
         self.assertEqual(
             result["ai_recommendation"]["preferred_model_class"],
-            "LIGHTWEIGHT",
+            "STANDARD",
         )
 
     def test_multiple_warnings_have_stable_priority_and_codes(self):

@@ -48,7 +48,15 @@ class WhisperCppProvider(SpeechToTextProvider):
         vad_min_speech_ms: int = 250,
         vad_min_silence_ms: int = 700,
         vad_speech_pad_ms: int = 100,
+        threads: int = 4,
     ):
+        if isinstance(threads, bool) or not (
+            isinstance(threads, int) or isinstance(threads, str) and threads.strip().isascii() and threads.strip().isdigit()
+        ):
+            raise STTError("STT_WHISPER_THREADS must be a positive integer.")
+        self.threads = int(threads)
+        if self.threads <= 0:
+            raise STTError("STT_WHISPER_THREADS must be a positive integer.")
         self.binary_path = binary_path
         self.model_path = model_path
         self.timeout = timeout
@@ -76,12 +84,13 @@ class WhisperCppProvider(SpeechToTextProvider):
         if not os.path.exists(audio_file_path):
             raise STTError(f"Audio file not found: {audio_file_path}")
 
-        # Usage: ./main -m models/ggml-base.en.bin -f audio.wav -nt
+        # Usage: ./main -m models/ggml-base.en.bin -f audio.wav -t 4 -nt
         # -nt avoids printing timestamps to stdout
         cmd = [
             self.binary_path,
             "-m", self.model_path,
             "-f", audio_file_path,
+            "-t", str(self.threads),
             "-nt"
         ]
 

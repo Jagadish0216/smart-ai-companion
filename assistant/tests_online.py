@@ -683,7 +683,7 @@ class OnlineServiceTests(TestCase):
         instruction = get_engine.return_value.generate.call_args.kwargs[
             "system_instruction"
         ]
-        self.assertIn("spoken personal-assistant response", instruction)
+        self.assertIn("Speak directly", instruction)
         self.assertIn("do not read URLs", instruction)
 
     @patch("assistant.services.get_engine")

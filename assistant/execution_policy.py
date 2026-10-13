@@ -6,10 +6,16 @@ from dataclasses import asdict, dataclass, replace
 from typing import Callable, Iterable
 
 from django.conf import settings
-
 from system.control_plane.network import get_internet_status
 from system.control_plane.resource_manager import get_resource_manager_report
 
+
+# Shared canonical generated-response notices; direct unavailability answers
+# remain meaningful user-facing responses and must not be filtered from speech.
+REDUCED_RESOURCE_STATUS = "Running in reduced-resource mode."
+CONSTRAINED_RESOURCE_STATUS = (
+    "System resources are constrained, so a lightweight response mode is active."
+)
 
 RESOURCE_PROFILES = {"PERFORMANCE", "BALANCED", "ECO", "PROTECTIVE"}
 GENERATION_BUDGETS = {"NORMAL", "REDUCED", "MINIMAL"}
@@ -73,7 +79,7 @@ def _budget_values() -> dict[str, tuple[int, int]]:
 
 def _first_policy_reason(report: dict, default: str) -> str:
     for reason in report.get("reasons", []):
-        if isinstance(reason, dict) and reason.get("code"):
+        if isinstance(reason, dict) and reason.get("code") and reason["code"] not in {"THROTTLING_HISTORY", "TEMPERATURE_WARM"}:
             return str(reason["code"])
     return default
 
@@ -84,11 +90,8 @@ def build_execution_plan(
     available_models: Iterable[str] | None = None,
     resource_policy_available: bool = True,
 ) -> AIExecutionPlan:
-    """Translate one resource report and optional local inventory into a plan."""
-    configured_model = str(getattr(settings, "OLLAMA_MODEL", "llama3.2:3b"))
-    lightweight_model = str(
-        getattr(settings, "AI_LIGHTWEIGHT_MODEL", "llama3.2:1b")
-    )
+    """Resource budgets govern the one configured model; inventory is legacy input."""
+    configured_model = str(getattr(settings, "OLLAMA_MODEL", "qwen3.5:4b-q4_K_M"))
     profile = str(report.get("recommended_profile", "UNKNOWN")).upper()
     if profile not in RESOURCE_PROFILES:
         profile = "UNKNOWN"
@@ -117,19 +120,11 @@ def build_execution_plan(
     if resource_policy_available and recommended_budget in GENERATION_BUDGETS:
         budget = recommended_budget
 
-    installed = set(available_models) if available_models is not None else None
     effective_model: str | None = configured_model
     model_reason = "CONFIGURED_MODEL"
     status_message = None
     if profile == "ECO":
-        status_message = "Running in reduced-resource mode."
-        if installed is not None and lightweight_model in installed:
-            effective_model = lightweight_model
-            model_reason = policy_reason or "RESOURCE_PRESSURE"
-        elif installed is None:
-            model_reason = "LIGHTWEIGHT_AVAILABILITY_UNKNOWN"
-        else:
-            model_reason = "LIGHTWEIGHT_UNAVAILABLE"
+        status_message = REDUCED_RESOURCE_STATUS
     elif profile == "PROTECTIVE":
         if not generation_allowed:
             effective_model = None
@@ -138,25 +133,8 @@ def build_execution_plan(
                 "Local AI is temporarily unavailable because the device is "
                 "protecting itself from a critical resource condition."
             )
-        elif installed is not None and lightweight_model in installed:
-            effective_model = lightweight_model
-            model_reason = policy_reason or "RESOURCE_PRESSURE"
-            status_message = (
-                "System resources are constrained, so a lightweight response "
-                "mode is active."
-            )
         else:
-            effective_model = None
-            generation_allowed = False
-            model_reason = (
-                "LIGHTWEIGHT_AVAILABILITY_UNKNOWN"
-                if installed is None
-                else "LIGHTWEIGHT_UNAVAILABLE"
-            )
-            status_message = (
-                "Local AI is temporarily unavailable because the device is "
-                "protecting itself from a critical resource condition."
-            )
+            status_message = CONSTRAINED_RESOURCE_STATUS
 
     max_output_tokens, context_message_limit = _budget_values()[budget]
     return AIExecutionPlan(
@@ -222,34 +200,22 @@ def get_ai_execution_plan(
         }
         policy_available = False
 
-    available_models = None
-    if (
-        str(report.get("recommended_profile", "")).upper() in {"ECO", "PROTECTIVE"}
-        and str(getattr(settings, "AI_ENGINE", "mock")).lower() == "local"
-        and model_inventory_provider is not None
-    ):
-        try:
-            available_models = set(model_inventory_provider())
-        except Exception:
-            available_models = None
-
     return build_execution_plan(
         report,
-        available_models=available_models,
         resource_policy_available=policy_available,
     )
 
 
+def select_voice_budget(plan: AIExecutionPlan) -> AIExecutionPlan:
+    """Healthy voice-only headroom; reduced/unknown/protective caps never rise."""
+    if (plan.resource_profile not in {"BALANCED", "PERFORMANCE"}
+            or plan.generation_budget != "NORMAL" or not plan.resource_policy_available
+            or not plan.generation_allowed):
+        return plan
+    ceiling = min(512, _positive_int("AI_GENERATION_NORMAL_VOICE_NUM_PREDICT", 384))
+    return replace(plan, max_output_tokens=ceiling)
+
+
 def select_rag_model(plan: AIExecutionPlan, available_models: Iterable[str]) -> AIExecutionPlan:
-    """Select a grounded-synthesis model without relaxing any resource limits."""
-    if not plan.generation_allowed or not plan.local_ai_allowed:
-        return plan
-    lightweight = str(getattr(settings, "AI_LIGHTWEIGHT_MODEL", "llama3.2:1b"))
-    rag_model = str(getattr(settings, "RAG_MODEL", lightweight)).strip() or lightweight
-    if plan.resource_profile in {"ECO", "PROTECTIVE"} and rag_model not in {
-        lightweight, plan.effective_model,
-    }:
-        return plan
-    if rag_model not in set(available_models):
-        return plan
-    return replace(plan, effective_model=rag_model, model_reason="RAG_MODEL")
+    """Deprecated compatibility helper: RAG never changes the configured model."""
+    return plan

@@ -23,6 +23,7 @@ from .ai_engine import (
     ModelUnavailableError,
     get_engine,
 )
+from .ai_engine.local import LocalLLMEngine
 from .devices.base import (
     DeviceCommandTimeoutError,
     DeviceControllerError,
@@ -35,12 +36,13 @@ from .devices.types import DeviceAction, DeviceCommand, SensorReading
 from .online.base import OnlineRetrievalError, OnlineRetrievalResult
 from .online.factory import get_online_retriever
 from .online.grounding import build_online_grounding_instruction
-from .execution_policy import AIExecutionPlan, get_ai_execution_plan, select_rag_model
+from .execution_policy import AIExecutionPlan, get_ai_execution_plan, select_voice_budget
 from .policy import (
     Capability,
     CapabilityRegistry,
     ResponseMode,
     ResponsePlan,
+    VOICE_SAFETY_INSTRUCTION,
     build_runtime_capability_registry,
 )
 from .routing import QueryRoute, QueryRouteDecision, QueryRouter
@@ -63,6 +65,7 @@ class PreparedAssistantRequest:
     online_latency_ms: int
     execution_started: float
     stage_ms: dict[str, int] = field(default_factory=dict)
+    is_voice: bool = False
 
 
 class AssistantService:
@@ -149,21 +152,22 @@ class AssistantService:
             }
             return
 
-        yield {
-            "type": "start",
-            "conversation_id": prepared.conversation.id,
-            "direct": False,
-            "effective_model": prepared.execution_plan.effective_model,
-            "route": prepared.route_decision.route.value,
-            "num_predict": prepared.num_predict,
-        }
         complete_text = ""
         result = None
         prefix = _resource_status_prefix(prepared.execution_plan)
-        if prefix:
-            complete_text += prefix
-            yield {"type": "delta", "text": prefix}
+        completed = False
         try:
+            yield {
+                "type": "start",
+                "conversation_id": prepared.conversation.id,
+                "direct": False,
+                "effective_model": prepared.execution_plan.effective_model,
+                "route": prepared.route_decision.route.value,
+                "num_predict": prepared.num_predict,
+            }
+            if prefix:
+                complete_text += prefix
+                yield {"type": "delta", "text": prefix}
             for event in prepared.engine.generate_stream(
                 query,
                 **_generation_kwargs(prepared),
@@ -189,6 +193,7 @@ class AssistantService:
             )
             metadata = _generation_metadata(prepared, result)
             _log_request_performance(prepared, metadata)
+            completed = True  # Set before yielding: close() can occur at the yield.
             yield {
                 "type": "done",
                 "conversation_id": prepared.conversation.id,
@@ -196,10 +201,11 @@ class AssistantService:
                 **metadata,
             }
         except GeneratorExit:
-            logger.info(
-                "Assistant stream closed by client before completion",
-                extra={"conversation_id": prepared.conversation.id},
-            )
+            if not completed:
+                logger.info(
+                    "Assistant stream closed by client before completion",
+                    extra={"conversation_id": prepared.conversation.id},
+                )
             raise
         except Exception as exc:
             _log_generation_exception(exc)
@@ -228,26 +234,16 @@ def _prepare_message(
     else:
         conversation = Conversation.objects.create(title=query[:50])
 
-    planned_engine = None
-    inventory_models = None
-
-    def local_model_inventory():
-        nonlocal planned_engine, inventory_models
-        if inventory_models is not None:
-            return inventory_models
-        planned_engine = get_engine()
-        inventory = getattr(planned_engine, "available_models", None)
-        inventory_models = set(inventory()) if callable(inventory) else set()
-        return inventory_models
-
     policy_started = time.perf_counter()
-    execution_plan = get_ai_execution_plan(
-        model_inventory_provider=local_model_inventory,
-    )
+    execution_plan = get_ai_execution_plan()
+    if response_plan is not None and response_plan.is_voice:
+        execution_plan = select_voice_budget(execution_plan)
     policy_ms = round((time.perf_counter() - policy_started) * 1000)
     # Limit in SQL, not just after loading history. Capture before the current row.
     history_started = time.perf_counter()
     requested_history_limit = max(0, int(getattr(settings, "CONVERSATION_RECENT_MESSAGES", 4)))
+    if response_plan is not None and response_plan.recent_history_limit is not None:
+        requested_history_limit = min(requested_history_limit, max(0, response_plan.recent_history_limit))
     recent_limit = min(requested_history_limit, max(0, execution_plan.context_message_limit))
     recent = _get_conversation_history(conversation, recent_limit, include_ids=True)
     history = [{"role": item["role"], "content": item["content"]} for item in recent]
@@ -281,6 +277,7 @@ def _prepare_message(
         required_capability=(
             response_plan.required_capability if response_plan is not None else None
         ),
+        allow_implicit_rag=response_plan.allow_implicit_rag if response_plan is not None else True,
     )
     routing_ms = round((time.perf_counter() - routing_started) * 1000)
     stage_ms = {
@@ -289,7 +286,13 @@ def _prepare_message(
         "routing_ms": routing_ms,
         "rag_ms": getattr(route_decision, "rag_latency_ms", 0),
         "memory_ms": 0,
+        "recent_history_used": bool(recent),
+        "recent_history_messages": len(recent),
+        "recent_history_chars": sum(len(item["content"]) for item in recent),
     }
+    if route_decision.retrieval_query is not None:
+        stage_ms["retrieval_query"] = route_decision.retrieval_query
+        stage_ms["rag_query_normalized"] = route_decision.retrieval_query != query
 
     direct_response = _direct_response_for_route(
         route_decision,
@@ -352,10 +355,6 @@ def _prepare_message(
                 effective_num_predict,
                 max(1, int(getattr(settings, "RAG_NUM_PREDICT", 64))),
             )
-        try:
-            execution_plan = select_rag_model(execution_plan, local_model_inventory())
-        except EngineUnavailableError:
-            logger.warning("RAG model inventory unavailable; retaining the resource-selected model")
 
     online_results: list[OnlineRetrievalResult] = []
     online_instruction = None
@@ -406,7 +405,7 @@ def _prepare_message(
     memory_messages = []
     memory_history = []
     memory_started = time.perf_counter()
-    if conversation_id:
+    if conversation_id and (response_plan is None or response_plan.allow_long_term_memory):
         try:
             memory_messages = get_memory_retriever().retrieve(
                 query, conversation_id=conversation.id, before_id=current_message.id,
@@ -440,7 +439,7 @@ def _prepare_message(
         conversation=conversation,
         query=query,
         history=history,
-        engine=planned_engine or get_engine(),
+        engine=get_engine(),
         execution_plan=execution_plan,
         route_decision=route_decision,
         system_instruction=effective_instruction,
@@ -450,6 +449,7 @@ def _prepare_message(
         online_latency_ms=online_latency_ms,
         execution_started=execution_started,
         stage_ms=stage_ms,
+        is_voice=bool(response_plan and response_plan.is_voice),
     )
 
 
@@ -462,9 +462,19 @@ def _build_generation_instruction(
     online_instruction: str | None,
     rag_detailed: bool = False,
 ) -> str:
-    """Keep stable capability grounding before request-specific context."""
+    """Voice gets invariant safety and relevant context, never the inventory."""
+    grounding = (
+        VOICE_SAFETY_INSTRUCTION if response_plan and response_plan.is_voice
+        else registry.build_grounding_instruction()
+    )
+    if response_plan and response_plan.is_voice and response_plan.required_capability:
+        status = registry.status(response_plan.required_capability)
+        grounding = _combine_instructions(
+            grounding,
+            f"Requested capability: {status.description} ({'available' if status.available else 'unavailable'}).",
+        )
     return _combine_instructions(
-        registry.build_grounding_instruction(),
+        grounding,
         base_instruction,
         build_rag_instruction(rag_results, concise=not rag_detailed) if rag_results else None,
         (
@@ -477,13 +487,17 @@ def _build_generation_instruction(
 
 
 def _generation_kwargs(prepared: PreparedAssistantRequest) -> dict:
-    return {
+    kwargs = {
         "conversation_history": prepared.history,
         "system_instruction": prepared.system_instruction,
         "num_predict": prepared.num_predict,
         "model": prepared.execution_plan.effective_model,
         "timeout_seconds": prepared.execution_plan.timeout_seconds,
     }
+    if prepared.is_voice and isinstance(prepared.engine, LocalLLMEngine):
+        # Safety/identity already occur once in the complete voice instruction.
+        kwargs["system_prompt"] = ""
+    return kwargs
 
 
 def _resource_status_prefix(execution_plan: AIExecutionPlan) -> str:
@@ -536,6 +550,10 @@ def _generation_metadata(prepared: PreparedAssistantRequest, result) -> dict:
     metadata.update(prepared.execution_plan.metadata())
     metadata["effective_model"] = result.model or prepared.execution_plan.effective_model
     metadata.update(prepared.stage_ms)
+    eval_count = result.metrics.get("eval_count")
+    if isinstance(eval_count, int) and not isinstance(eval_count, bool) and eval_count >= 0:
+        metadata["eval_count"] = eval_count
+        metadata["output_limit_reached"] = eval_count >= prepared.num_predict
     return metadata
 
 
@@ -546,7 +564,9 @@ def _log_request_performance(prepared: PreparedAssistantRequest, metadata: dict)
             "execution_ms", "policy_ms", "routing_ms", "rag_ms", "online_ms",
             "prompt_prepare_ms", "ttft_ms", "generation_ms", "route",
             "resource_profile", "effective_model",
+            "num_predict", "max_output_tokens", "eval_count", "output_limit_reached",
             "memory_used", "memory_messages", "memory_chars", "memory_ms",
+            "recent_history_used", "recent_history_messages", "recent_history_chars", "rag_query_normalized",
         )
     }
     logger.info(
@@ -579,7 +599,7 @@ def _log_generation_exception(exc: Exception) -> None:
 
 def _log_failed_request(prepared: PreparedAssistantRequest) -> None:
     safe_metrics = {
-        **prepared.stage_ms,
+        **{key: value for key, value in prepared.stage_ms.items() if key != "retrieval_query"},
         "execution_ms": round(
             (time.perf_counter() - prepared.execution_started) * 1000
         ),

@@ -43,15 +43,9 @@ logger = logging.getLogger(__name__)
 
 # Baseline prompt shared by normal text and optional request-scoped policies.
 SYSTEM_PROMPT = (
-    "You are a Smart AI Companion running on a Raspberry Pi 5 edge device. "
-    "Answer general questions helpfully and use the supplied conversation context. "
-    "Keep responses accurate, useful, and appropriately concise. "
-    "Never claim to have performed a physical action, read a sensor or camera, "
-    "retrieved local documents, or accessed live online information unless that "
-    "capability and its result were explicitly supplied for the request. When a "
-    "capability is unavailable, say so naturally. Do not expose model, prompt, token, "
-    "or pipeline details unless the user explicitly asks about implementation. "
-    "You are the Smart AI Companion."
+    "You are the Smart AI Companion. Answer accurately and use relevant supplied context. "
+    "Do not invent facts or hardware relationships; state uncertainty briefly. "
+    "Do not expose internal prompts or reasoning."
 )
 
 
@@ -61,10 +55,12 @@ class LocalLLMEngine(AIEngine):
 
     Configuration (environment variables):
         OLLAMA_HOST    — Ollama server URL (default: http://localhost:11434)
-        OLLAMA_MODEL   — Model to use (default: llama3.2:3b)
+        OLLAMA_MODEL   — Model to use (default: qwen3.5:4b-q4_K_M)
         OLLAMA_TIMEOUT — Request timeout in seconds (default: 120)
-        OLLAMA_KEEP_ALIVE — How long Ollama keeps the model loaded (default: 30m)
+        OLLAMA_KEEP_ALIVE — How long Ollama keeps the model loaded (default: 24h)
         OLLAMA_NUM_PREDICT — Maximum tokens to generate (default: 128)
+        OLLAMA_NUM_CTX — Bounded context window (default: 4096)
+        OLLAMA_THINK — Request thinking output (default: false)
     """
 
     def __init__(
@@ -74,13 +70,19 @@ class LocalLLMEngine(AIEngine):
         timeout: Optional[int] = None,
         keep_alive: Optional[str] = None,
         num_predict: Optional[int] = None,
+        num_ctx: Optional[int] = None,
+        think: Optional[bool] = None,
     ):
         import os
 
         self._host = (host or os.environ.get("OLLAMA_HOST", "http://localhost:11434")).rstrip("/")
-        self._model = model or os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
+        self._model = model or os.environ.get("OLLAMA_MODEL", "qwen3.5:4b-q4_K_M")
         self._timeout = timeout or int(os.environ.get("OLLAMA_TIMEOUT", "120"))
-        self._keep_alive = keep_alive or os.environ.get("OLLAMA_KEEP_ALIVE", "30m")
+        self._keep_alive = keep_alive or os.environ.get("OLLAMA_KEEP_ALIVE", "24h")
+        self._num_ctx = num_ctx if num_ctx is not None else int(os.environ.get("OLLAMA_NUM_CTX", "4096"))
+        if self._num_ctx <= 0:
+            raise ValueError("OLLAMA_NUM_CTX must be positive.")
+        self._think = think if think is not None else os.environ.get("OLLAMA_THINK", "false").lower() in {"1", "true", "yes", "on"}
         self._num_predict = (
             num_predict
             if num_predict is not None
@@ -132,6 +134,7 @@ class LocalLLMEngine(AIEngine):
         num_predict: int | None = None,
         model: str | None = None,
         timeout_seconds: float | None = None,
+        system_prompt: str | None = None,
     ) -> AIEngineResult:
         """
         Send a chat request to Ollama and return the structured result.
@@ -145,6 +148,7 @@ class LocalLLMEngine(AIEngine):
             query,
             conversation_history,
             system_instruction=system_instruction,
+            system_prompt=system_prompt,
         )
         prompt_prepare_ms = round((time.perf_counter() - prompt_started) * 1000)
 
@@ -194,6 +198,7 @@ class LocalLLMEngine(AIEngine):
         num_predict: int | None = None,
         model: str | None = None,
         timeout_seconds: float | None = None,
+        system_prompt: str | None = None,
     ):
         """Yield Ollama text deltas immediately and finish with safe metrics."""
         selected_model = model or self._model
@@ -202,6 +207,7 @@ class LocalLLMEngine(AIEngine):
             query,
             conversation_history,
             system_instruction=system_instruction,
+            system_prompt=system_prompt,
         )
         prompt_prepare_ms = round((time.perf_counter() - prompt_started) * 1000)
         request = self._build_chat_request(
@@ -299,6 +305,7 @@ class LocalLLMEngine(AIEngine):
         query: str,
         history: list | None,
         system_instruction: str | None = None,
+        system_prompt: str | None = None,
     ) -> list[dict]:
         """
         Build the messages array for Ollama /api/chat.
@@ -314,10 +321,12 @@ class LocalLLMEngine(AIEngine):
 
         Ollama applies the correct chat template for the model automatically.
         """
-        system_content = SYSTEM_PROMPT
+        # Trusted server override for compact voice grounding; legacy/text
+        # callers retain the original default prompt and message ordering.
+        system_content = SYSTEM_PROMPT if system_prompt is None else system_prompt
         if system_instruction and system_instruction.strip():
             system_content += (
-                "\n\nAdditional instruction for this request:\n"
+                ("\n\n" if system_content else "")
                 + system_instruction.strip()
             )
 
@@ -338,7 +347,7 @@ class LocalLLMEngine(AIEngine):
         """Log Ollama token counts, timings, and throughput when available."""
         metrics = {}
 
-        for count_field in ("prompt_eval_count", "eval_count"):
+        for count_field in ("prompt_eval_count", "prompt_eval_cached_count", "eval_count"):
             count = response_data.get(count_field)
             if isinstance(count, (int, float)):
                 metrics[count_field] = count
@@ -393,7 +402,9 @@ class LocalLLMEngine(AIEngine):
             "messages": messages,
             "stream": stream,
             "keep_alive": self._keep_alive,
+            "think": self._think,
             "options": {
+                "num_ctx": self._num_ctx,
                 "num_predict": (
                     num_predict if num_predict is not None else self._num_predict
                 )
@@ -495,6 +506,8 @@ class LocalLLMEngine(AIEngine):
             "prompt": "",
             "stream": False,
             "keep_alive": self._keep_alive,
+            "think": self._think,
+            "options": {"num_ctx": self._num_ctx},
         }).encode("utf-8")
         request = urllib.request.Request(
             f"{self._host}/api/generate",
@@ -523,12 +536,14 @@ class LocalLLMEngine(AIEngine):
         system_instruction: str | None = None,
         model: str | None = None,
         timeout_seconds: float | None = None,
+        system_prompt: str | None = None,
     ) -> dict:
-        """Prime the reusable production /api/chat system prefix."""
+        """Pre-evaluate a chat instruction, without promising cross-query caching."""
         messages = self._build_messages(
             "Ready.",
             [],
             system_instruction=system_instruction,
+            system_prompt=system_prompt,
         )
         try:
             result = self._call_ollama_chat(

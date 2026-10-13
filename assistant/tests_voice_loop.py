@@ -2,7 +2,7 @@ import io
 from pathlib import Path
 import subprocess
 import tempfile
-from threading import Event
+from threading import Event, enumerate as enumerate_threads
 from types import SimpleNamespace
 from unittest.mock import call, MagicMock, patch
 import wave
@@ -10,6 +10,11 @@ import wave
 from django.test import SimpleTestCase, override_settings
 
 from assistant.policy import AssistantResponsePolicy, ResponseMode
+from assistant.tests_voice_stream import FIRST_SENTENCE, SECOND_SENTENCE, THIRD_SENTENCE, stream_events
+from scripts import make_voice_test_audio, voice_loop
+from assistant.voice.tts import PiperProvider, TTSError
+from assistant.tests_piper_support import fake_piper_worker
+import multiprocessing
 from scripts.voice_loop import (
     VoiceLoopConfig,
     VoiceLoopError,
@@ -305,6 +310,7 @@ class VoiceLoopTests(SimpleTestCase):
                 silence_seconds=0.04,
                 max_seconds=10,
                 start_timeout_seconds=5,
+                adaptive=False,  # Legacy single-threshold/pre-roll compatibility.
             )
             with wave.open(str(output_path), "rb") as wav_file:
                 self.assertEqual(wav_file.getnframes(), 6 * 320)
@@ -338,6 +344,7 @@ class VoiceLoopTests(SimpleTestCase):
                 silence_seconds=1,
                 max_seconds=0.06,
                 start_timeout_seconds=1,
+                adaptive=False,
             )
             with wave.open(str(output_path), "rb") as wav_file:
                 self.assertEqual(wav_file.getnframes(), 3 * 320)
@@ -527,7 +534,7 @@ class VoiceLoopTests(SimpleTestCase):
         self.assertFalse(is_no_speech_transcription("Explain blank audio detection."))
         self.assertFalse(is_no_speech_transcription("Hello, can you hear me?"))
 
-    @patch("scripts.voice_loop.AssistantService.process_message")
+    @patch("scripts.voice_loop.AssistantService.process_message_stream")
     @patch("scripts.voice_loop.get_stt_provider")
     @patch("scripts.voice_loop.normalize_audio")
     @patch("scripts.voice_loop.record_audio")
@@ -550,7 +557,7 @@ class VoiceLoopTests(SimpleTestCase):
     @patch("scripts.voice_loop.normalize_audio")
     @patch("scripts.voice_loop.record_audio")
     @patch("scripts.voice_loop.record_audio_with_capture_vad")
-    @patch("scripts.voice_loop.AssistantService.process_message")
+    @patch("scripts.voice_loop.AssistantService.process_message_stream")
     @patch("scripts.voice_loop.get_tts_provider")
     @patch("scripts.voice_loop.get_stt_provider")
     def test_voice_cycle_reuses_existing_providers_and_service(
@@ -566,31 +573,12 @@ class VoiceLoopTests(SimpleTestCase):
     ):
         mock_get_stt.return_value.transcribe.return_value = "What time is it?"
         mock_get_tts.return_value.synthesize.return_value = _make_wav()
-        conversation = SimpleNamespace(id=42)
         original_response = "**It is test time.**\n- Details are `ready`."
-        mock_process_message.return_value = (
-            conversation,
-            original_response,
-            {"engine": "mock"},
-            None,
-        )
+        mock_process_message.return_value = stream_events(original_response, conversation_id=42, engine="mock")
         config = VoiceLoopConfig("bluez_input.test", 5, 0.7, 500)
         self.assertFalse(config.capture_vad_enabled)
 
-        clock_values = [
-            0.0,
-            0.0, 5.0,
-            5.0, 6.0,
-            6.0, 9.4,
-            9.4, 17.5,
-            17.5, 19.7,
-            19.7, 23.7,
-            23.9,
-        ]
-        with patch(
-            "scripts.voice_loop.time.perf_counter",
-            side_effect=clock_values,
-        ), patch("builtins.print") as mock_print:
+        with patch("builtins.print") as mock_print:
             conversation_id = run_voice_cycle(config, conversation_id=12)
 
         self.assertEqual(conversation_id, 42)
@@ -608,26 +596,27 @@ class VoiceLoopTests(SimpleTestCase):
         )
         response_plan = mock_process_message.call_args.kwargs["response_plan"]
         self.assertEqual(response_plan.mode, ResponseMode.NORMAL)
-        self.assertIn("concise but sufficient", response_plan.system_instruction)
-        self.assertIn("Do not use Markdown", response_plan.system_instruction)
-        mock_get_tts.return_value.synthesize.assert_called_once_with(
-            "It is test time. Details are ready."
-        )
-        self.assertEqual(mock_process_message.return_value[1], original_response)
-        mock_print.assert_any_call(f"Assistant: {original_response}")
-        mock_print.assert_any_call(
-            "Timing: record=5.0s normalize=1.0s stt=3.4s ai=8.1s "
-            "tts=2.2s playback=4.0s total=23.9s"
-        )
+        self.assertIn("1-2 short sentences", response_plan.system_instruction)
+        self.assertIn("no filler or headings", response_plan.system_instruction)
+        self.assertEqual(mock_get_tts.return_value.synthesize.call_args_list,
+                         [call("It is test time. Details are ready.")])
+        self.assertEqual(mock_process_message.return_value[-1]["response"], original_response)
+        mock_print.assert_any_call("Assistant: ", end="", flush=True)
+        mock_print.assert_any_call(original_response, end="", flush=True)
+        summary = next(args[0] for args, _ in mock_print.call_args_list if args and str(args[0]).startswith("Timing:"))
+        for metric in ("record", "normalize", "stt", "ai", "ai_ttft", "first_tts_chars", "first_tts_text_ready", "first_tts_unit_ready", "first_audio_ready",
+                       "ai_to_first_speech", "first_speech",
+                       "ai_total", "tts", "audio_prepare", "playback", "total"):
+            self.assertIn(metric + "=", summary)
         mock_prepend.assert_called_once_with(_make_wav(), 0.7)
-        mock_play.assert_called_once()
+        self.assertEqual(mock_play.call_count, 1)
         self.assertFalse(Path(mock_play.call_args.args[0]).exists())
 
     @patch("scripts.voice_loop.play_audio")
     @patch("scripts.voice_loop.prepend_leading_silence")
     @patch("scripts.voice_loop.normalize_audio")
     @patch("scripts.voice_loop.record_audio")
-    @patch("scripts.voice_loop.AssistantService.process_message")
+    @patch("scripts.voice_loop.AssistantService.process_message_stream")
     @patch("scripts.voice_loop.get_tts_provider")
     @patch("scripts.voice_loop.get_stt_provider")
     def test_voice_cycle_synthesizes_and_plays_all_chunks_sequentially(
@@ -642,16 +631,9 @@ class VoiceLoopTests(SimpleTestCase):
     ):
         mock_get_stt.return_value.transcribe.return_value = "Explain fully."
         original_response = (
-            "**First sentence contains useful details.** "
-            "Second sentence provides more context. "
-            "Third sentence completes the explanation."
+            "**" + FIRST_SENTENCE + "** " + SECOND_SENTENCE + " " + THIRD_SENTENCE
         )
-        mock_process_message.return_value = (
-            SimpleNamespace(id=7),
-            original_response,
-            {},
-            None,
-        )
+        mock_process_message.return_value = stream_events(original_response, conversation_id=7)
         wav_bytes = _make_wav()
         mock_get_tts.return_value.synthesize.return_value = wav_bytes
         mock_prepend.return_value = b"first chunk with silence"
@@ -668,20 +650,20 @@ class VoiceLoopTests(SimpleTestCase):
         self.assertEqual(
             mock_get_tts.return_value.synthesize.call_args_list,
             [
-                call("First sentence contains useful details."),
-                call("Second sentence provides more context."),
-                call("Third sentence completes the explanation."),
+                call(FIRST_SENTENCE),
+                call(SECOND_SENTENCE),
+                call(THIRD_SENTENCE),
             ],
         )
         self.assertEqual(mock_play.call_count, 3)
         mock_prepend.assert_called_once_with(wav_bytes, 0.7)
-        self.assertEqual(mock_process_message.return_value[1], original_response)
+        self.assertEqual(mock_process_message.return_value[-1]["response"], original_response)
 
     @patch("scripts.voice_loop.play_audio")
     @patch("scripts.voice_loop.prepend_leading_silence", return_value=b"first")
     @patch("scripts.voice_loop.normalize_audio")
     @patch("scripts.voice_loop.record_audio")
-    @patch("scripts.voice_loop.AssistantService.process_message")
+    @patch("scripts.voice_loop.AssistantService.process_message_stream")
     @patch("scripts.voice_loop.get_tts_provider")
     @patch("scripts.voice_loop.get_stt_provider")
     def test_voice_cycle_reports_later_chunk_failure(
@@ -695,12 +677,8 @@ class VoiceLoopTests(SimpleTestCase):
         mock_play,
     ):
         mock_get_stt.return_value.transcribe.return_value = "Explain fully."
-        mock_process_message.return_value = (
-            SimpleNamespace(id=7),
-            "First complete sentence. Second complete sentence.",
-            {},
-            None,
-        )
+        mock_process_message.return_value = stream_events(
+            FIRST_SENTENCE + " " + SECOND_SENTENCE, conversation_id=7)
         mock_get_tts.return_value.synthesize.side_effect = [
             _make_wav(),
             RuntimeError("Piper stopped"),
@@ -709,11 +687,13 @@ class VoiceLoopTests(SimpleTestCase):
 
         with patch("builtins.print"), self.assertRaisesRegex(
             VoiceLoopError,
-            "TTS failed on chunk 2/2",
+            "TTS failed on streaming chunk 2",
         ):
             run_voice_cycle(config)
 
-        mock_play.assert_called_once()
+        # A preparation failure can cancel the first prepared item before it
+        # launches; it must never play the failed second chunk.
+        self.assertLessEqual(mock_play.call_count, 1)
 
     @patch("scripts.voice_loop.get_stt_provider")
     @patch("scripts.voice_loop.normalize_audio")
@@ -746,7 +726,7 @@ class VoiceLoopTests(SimpleTestCase):
             ("bluez_input.test", 1.25, 0.03, 0.9, 12, 6),
         )
 
-    @patch("scripts.voice_loop.AssistantService.process_message")
+    @patch("scripts.voice_loop.AssistantService.process_message_stream")
     @patch("scripts.voice_loop.get_stt_provider")
     @patch("scripts.voice_loop.normalize_audio")
     @patch("scripts.voice_loop.record_audio")
@@ -758,12 +738,7 @@ class VoiceLoopTests(SimpleTestCase):
         mock_process_message,
     ):
         mock_get_stt.return_value.transcribe.return_value = "Hello"
-        mock_process_message.return_value = (
-            SimpleNamespace(id=1),
-            None,
-            None,
-            "AI engine unavailable.",
-        )
+        mock_process_message.return_value = [{"type": "error", "detail": "AI engine unavailable."}]
 
         with self.assertRaisesRegex(VoiceLoopError, "AI response failed"):
             run_voice_cycle(VoiceLoopConfig("bluez_input.test"))
@@ -771,3 +746,322 @@ class VoiceLoopTests(SimpleTestCase):
     def test_voice_loop_config_requires_input_source(self):
         with self.assertRaisesRegex(VoiceLoopError, "VOICE_INPUT_SOURCE"):
             VoiceLoopConfig("", 5, 0.7).validate()
+
+
+@override_settings(RAG_ENABLED=False, ONLINE_RETRIEVAL_ENABLED=False, DEVICE_CONTROL_ENABLED=False)
+class VoiceInputInjectionTests(SimpleTestCase):
+    """CLI inputs share real streaming workers/player; no hardware subprocesses."""
+
+    def setUp(self):
+        self.config = VoiceLoopConfig("", audio_backend="alsa", capture_vad_enabled=True)
+        self.children = []
+        self.mocks = {}
+        targets = (
+            "record_audio", "record_audio_alsa", "record_audio_with_capture_vad", "normalize_audio",
+            "get_stt_provider", "get_tts_provider", "get_companion_display", "prepare_alsa_playback",
+            "VoiceLoopConfig.from_settings", "AssistantService.process_message_stream",
+            "AdaptiveCaptureVAD",
+        )
+        for name in targets:
+            patcher = patch("scripts.voice_loop." + name)
+            self.mocks[name] = patcher.start()
+            self.addCleanup(patcher.stop)
+        for name in ("record_audio", "record_audio_alsa", "record_audio_with_capture_vad"):
+            self.mocks[name].side_effect = AssertionError("Injected input must not capture audio")
+        self.mocks["normalize_audio"].side_effect = lambda source, output, **kwargs: output.write_bytes(_make_wav())
+        self.mocks["get_stt_provider"].return_value.transcribe.return_value = "What is an ESP32?"
+        self.mocks["get_tts_provider"].return_value.synthesize.return_value = _make_wav()
+        self.mocks["AssistantService.process_message_stream"].side_effect = lambda query, **kwargs: stream_events(
+            "It is a microcontroller.", conversation_id=kwargs["conversation_id"] or 42)
+        self.mocks["VoiceLoopConfig.from_settings"].return_value = self.config
+        self.display = self.mocks["get_companion_display"].return_value
+        self.states = []
+        self.display.set_state.side_effect = lambda state: self.states.append(state.value)
+        self.mocks["prepare_alsa_playback"].side_effect = lambda source, output, *args, **kwargs: output.write_bytes(
+            b"\x00\x00\x00\x02" * 2 * 4800)
+
+        def launch(*args, **kwargs):
+            child = MagicMock()
+            child.poll.return_value = None
+            child.stdin.fileno.return_value = 123
+
+            def wait(**kwargs):
+                child.poll.return_value = 0
+                return 0
+
+            child.wait.side_effect = wait
+            self.children.append(child)
+            return child
+
+        for target, effect in (
+            ("assistant.voice.alsa_stream.subprocess.Popen", launch),
+            ("assistant.voice.alsa_stream.os.write", lambda fd, data: len(data)),
+        ):
+            patcher = patch(target, side_effect=effect)
+            self.mocks[target] = patcher.start()
+            self.addCleanup(patcher.stop)
+        for target in ("assistant.voice.alsa_stream.os.set_blocking", "builtins.print"):
+            patcher = patch(target)
+            self.mocks[target] = patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def assert_no_capture(self):
+        for name in ("record_audio", "record_audio_alsa", "record_audio_with_capture_vad", "AdaptiveCaptureVAD"):
+            self.mocks[name].assert_not_called()
+
+    def assert_reaped(self):
+        self.assertFalse(any(thread.name.startswith("voice-stream-audio") for thread in enumerate_threads()))
+        for child in self.children:
+            self.assertEqual(child.poll(), 0)
+            child.wait.assert_called()
+            child.stdin.close.assert_called()
+
+    def test_audio_file_cli_bypasses_capture_but_normalizes_transcribes_and_speaks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "test.wav"
+            source.write_bytes(_make_wav(sample_rate=22050))
+            with patch("builtins.input", side_effect=AssertionError("Single input must not prompt")):
+                self.assertEqual(voice_loop.main(["--audio-file", str(source)]), 0)
+            self.assertTrue(source.exists())  # User input is never removed/rewritten.
+        self.assert_no_capture()
+        normalize = self.mocks["normalize_audio"]
+        normalize.assert_called_once()
+        self.assertEqual(normalize.call_args.args[0], source)
+        self.assertEqual(normalize.call_args.kwargs, {})  # Not the microphone's ALSA left-channel filter.
+        normalized = normalize.call_args.args[1]
+        self.mocks["get_stt_provider"].return_value.transcribe.assert_called_once_with(str(normalized))
+        self.assertFalse(normalized.exists())
+        service = self.mocks["AssistantService.process_message_stream"]
+        self.assertEqual(service.call_args.args, ("What is an ESP32?",))
+        self.assertEqual(service.call_args.kwargs["response_plan"], AssistantResponsePolicy.plan_voice_response("What is an ESP32?"))
+        self.mocks["get_tts_provider"].return_value.synthesize.assert_called_once_with("It is a microcontroller.")
+        self.mocks["builtins.print"].assert_any_call(f"Input audio: {source}")
+        self.mocks["builtins.print"].assert_any_call("You: What is an ESP32?")
+        self.assertEqual(self.states, ["READY", "THINKING", "SPEAKING", "READY"])
+        self.display.close.assert_called_once()
+        self.assertEqual(len(self.children), 1)
+        self.assert_reaped()
+
+    def test_text_cli_bypasses_all_audio_input_stages_but_uses_service_and_speaker(self):
+        with patch("builtins.input", side_effect=AssertionError("Single input must not prompt")):
+            self.assertEqual(voice_loop.main(["--text", "What is an ESP32?"]), 0)
+        self.assert_no_capture()
+        self.mocks["normalize_audio"].assert_not_called()
+        self.mocks["get_stt_provider"].assert_not_called()
+        self.mocks["VoiceLoopConfig.from_settings"].assert_called_once_with(require_capture=False)
+        self.mocks["AssistantService.process_message_stream"].assert_called_once_with(
+            "What is an ESP32?", conversation_id=None,
+            response_plan=AssistantResponsePolicy.plan_voice_response("What is an ESP32?"))
+        self.mocks["get_tts_provider"].return_value.synthesize.assert_called_once_with("It is a microcontroller.")
+        self.mocks["builtins.print"].assert_any_call("Injected text: What is an ESP32?")
+        summary = next(args[0] for args, _ in self.mocks["builtins.print"].call_args_list
+                       if args and str(args[0]).startswith("Timing:"))
+        for stage in ("record=", "normalize=", "stt="):
+            self.assertNotIn(stage, summary)
+        self.assertEqual(self.states, ["READY", "THINKING", "SPEAKING", "READY"])
+        self.display.close.assert_called_once()
+        self.assertEqual(len(self.children), 1)
+        self.assert_reaped()
+
+    def test_interactive_text_preserves_query_case_and_conversation_for_follow_up(self):
+        with patch("builtins.input", side_effect=["", "Explain how Raspberry Pi works.", "Tell me about it.", "Q"]) as inputs:
+            self.assertEqual(voice_loop.main(["--text-mode"]), 0)
+        self.assertTrue(all(item == call("[text, q=quit] > ") for item in inputs.call_args_list))
+        calls = self.mocks["AssistantService.process_message_stream"].call_args_list
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0].args[0], "Explain how Raspberry Pi works.")
+        self.assertIsNone(calls[0].kwargs["conversation_id"])
+        self.assertEqual(calls[1].args[0], "Tell me about it.")
+        self.assertEqual(calls[1].kwargs["conversation_id"], 42)
+        self.assertEqual(calls[1].kwargs["response_plan"].recent_history_limit, 2)
+        self.assert_no_capture()
+        self.mocks["get_stt_provider"].assert_not_called()
+        self.display.close.assert_called_once()
+        self.assertEqual(len(self.children), 2)
+        self.assert_reaped()
+
+    def test_default_cli_still_records_with_existing_vad_and_alsa_left_channel(self):
+        self.mocks["record_audio_with_capture_vad"].side_effect = None
+        with patch("builtins.input", side_effect=["", "q"]):
+            self.assertEqual(voice_loop.main([]), 0)
+        self.mocks["VoiceLoopConfig.from_settings"].assert_called_once_with()
+        self.mocks["record_audio_with_capture_vad"].assert_called_once()
+        self.assertEqual(self.mocks["record_audio_with_capture_vad"].call_args.kwargs, {
+            "backend": "alsa", "adaptive": True, "noise_calibration_seconds": 0.5,
+            "start_confirm_ms": 60, "min_speech_ms": 300,
+        })
+        self.assertEqual(self.mocks["normalize_audio"].call_args.kwargs, {"left_channel": True})
+        self.mocks["get_stt_provider"].return_value.transcribe.assert_called_once()
+        self.assertEqual(self.states, ["READY", "LISTENING", "THINKING", "SPEAKING", "READY"])
+        self.assert_reaped()
+
+    def test_interactive_failure_keeps_previous_conversation_and_retries_next_input(self):
+        service = self.mocks["AssistantService.process_message_stream"]
+        service.side_effect = [stream_events("It is a microcontroller.", conversation_id=42),
+                               [{"type": "error", "detail": "Unavailable."}],
+                               stream_events("It runs programs.", conversation_id=42)]
+        with patch("builtins.input", side_effect=["What is an ESP32?", "Tell me more.", "Tell me about it.", "q"]), patch(
+            "sys.stderr", new_callable=io.StringIO):
+            self.assertEqual(voice_loop.main(["--text-mode"]), 0)
+        self.assertEqual([item.kwargs["conversation_id"] for item in service.call_args_list], [None, 42, 42])
+        self.assertIn("ERROR", self.states)
+        self.assertEqual(self.states[-1], "READY")
+        self.display.close.assert_called_once()
+        self.assertEqual(len(self.children), 2)
+        self.assert_reaped()
+
+    def test_single_input_interrupt_closes_display_and_reports_cancelled_exit(self):
+        self.mocks["AssistantService.process_message_stream"].side_effect = KeyboardInterrupt
+        with patch("sys.stderr", new_callable=io.StringIO):
+            self.assertEqual(voice_loop.main(["--text", "What is an ESP32?"]), 130)
+        self.assertEqual(self.states[-1], "ERROR")
+        self.display.close.assert_called_once()
+        self.assert_reaped()
+
+    def test_missing_file_fails_once_without_capture_stt_service_or_playback(self):
+        with tempfile.TemporaryDirectory() as directory, patch("sys.stderr", new_callable=io.StringIO):
+            self.assertEqual(voice_loop.main(["--audio-file", str(Path(directory) / "missing.wav")]), 1)
+        self.assert_no_capture()
+        self.mocks["get_stt_provider"].assert_not_called()
+        self.mocks["AssistantService.process_message_stream"].assert_not_called()
+        self.assertEqual(self.children, [])
+        self.assertEqual(self.states, ["READY", "ERROR"])
+        self.display.close.assert_called_once()
+
+    def test_audio_file_no_speech_does_not_invoke_ai(self):
+        self.mocks["get_stt_provider"].return_value.transcribe.return_value = "[BLANK_AUDIO]"
+        with tempfile.TemporaryDirectory() as directory, patch("sys.stderr", new_callable=io.StringIO):
+            source = Path(directory) / "silence.wav"
+            source.write_bytes(_make_wav())
+            self.assertEqual(voice_loop.main(["--audio-file", str(source)]), 1)
+        self.assert_no_capture()
+        self.mocks["normalize_audio"].assert_called_once()
+        self.mocks["AssistantService.process_message_stream"].assert_not_called()
+        self.assertEqual(self.children, [])
+        self.display.close.assert_called_once()
+
+    def test_injected_playback_failure_reaps_process_and_workers_and_closes_display(self):
+        self.mocks["assistant.voice.alsa_stream.os.write"].side_effect = BrokenPipeError("speaker disconnected")
+        with patch("sys.stderr", new_callable=io.StringIO):
+            self.assertEqual(voice_loop.main(["--text", "What is an ESP32?"]), 1)
+        self.assertEqual(len(self.children), 1)
+        self.children[0].terminate.assert_called()
+        self.assert_reaped()
+        self.assertEqual(self.states[-1], "ERROR")
+        self.display.close.assert_called_once()
+
+    def test_cli_rejects_conflicting_modes_and_blank_text_before_hardware(self):
+        for argv in (["--text", "hello", "--audio-file", "test.wav"],
+                     ["--text", "hello", "--text-mode"], ["--audio-file", "test.wav", "--text-mode"],
+                     ["--text", "   "]):
+            with self.subTest(argv=argv), patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit) as error:
+                voice_loop.main(argv)
+            self.assertEqual(error.exception.code, 2)
+        self.mocks["get_companion_display"].assert_not_called()
+        self.mocks["VoiceLoopConfig.from_settings"].assert_not_called()
+
+    def test_injection_configuration_does_not_require_microphone_but_still_requires_speaker(self):
+        VoiceLoopConfig("").validate(require_capture=False)
+        VoiceLoopConfig("", audio_backend="alsa", alsa_capture_device="").validate(require_capture=False)
+        with self.assertRaises(VoiceLoopError):
+            VoiceLoopConfig("").validate()
+        with self.assertRaises(VoiceLoopError):
+            VoiceLoopConfig("", audio_backend="alsa", alsa_playback_device="").validate(require_capture=False)
+
+    def test_main_warms_once_before_inputs_and_excludes_warmup_from_cycle_timings(self):
+        clock = [0.0]
+        provider = self.mocks["get_tts_provider"].return_value
+        provider.warm.side_effect = lambda: clock.__setitem__(0, 7.0)
+        queries = iter(("What is an ESP32?", "Tell me about it.", "q"))
+        def input_text(prompt):
+            provider.warm.assert_called_once()
+            self.assertEqual(clock[0], 7.0)
+            return next(queries)
+        with patch("builtins.input", side_effect=input_text), patch("scripts.voice_loop.time.perf_counter", side_effect=lambda: clock[0]):
+            self.assertEqual(voice_loop.main(["--text-mode"]), 0)
+        summaries = [args[0] for args, _ in self.mocks["builtins.print"].call_args_list
+                     if args and str(args[0]).startswith("Timing:")]
+        self.assertEqual(len(summaries), 2)
+        self.assertTrue(all("total=0.000s" in summary and "first_audio_ready=0.000s" in summary for summary in summaries))
+        provider.close.assert_called_once()
+
+    def test_help_does_not_initialize_or_warm_speech_provider(self):
+        with self.assertRaises(SystemExit) as exit:
+            voice_loop.main(["--help"])
+        self.assertEqual(exit.exception.code, 0)
+        self.mocks["get_tts_provider"].assert_not_called()
+
+    def test_warm_failure_prevents_interaction_and_still_closes_display_and_provider(self):
+        provider = self.mocks["get_tts_provider"].return_value
+        provider.warm.side_effect = TTSError("Unable to load configured voice")
+        with patch("builtins.input") as inputs, patch("sys.stderr", new_callable=io.StringIO) as error:
+            self.assertEqual(voice_loop.main(["--text-mode"]), 1)
+        inputs.assert_not_called()
+        self.mocks["builtins.print"].assert_any_call("TTS warm-up failed: Unable to load configured voice", file=error)
+        provider.close.assert_called_once()
+        self.display.close.assert_called_once()
+        self.assertEqual(self.states[-1], "ERROR")
+
+    def test_main_reaps_real_synthetic_worker_on_normal_and_exceptional_exit(self):
+        for failed in (False, True):
+            with self.subTest(failed=failed):
+                provider = PiperProvider("legacy", "fake-voice", timeout=5)
+                self.addCleanup(provider.close)
+                self.mocks["get_tts_provider"].return_value = provider
+                service = self.mocks["AssistantService.process_message_stream"]
+                service.side_effect = None
+                service.return_value = ([{"type": "error", "detail": "AI failed"}] if failed
+                                        else stream_events("It is a microcontroller.", conversation_id=42))
+                pid = []
+                real_warm = provider.warm
+                def warm():
+                    real_warm()
+                    pid.append(provider._worker.pid)
+                with patch("assistant.voice.tts.worker_main", fake_piper_worker), patch(
+                    "assistant.voice.tts.os.path.exists", return_value=True), patch.object(provider, "warm", side_effect=warm), patch(
+                    "sys.stderr", new_callable=io.StringIO):
+                    self.assertEqual(voice_loop.main(["--text", "What is an ESP32?"]), 1 if failed else 0)
+                self.assertIsNone(provider._worker)
+                self.assertNotIn(pid[0], [child.pid for child in multiprocessing.active_children()])
+                self.assert_reaped()
+
+    def test_speech_cleanup_failure_does_not_prevent_display_cleanup(self):
+        provider = self.mocks["get_tts_provider"].return_value
+        provider.close.side_effect = RuntimeError("cleanup failed")
+        with patch("builtins.input", return_value="q"), self.assertLogs("scripts.voice_loop", level="WARNING"):
+            self.assertEqual(voice_loop.main(["--text-mode"]), 0)
+        self.display.close.assert_called_once()
+
+
+class VoiceTestAudioFixtureTests(SimpleTestCase):
+    @override_settings(TTS_ENGINE="piper")
+    @patch("scripts.make_voice_test_audio.get_tts_provider")
+    def test_fixture_cli_writes_configured_provider_wav_without_playback(self, provider):
+        audio = _make_wav(sample_rate=22050)
+        provider.return_value.synthesize.return_value = audio
+        with tempfile.TemporaryDirectory() as directory, patch("builtins.print") as output:
+            destination = Path(directory) / "fixture.wav"
+            self.assertEqual(make_voice_test_audio.main(["--text", "What is an ESP32?", "--output", str(destination)]), 0)
+            self.assertEqual(destination.read_bytes(), audio)
+            output.assert_any_call(f"Test audio: {destination} (configured TTS: piper)")
+        provider.return_value.synthesize.assert_called_once_with("What is an ESP32?")
+
+    @patch("scripts.make_voice_test_audio.get_tts_provider")
+    def test_failed_synthesis_or_invalid_wav_does_not_replace_existing_fixture(self, provider):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "fixture.wav"
+            destination.write_bytes(_make_wav())
+            original = destination.read_bytes()
+            for result, failure in ((b"not a wav", None), (b"", RuntimeError("TTS unavailable"))):
+                with self.subTest(failure=failure), patch("sys.stderr", new_callable=io.StringIO):
+                    provider.return_value.synthesize.return_value = result
+                    provider.return_value.synthesize.side_effect = failure
+                    self.assertEqual(make_voice_test_audio.main(["--text", "Hello", "--output", str(destination)]), 1)
+                    self.assertEqual(destination.read_bytes(), original)
+
+    @patch("scripts.make_voice_test_audio.get_tts_provider")
+    def test_blank_fixture_text_is_rejected_without_calling_tts(self, provider):
+        with patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit) as error:
+            make_voice_test_audio.main(["--text", " ", "--output", "unused.wav"])
+        self.assertEqual(error.exception.code, 2)
+        provider.assert_not_called()

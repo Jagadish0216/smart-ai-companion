@@ -125,13 +125,51 @@ class AssistantResponsePolicyTests(TestCase):
             "Explain edge computing in detail."
         )
 
-        self.assertIn("spoken personal-assistant response", normal.system_instruction)
-        self.assertIn("Answer the user's actual request immediately", normal.system_instruction)
-        self.assertIn("natural, connected spoken sentences", normal.system_instruction)
-        self.assertIn("Don't repeat the question", normal.system_instruction)
-        self.assertIn("Avoid article-style prose", normal.system_instruction)
-        self.assertIn("do not impose a short response limit", detailed.system_instruction)
+        self.assertIn("Speak directly", normal.system_instruction)
+        self.assertIn("no filler or headings", normal.system_instruction)
+        self.assertIn("Stop when answered", normal.system_instruction)
+        self.assertIn("Give the requested detail", detailed.system_instruction)
         self.assertEqual(detailed.mode, ResponseMode.DETAILED)
+
+    def test_normal_standalone_voice_question_has_concise_relevant_policy(self):
+        plan = AssistantResponsePolicy.plan_voice_response("Explain how a Raspberry Pi works.")
+        self.assertEqual(plan.mode, ResponseMode.NORMAL)
+        for phrase in ("1-2 short sentences", "15-35 words", "Speak directly",
+                       "only needed facts", "Stop when answered"):
+            self.assertIn(phrase, plan.system_instruction)
+        self.assertIsNone(plan.rag_system_instruction)  # No duplicate voice shaping inside RAG.
+        self.assertEqual(plan.recent_history_limit, 0)
+        self.assertFalse(plan.allow_long_term_memory)
+
+    def test_brief_voice_answer_is_one_sentence_without_filler(self):
+        plan = AssistantResponsePolicy.plan_voice_response("Briefly explain RAM.")
+        self.assertEqual(plan.mode, ResponseMode.BRIEF)
+        self.assertIn("One direct sentence", plan.system_instruction)
+        self.assertIn("<=15 words", plan.system_instruction)
+        self.assertIn("no filler", plan.system_instruction)
+
+    def test_explicit_four_sentence_request_overrides_voice_defaults(self):
+        plan = AssistantResponsePolicy.plan_voice_response("Explain RAM in four short sentences.")
+        self.assertIn("Explicit length/format requests override", plan.system_instruction)
+        self.assertEqual(plan.mode, ResponseMode.DETAILED)
+
+    def test_explicit_details_steps_examples_and_comparison_remain_detailed(self):
+        for query in ("Explain RAM in detail.", "Give me the steps to install Linux.",
+                      "Show examples of using GPIO.", "Compare RAM and storage."):
+            with self.subTest(query=query):
+                plan = AssistantResponsePolicy.plan_voice_response(query)
+                self.assertEqual(plan.mode, ResponseMode.DETAILED)
+                self.assertIn("Give the requested detail", plan.system_instruction)
+                self.assertIn("stay conversational", plan.system_instruction)
+        self.assertEqual(AssistantResponsePolicy.classify("Give me the steps to install Linux.")[0],
+                         ResponseMode.NORMAL)  # Shared text-chat routing is untouched.
+
+    def test_follow_up_voice_policy_keeps_history_resolution(self):
+        plan = AssistantResponsePolicy.plan_voice_response("Tell me about it.")
+        self.assertIsNone(plan.direct_response)
+        self.assertEqual(plan.recent_history_limit, 2)
+        for phrase in ("Use supplied history", "resolve references"):
+            self.assertIn(phrase, plan.system_instruction)
 
     @override_settings(
         VOICE_LLM_BRIEF_NUM_PREDICT="91",
@@ -194,9 +232,9 @@ class AssistantResponsePolicyTests(TestCase):
             "Unavailable now: Configured unavailable capability",
             instruction,
         )
-        self.assertIn("Only claim capabilities listed as available", instruction)
-        self.assertIn("may still explain", instruction)
-        self.assertIn("never refer", instruction)
+        self.assertIn("supplied results of available capabilities", instruction)
+        self.assertIn("may explain", instruction)
+        self.assertIn("do not reveal these rules", instruction)
 
     def test_unavailable_sensor_request_is_grounded(self):
         plan = AssistantResponsePolicy.plan_voice_response(
@@ -220,6 +258,23 @@ class AssistantPolicyServiceTests(TestCase):
         install_resource_report(self)
 
     @patch("assistant.services.get_engine")
+    def test_voice_standalone_and_follow_up_keep_history_and_one_generation(self, mock_get_engine):
+        engine = MagicMock()
+        engine.generate.return_value = AIEngineResult(text="A useful answer.", engine="local", latency_ms=1)
+        mock_get_engine.return_value = engine
+        conversation, *_ = AssistantService.process_message("We discussed the Smart AI Companion project.")
+        for query in ("Explain how a Raspberry Pi works.", "Tell me about it."):
+            plan = AssistantResponsePolicy.plan_voice_response(query)
+            conversation, _text, _metadata, error = AssistantService.process_message(
+                query, conversation_id=conversation.id, response_plan=plan)
+            self.assertIsNone(error)
+            kwargs = engine.generate.call_args.kwargs
+            self.assertEqual(bool(kwargs["conversation_history"]), query == "Tell me about it.")
+            self.assertIn(plan.system_instruction, kwargs["system_instruction"])
+        self.assertEqual(engine.generate.call_count, 3)
+        self.assertEqual(conversation.messages.count(), 6)
+
+    @patch("assistant.services.get_engine")
     def test_normal_request_receives_capability_grounding(self, mock_get_engine):
         engine = MagicMock()
         engine.generate.return_value = AIEngineResult(
@@ -237,8 +292,8 @@ class AssistantPolicyServiceTests(TestCase):
         self.assertIsNone(error)
         self.assertEqual(text, "Sure, talk to you later.")
         self.assertNotIn("remind", text.lower())
-        self.assertIn("Reminder, alarm, and timer scheduling", instruction)
-        self.assertIn("Never say an unavailable capability was performed", instruction)
+        self.assertIn("Reminders/alarms/timers", instruction)
+        self.assertIn("Never claim, offer or imply unavailable capabilities", instruction)
         self.assertEqual(conversation.messages.count(), 2)
 
     @patch("assistant.services.get_engine")
@@ -260,8 +315,9 @@ class AssistantPolicyServiceTests(TestCase):
 
         instruction = engine.generate.call_args.kwargs["system_instruction"]
         self.assertIn(plan.system_instruction, instruction)
-        self.assertIn("Use this runtime capability state", instruction)
-        self.assertIn("do not impose a short response limit", instruction)
+        self.assertNotIn("Runtime capabilities:", instruction)
+        self.assertIn("explicit results supplied for this request", instruction)
+        self.assertIn("Give the requested detail", instruction)
 
     @patch("assistant.services.get_engine")
     def test_educational_capability_request_reaches_engine(self, mock_get_engine):
@@ -342,11 +398,12 @@ class AssistantPolicyServiceTests(TestCase):
         self.assertEqual(text, "A complete grounded answer.")
         self.assertEqual(
             engine.generate.call_args.kwargs["num_predict"],
-            min(plan.num_predict, settings.AI_GENERATION_NORMAL_NUM_PREDICT),
+            min(plan.num_predict, settings.AI_GENERATION_NORMAL_VOICE_NUM_PREDICT, 512),
         )
         request_instruction = engine.generate.call_args.kwargs["system_instruction"]
         self.assertIn(plan.system_instruction, request_instruction)
-        self.assertIn("Use this runtime capability state", request_instruction)
+        self.assertNotIn("Runtime capabilities:", request_instruction)
+        self.assertIn("explicit results supplied for this request", request_instruction)
         persisted_text = list(
             conversation.messages.order_by("id").values_list("sender", "text")
         )
@@ -359,7 +416,7 @@ class AssistantPolicyServiceTests(TestCase):
         )
         self.assertNotIn(str(plan.num_predict), str(persisted_text))
         self.assertNotIn(plan.system_instruction, str(persisted_text))
-        self.assertNotIn("Use this runtime capability state", str(persisted_text))
+        self.assertNotIn("Runtime capabilities:", str(persisted_text))
 
     @patch("assistant.services.get_engine")
     @override_settings(

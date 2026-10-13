@@ -88,12 +88,12 @@ class RagPerformanceTests(TestCase):
         self.assertIn("No unsupported", instruction)
         self.assertIn("does not contain enough information", instruction)
 
-    def test_rag_model_overrides_only_model_and_reason(self):
+    def test_legacy_rag_model_setting_cannot_override_configured_model(self):
         original = plan()
         selected = select_rag_model(original, {"primary:3b", "small:1b"})
-        self.assertEqual(selected.effective_model, "small:1b")
+        self.assertEqual(selected.effective_model, "primary:3b")
         self.assertEqual(selected.configured_model, "primary:3b")
-        self.assertEqual(selected.model_reason, "RAG_MODEL")
+        self.assertEqual(selected.model_reason, "CONFIGURED_MODEL")
         self.assertEqual(replace(selected, effective_model=original.effective_model, model_reason=original.model_reason), original)
 
     def test_missing_rag_model_retains_resource_selected_primary(self):
@@ -110,7 +110,7 @@ class RagPerformanceTests(TestCase):
         for profile in ("ECO", "PROTECTIVE"):
             with self.subTest(profile=profile):
                 original = plan(profile)
-                self.assertEqual(original.effective_model, "small:1b")
+                self.assertEqual(original.effective_model, "primary:3b")
                 self.assertEqual(select_rag_model(original, {"small:1b", "other:large"}), original)
 
     def run_service(self, route, execution_plan=None, inventory=None, streaming=False,
@@ -233,8 +233,9 @@ class RagPerformanceTests(TestCase):
         result, engine = self.run_service(QueryRoute.LOCAL_RAG)
         conversation, _, metadata, error = result
         self.assertIsNone(error)
-        self.assertEqual(engine.generate.call_args.kwargs["model"], "small:1b")
-        self.assertEqual(metadata["effective_model"], "small:1b")
+        self.assertEqual(engine.generate.call_args.kwargs["model"], "primary:3b")
+        self.assertEqual(metadata["effective_model"], "primary:3b")
+        engine.available_models.assert_not_called()
         self.assertEqual(metadata["configured_model"], "primary:3b")
         self.assertEqual(conversation.messages.count(), 2)
         self.assertLess(len(engine.generate.call_args.kwargs["system_instruction"]), 2600)
@@ -251,9 +252,10 @@ class RagPerformanceTests(TestCase):
 
     def test_stream_metadata_and_persistence_use_rag_model(self):
         events, engine = self.run_service(QueryRoute.LOCAL_RAG, streaming=True)
-        self.assertEqual(events[0]["effective_model"], "small:1b")
-        self.assertEqual(events[-1]["effective_model"], "small:1b")
-        self.assertEqual(engine.generate_stream.call_args.kwargs["model"], "small:1b")
+        self.assertEqual(events[0]["effective_model"], "primary:3b")
+        self.assertEqual(events[-1]["effective_model"], "primary:3b")
+        self.assertEqual(engine.generate_stream.call_args.kwargs["model"], "primary:3b")
+        engine.available_models.assert_not_called()
 
     def test_protective_service_skips_generation_and_inventory(self):
         result, engine = self.run_service(QueryRoute.LOCAL_RAG, execution_plan=plan("PROTECTIVE", False))
@@ -263,78 +265,34 @@ class RagPerformanceTests(TestCase):
 
 
 @override_settings(
-    AI_ENGINE="local", RAG_ENABLED=True, RAG_MODEL="small:1b",
-    AI_LIGHTWEIGHT_MODEL="small:1b", RAG_PREWARM_ENABLED=True, RAG_PREWARM_TIMEOUT_SECONDS=20,
+    AI_ENGINE="local", OLLAMA_MODEL="qwen3.5:4b-q4_K_M", RAG_ENABLED=True,
+    RAG_MODEL="legacy:rag", AI_LIGHTWEIGHT_MODEL="legacy:1b", RAG_PREWARM_ENABLED=True,
 )
-class OptionalRagWarmTests(TestCase):
-    def engine(self):
-        engine = MagicMock()
-        engine.available_models.return_value = {"primary:3b", "small:1b"}
+class SingleModelWarmTests(TestCase):
+    @patch("assistant.management.commands.warm_ai_model._wait_for_ollama")
+    @patch("assistant.management.commands.warm_ai_model.time.monotonic", return_value=100)
+    @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine")
+    def test_legacy_optional_settings_never_warm_another_model(self, engine_class, clock, wait):
+        engine = engine_class.return_value
         engine.warm_model.return_value = {"done": True}
         engine.warm_chat_prefix.return_value = {"done": True}
-        return engine
-
-    @patch("assistant.management.commands.warm_ai_model.time.monotonic", return_value=100)
-    @patch("assistant.management.commands.warm_ai_model.get_ai_execution_plan")
-    def test_optional_warm_is_capped_and_leaves_primary_budget(self, get_plan, clock):
-        get_plan.return_value = plan()
-        engine = self.engine()
-        command = Command(stderr=io.StringIO())
-        command._warm_optional_rag(engine, "primary:3b", 190)
-        self.assertEqual(engine.warm_model.call_args.kwargs["model"], "small:1b")
-        self.assertEqual(engine.warm_model.call_args.kwargs["timeout_seconds"], 20)
-        self.assertEqual(engine.warm_chat_prefix.call_args.kwargs["timeout_seconds"], 20)
-
-    @patch("assistant.management.commands.warm_ai_model.time.monotonic", return_value=100)
-    @patch("assistant.management.commands.warm_ai_model.get_ai_execution_plan")
-    def test_optional_failure_is_observable_and_not_fatal(self, get_plan, clock):
-        get_plan.return_value = plan()
-        engine = self.engine()
-        engine.warm_model.side_effect = EngineTimeoutError("timeout")
-        output = io.StringIO()
-        Command(stderr=output)._warm_optional_rag(engine, "primary:3b", 190)
-        self.assertIn("primary warm-up will continue", output.getvalue())
-        engine.warm_chat_prefix.assert_not_called()
-
-    @patch("assistant.management.commands.warm_ai_model.get_ai_execution_plan")
-    def test_protective_policy_skips_optional_preload(self, get_plan):
-        get_plan.return_value = plan("PROTECTIVE", False)
-        engine = self.engine()
-        Command(stderr=io.StringIO())._warm_optional_rag(engine, "primary:3b", 190)
-        engine.available_models.assert_not_called()
-        engine.warm_model.assert_not_called()
-
-    def test_same_model_is_not_warmed_twice(self):
-        engine = self.engine()
-        Command()._warm_optional_rag(engine, "small:1b", 190)
-        engine.warm_model.assert_not_called()
-
-    @override_settings(OLLAMA_MODEL="primary:3b")
-    @patch("assistant.management.commands.warm_ai_model._wait_for_ollama")
-    @patch("assistant.management.commands.warm_ai_model.time.monotonic", return_value=100)
-    @patch("assistant.management.commands.warm_ai_model.get_ai_execution_plan")
-    @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine")
-    def test_complete_command_always_warms_primary_last(self, engine_class, get_plan, clock, wait):
-        engine = self.engine()
-        engine_class.return_value = engine
-        get_plan.return_value = plan()
-        from django.core.management import call_command
-        call_command("warm_ai_model", timeout=90, stdout=io.StringIO(), stderr=io.StringIO())
-        self.assertEqual([call.kwargs["model"] for call in engine.warm_model.call_args_list], ["small:1b", "primary:3b"])
-        self.assertEqual([call.kwargs["model"] for call in engine.warm_chat_prefix.call_args_list], ["small:1b", "primary:3b"])
-
-    @override_settings(OLLAMA_MODEL="primary:3b")
-    @patch("assistant.management.commands.warm_ai_model._wait_for_ollama")
-    @patch("assistant.management.commands.warm_ai_model.time.monotonic", return_value=100)
-    @patch("assistant.management.commands.warm_ai_model.get_ai_execution_plan")
-    @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine")
-    def test_optional_failure_does_not_stop_required_primary_stage(self, engine_class, get_plan, clock, wait):
-        engine = self.engine()
-        engine.warm_model.side_effect = [EngineUnavailableError("optional offline"), {"done": True}]
-        engine_class.return_value = engine
-        get_plan.return_value = plan()
         from django.core.management import call_command
         output = io.StringIO()
         call_command("warm_ai_model", timeout=90, stdout=output, stderr=io.StringIO())
-        self.assertIn("Warmed model primary:3b", output.getvalue())
-        self.assertEqual(engine.warm_chat_prefix.call_args.kwargs["model"], "primary:3b")
+        engine.available_models.assert_not_called()
+        engine.warm_model.assert_called_once_with(model="qwen3.5:4b-q4_K_M", timeout_seconds=90)
+        self.assertEqual(engine.warm_chat_prefix.call_count, 1)
+        self.assertEqual(engine.warm_chat_prefix.call_args.kwargs["model"], "qwen3.5:4b-q4_K_M")
+        self.assertIn("Warmed model qwen3.5:4b-q4_K_M", output.getvalue())
+
+    @patch("assistant.management.commands.warm_ai_model._wait_for_ollama")
+    @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine")
+    def test_required_model_failure_is_not_hidden_or_retried_with_an_alternate(self, engine_class, wait):
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+        engine = engine_class.return_value
+        engine.warm_model.side_effect = EngineUnavailableError("offline")
+        with self.assertRaises(CommandError):
+            call_command("warm_ai_model", stdout=io.StringIO(), stderr=io.StringIO())
+        engine.warm_model.assert_called_once()
+        engine.warm_chat_prefix.assert_not_called()

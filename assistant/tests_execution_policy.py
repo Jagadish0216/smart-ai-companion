@@ -9,9 +9,11 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from knowledge_base.retrieval import RetrievedChunk
+from conversations.models import Message
 
 from .ai_engine import (
     AIEngineResult,
+    AIEngineStreamEvent,
     EngineTimeoutError,
     EngineUnavailableError,
 )
@@ -20,9 +22,10 @@ from .execution_policy import (
     AIExecutionPlan,
     build_execution_plan,
     get_ai_execution_plan,
+    select_voice_budget,
 )
 from .online.base import OnlineRetrievalResult
-from .policy import Capability, ResponseMode
+from .policy import AssistantResponsePolicy, Capability, ResponseMode
 from .routing import QueryRoute, QueryRouteDecision
 from .services import AssistantService
 
@@ -103,6 +106,37 @@ def _plan(
 
 @override_settings(**POLICY_SETTINGS)
 class ExecutionPolicyMappingTests(SimpleTestCase):
+    def test_voice_ceiling_changes_only_healthy_normal_execution(self):
+        for profile in ("BALANCED", "PERFORMANCE"):
+            original = build_execution_plan(_report(profile))
+            voice = select_voice_budget(original)
+            self.assertEqual(voice.max_output_tokens, 384)
+            self.assertEqual(original.max_output_tokens, 128)
+            self.assertEqual(voice.effective_model, original.effective_model)
+            self.assertEqual(voice.context_message_limit, original.context_message_limit)
+        for profile, budget, allowed, available in (
+            ("ECO", "REDUCED", True, True), ("PROTECTIVE", "MINIMAL", True, True),
+            ("BALANCED", "REDUCED", True, True), ("BALANCED", "NORMAL", False, True),
+            ("BALANCED", "NORMAL", True, False),
+        ):
+            original = build_execution_plan(_report(profile, generation_budget=budget, local_ai_allowed=allowed),
+                                            resource_policy_available=available)
+            self.assertIs(select_voice_budget(original), original)
+
+    @override_settings(AI_GENERATION_NORMAL_VOICE_NUM_PREDICT=99999)
+    def test_voice_ceiling_is_hard_bounded_and_configurable(self):
+        plan = build_execution_plan(_report("BALANCED"))
+        self.assertEqual(select_voice_budget(plan).max_output_tokens, 512)
+        with self.settings(AI_GENERATION_NORMAL_VOICE_NUM_PREDICT=200):
+            self.assertEqual(select_voice_budget(plan).max_output_tokens, 200)
+
+    def test_historical_diagnostic_does_not_become_current_pressure_reason(self):
+        report = _report("ECO")
+        report["reasons"] = [{"code": "THROTTLING_HISTORY"}, {"code": "MEMORY_PRESSURE"}]
+        plan = build_execution_plan(report, available_models={"llama3.2:1b"})
+        self.assertEqual(plan.policy_reason, "MEMORY_PRESSURE")
+        self.assertEqual(plan.model_reason, "CONFIGURED_MODEL")
+
     def test_performance_selects_configured_standard_model(self):
         plan = build_execution_plan(
             _report("PERFORMANCE"),
@@ -122,15 +156,15 @@ class ExecutionPolicyMappingTests(SimpleTestCase):
         self.assertEqual(plan.effective_model, "llama3.2:3b")
         self.assertEqual(plan.model_reason, "CONFIGURED_MODEL")
 
-    def test_eco_selects_approved_lightweight_model_when_installed(self):
+    def test_eco_keeps_configured_model_even_when_alternate_is_installed(self):
         plan = build_execution_plan(
             _report("ECO", reason="MEMORY_PRESSURE"),
             available_models={"llama3.2:1b", "llama3.2:3b"},
         )
 
         self.assertEqual(plan.configured_model, "llama3.2:3b")
-        self.assertEqual(plan.effective_model, "llama3.2:1b")
-        self.assertEqual(plan.model_reason, "MEMORY_PRESSURE")
+        self.assertEqual(plan.effective_model, "llama3.2:3b")
+        self.assertEqual(plan.model_reason, "CONFIGURED_MODEL")
         self.assertEqual(plan.generation_budget, "REDUCED")
         self.assertEqual(plan.max_output_tokens, 96)
 
@@ -142,29 +176,29 @@ class ExecutionPolicyMappingTests(SimpleTestCase):
 
         self.assertTrue(plan.generation_allowed)
         self.assertEqual(plan.effective_model, "llama3.2:3b")
-        self.assertEqual(plan.model_reason, "LIGHTWEIGHT_UNAVAILABLE")
+        self.assertEqual(plan.model_reason, "CONFIGURED_MODEL")
         self.assertEqual(plan.max_output_tokens, 96)
 
-    def test_protective_never_escalates_to_standard_when_lightweight_absent(self):
+    def test_protective_blocks_when_resource_policy_disallows_generation(self):
         plan = build_execution_plan(
-            _report("PROTECTIVE"),
+            _report("PROTECTIVE", local_ai_allowed=False),
             available_models={"llama3.2:3b"},
         )
 
         self.assertFalse(plan.generation_allowed)
         self.assertIsNone(plan.effective_model)
-        self.assertEqual(plan.model_reason, "LIGHTWEIGHT_UNAVAILABLE")
+        self.assertEqual(plan.model_reason, "RESOURCE_POLICY_BLOCK")
         self.assertEqual(plan.generation_budget, "MINIMAL")
         self.assertEqual(plan.max_output_tokens, 48)
 
-    def test_protective_uses_lightweight_only_when_allowed_and_installed(self):
+    def test_allowed_protective_generation_uses_configured_model_with_minimal_budget(self):
         plan = build_execution_plan(
             _report("PROTECTIVE", local_ai_allowed=True),
             available_models={"llama3.2:1b", "llama3.2:3b"},
         )
 
         self.assertTrue(plan.generation_allowed)
-        self.assertEqual(plan.effective_model, "llama3.2:1b")
+        self.assertEqual(plan.effective_model, "llama3.2:3b")
         self.assertEqual(plan.max_output_tokens, 48)
 
     def test_protective_local_ai_denial_blocks_generation(self):
@@ -451,6 +485,93 @@ class ResourceAwareAssistantServiceTests(TestCase):
         AssistantService.process_message("Explain recursion.")
 
         execution_policy.assert_called_once()
+
+
+@override_settings(**SERVICE_SETTINGS, AI_GENERATION_NORMAL_VOICE_NUM_PREDICT=384,
+                   VOICE_LLM_BRIEF_NUM_PREDICT=96, VOICE_LLM_NORMAL_NUM_PREDICT=160,
+                   VOICE_LLM_DETAILED_NUM_PREDICT=384)
+class VoiceResourceBudgetTests(TestCase):
+    def setUp(self):
+        self.plan = _plan()
+        self.result = AIEngineResult(text="Complete answer.", engine="local", model="llama3.2:3b", latency_ms=1)
+        self.engine = MagicMock()
+        self.engine.available_models.return_value = {"llama3.2:1b", "llama3.2:3b"}
+        self.engine.generate.side_effect = lambda *args, **kwargs: self.result
+        self.engine.generate_stream.side_effect = lambda *args, **kwargs: iter([
+            AIEngineStreamEvent("delta", text=self.result.text), AIEngineStreamEvent("done", result=self.result)])
+        for patcher in (patch("assistant.services.get_engine", return_value=self.engine),
+                        patch("assistant.services.get_ai_execution_plan", side_effect=lambda **kwargs: self.plan)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_healthy_voice_modes_and_four_sentences_receive_useful_bounded_budgets(self):
+        for profile in ("BALANCED", "PERFORMANCE"):
+            self.plan = _plan(profile=profile)
+            for query, expected in (("Briefly explain RAM.", 96), ("Explain how Raspberry Pi works.", 160),
+                                    ("Explain RAM in four short sentences.", 384),
+                                    ("Explain RAM in detail with examples.", 384)):
+                with self.subTest(profile=profile, query=query):
+                    _, _, metadata, error = AssistantService.process_message(
+                        query, response_plan=AssistantResponsePolicy.plan_voice_response(query))
+                    self.assertIsNone(error)
+                    self.assertEqual(self.engine.generate.call_args.kwargs["num_predict"], expected)
+                    self.assertEqual(metadata["num_predict"], expected)
+                    self.assertEqual(metadata["max_output_tokens"], 384)
+                    self.assertEqual(metadata["effective_model"], "llama3.2:3b")
+        _, _, metadata, error = AssistantService.process_message("Explain RAM in detail.")
+        self.assertIsNone(error)
+        self.assertEqual(metadata["num_predict"], 128)  # Text callers remain unchanged.
+        self.assertEqual(metadata["max_output_tokens"], 128)
+
+    def test_eco_and_protective_caps_still_win_for_every_voice_mode(self):
+        for profile, budget, cap in (("ECO", "REDUCED", 96), ("PROTECTIVE", "MINIMAL", 48)):
+            self.plan = _plan(profile=profile, budget=budget, effective_model="llama3.2:1b")
+            for query in ("Briefly explain RAM.", "Explain RAM.", "Explain RAM in detail."):
+                with self.subTest(profile=profile, query=query):
+                    _, _, metadata, error = AssistantService.process_message(
+                        query, response_plan=AssistantResponsePolicy.plan_voice_response(query))
+                    self.assertIsNone(error)
+                    self.assertEqual(metadata["num_predict"], cap)
+                    self.assertEqual(metadata["max_output_tokens"], cap)
+        self.plan = _plan(profile="PROTECTIVE", budget="MINIMAL", generation_allowed=False, local_ai_allowed=False)
+        self.engine.reset_mock()
+        AssistantService.process_message("Explain RAM in detail.",
+                                         response_plan=AssistantResponsePolicy.plan_voice_response("Explain RAM in detail."))
+        self.engine.generate.assert_not_called()
+
+    def test_limit_metadata_is_truthful_and_done_event_contains_selected_voice_budget(self):
+        query = "Explain RAM in detail."
+        for count in (383, 384, 385, None, "384", True):
+            with self.subTest(count=count):
+                self.result.metrics = {} if count is None else {"eval_count": count}
+                events = list(AssistantService.process_message_stream(
+                    query, response_plan=AssistantResponsePolicy.plan_voice_response(query)))
+                self.assertEqual(events[0]["num_predict"], 384)
+                done = events[-1]
+                self.assertEqual(done["type"], "done")
+                self.assertEqual(done["num_predict"], 384)
+                if type(count) is int:
+                    self.assertEqual(done["eval_count"], count)
+                    self.assertEqual(done["output_limit_reached"], count >= 384)
+                else:
+                    self.assertNotIn("output_limit_reached", done)
+                    self.assertNotIn("eval_count", done)
+        self.assertEqual(self.engine.generate_stream.call_count, 6)
+        self.engine.generate.assert_not_called()
+
+    def test_observed_eco_limit_exhaustion_keeps_canonical_fragment_truthful(self):
+        self.plan = _plan(profile="ECO", budget="REDUCED", effective_model="llama3.2:1b",
+                          status_message="Running in reduced-resource mode.")
+        self.result.text = "Solar panels are a renewable energy source that provides a"
+        self.result.metrics = {"eval_count": 96}
+        query = "Explain solar panels in detail."
+        events = list(AssistantService.process_message_stream(
+            query, response_plan=AssistantResponsePolicy.plan_voice_response(query)))
+        done = events[-1]
+        self.assertEqual(done["num_predict"], 96)
+        self.assertTrue(done["output_limit_reached"])
+        self.assertEqual(done["response"], "Running in reduced-resource mode.\n\n" + self.result.text)
+        self.assertEqual(Message.objects.get(sender="AI").text, done["response"])
 
 
 @override_settings(**SERVICE_SETTINGS)

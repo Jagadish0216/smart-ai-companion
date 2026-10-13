@@ -25,7 +25,7 @@ from .ai_engine.local import LocalLLMEngine
 from .management.commands.warm_ai_model import _wait_for_ollama
 from .execution_policy import build_execution_plan
 from .online.base import OnlineRetrievalResult
-from .policy import Capability, build_runtime_capability_registry
+from .policy import AssistantResponsePolicy, Capability, VOICE_SAFETY_INSTRUCTION, build_runtime_capability_registry
 from .services import AssistantService, _build_generation_instruction
 
 
@@ -233,6 +233,7 @@ class GenerationInstructionOrderingTests(TestCase):
         registry.build_grounding_instruction.return_value = "GROUND_STABLE"
 
         response_plan = MagicMock()
+        response_plan.is_voice = False
         response_plan.rag_system_instruction = "RAG_POLICY"
 
         instruction = _build_generation_instruction(
@@ -266,7 +267,7 @@ class GenerationInstructionOrderingTests(TestCase):
         ONLINE_TIMEOUT_SECONDS=8, ONLINE_MAX_RESULTS=4, ONLINE_MAX_CONTEXT_CHARS=6000,
         DEVICE_CONTROL_ENABLED=False,
     )
-    def test_command_prefix_matches_real_local_rag_and_online_preparation(self):
+    def test_command_minimal_safety_matches_real_voice_local_rag_and_online_preparation(self):
         plan = build_execution_plan({
             "recommended_profile": "BALANCED",
             "ai_recommendation": {"local_ai_allowed": True, "online_allowed": True},
@@ -279,7 +280,6 @@ class GenerationInstructionOrderingTests(TestCase):
         )
         with (
             patch("knowledge_base.services.is_rag_available", return_value=True),
-            patch("assistant.management.commands.warm_ai_model.get_ai_execution_plan", return_value=plan),
             patch("assistant.management.commands.warm_ai_model.LocalLLMEngine", return_value=engine),
             patch("assistant.management.commands.warm_ai_model._wait_for_ollama"),
             patch.object(engine, "warm_model", return_value={"done": True}),
@@ -293,15 +293,17 @@ class GenerationInstructionOrderingTests(TestCase):
         ):
             call_command("warm_ai_model", stdout=io.StringIO())
             warm_system = chat.call_args.args[0][0]["content"]
+            self.assertEqual(warm_system, VOICE_SAFETY_INSTRUCTION)
             online_retriever.return_value.retrieve.return_value = [online]
             for query, chunks, route in (
                 ("Explain general computing.", [], "local"),
-                ("Explain local computing.", [rag], "local_rag"),
+                ("What does our knowledge base say about local computing?", [rag], "local_rag"),
                 ("Search the web for today's news.", [], "online"),
             ):
                 with self.subTest(route=route):
                     retriever.return_value.retrieve.return_value = chunks
-                    conversation, _, metadata, error = AssistantService.process_message(query)
+                    conversation, _, metadata, error = AssistantService.process_message(
+                        query, response_plan=AssistantResponsePolicy.plan_voice_response(query))
                     self.assertIsNone(error)
                     self.assertEqual(metadata["route"], route)
                     messages = chat.call_args.args[0]
@@ -363,6 +365,54 @@ class FakeStreamingEngine:
     DEVICE_CONTROL_ENABLED=False,
 )
 class StreamingServiceTests(TestCase):
+    @patch("assistant.services.logger")
+    @patch("assistant.services.get_engine")
+    def test_close_after_valid_done_is_not_an_incomplete_client_disconnect(self, get_engine, logger):
+        get_engine.return_value = FakeStreamingEngine()
+        stream = AssistantService.process_message_stream("Hello")
+        try:
+            for event in stream:
+                if event["type"] == "done":
+                    break
+        finally:
+            stream.close()
+        self.assertEqual(event["type"], "done")
+        self.assertFalse(any(item.args and item.args[0] == "Assistant stream closed by client before completion"
+                             for item in logger.info.call_args_list))
+        self.assertEqual(Message.objects.filter(sender="AI").count(), 1)
+
+    @patch("assistant.services.logger")
+    @patch("assistant.services.get_engine")
+    def test_abandoned_stream_before_done_still_logs_and_does_not_persist_partial_ai(self, get_engine, logger):
+        get_engine.return_value = FakeStreamingEngine()
+        stream = AssistantService.process_message_stream("Hello")
+        start = next(stream)
+        self.assertEqual(next(stream)["type"], "delta")
+        stream.close()
+        logger.info.assert_any_call("Assistant stream closed by client before completion",
+                                    extra={"conversation_id": start["conversation_id"]})
+        self.assertEqual(Message.objects.filter(sender="AI").count(), 0)
+
+    @patch("assistant.services.logger")
+    @patch("assistant.services.get_engine")
+    def test_abandoned_at_start_or_resource_notice_also_logs(self, get_engine, logger):
+        get_engine.return_value = FakeStreamingEngine()
+        plan = build_execution_plan({
+            "recommended_profile": "ECO",
+            "ai_recommendation": {"local_ai_allowed": True, "generation_budget": "REDUCED"},
+        })
+        for after_notice in (False, True):
+            with self.subTest(after_notice=after_notice), patch("assistant.services.get_ai_execution_plan", return_value=plan):
+                logger.reset_mock()
+                stream = AssistantService.process_message_stream("Hello")
+                start = next(stream)
+                if after_notice:
+                    self.assertEqual(next(stream)["type"], "delta")
+                stream.close()
+                logger.info.assert_any_call("Assistant stream closed by client before completion",
+                                            extra={"conversation_id": start["conversation_id"]})
+        self.assertEqual(Message.objects.filter(sender="AI").count(), 0)
+
     @patch("assistant.services.get_engine")
     def test_generation_persists_one_user_and_one_complete_ai_message(self, get_engine):
         engine = FakeStreamingEngine()
@@ -521,27 +571,15 @@ class WarmModelCommandTests(TestCase):
         self.addCleanup(wait_patcher.stop)
 
     @override_settings(OLLAMA_MODEL="configured:3b")
-    @patch("assistant.management.commands.warm_ai_model.build_runtime_capability_registry")
-    @patch("assistant.management.commands.warm_ai_model.get_ai_execution_plan")
     @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_chat_prefix")
     @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_model")
     def test_defaults_to_configured_model(
         self,
         warm_model,
         warm_chat_prefix,
-        get_execution_plan,
-        build_registry,
     ):
         warm_model.return_value = {"done": True}
         warm_chat_prefix.return_value = {"done": True}
-
-        plan = MagicMock()
-        plan.online_allowed = True
-        get_execution_plan.return_value = plan
-
-        registry = MagicMock()
-        registry.build_grounding_instruction.return_value = "GROUND_STABLE"
-        build_registry.return_value = registry
 
         with patch(
             "assistant.management.commands.warm_ai_model.time.monotonic",
@@ -553,34 +591,22 @@ class WarmModelCommandTests(TestCase):
             model="configured:3b",
             timeout_seconds=90.0,
         )
-        build_registry.assert_called_once_with(online_allowed=True)
         warm_chat_prefix.assert_called_once_with(
-            system_instruction="GROUND_STABLE",
+            system_instruction=VOICE_SAFETY_INSTRUCTION,
+            system_prompt="",
             model="configured:3b",
             timeout_seconds=80.0,
         )
 
-    @patch("assistant.management.commands.warm_ai_model.build_runtime_capability_registry")
-    @patch("assistant.management.commands.warm_ai_model.get_ai_execution_plan")
     @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_chat_prefix")
     @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_model")
     def test_explicit_model_override(
         self,
         warm_model,
         warm_chat_prefix,
-        get_execution_plan,
-        build_registry,
     ):
         warm_model.return_value = {"done": True}
         warm_chat_prefix.return_value = {"done": True}
-
-        plan = MagicMock()
-        plan.online_allowed = False
-        get_execution_plan.return_value = plan
-
-        registry = MagicMock()
-        registry.build_grounding_instruction.return_value = "GROUND_STABLE"
-        build_registry.return_value = registry
 
         with patch(
             "assistant.management.commands.warm_ai_model.time.monotonic",
@@ -597,17 +623,16 @@ class WarmModelCommandTests(TestCase):
             timeout_seconds=90.0,
         )
         warm_chat_prefix.assert_called_once_with(
-            system_instruction="GROUND_STABLE",
+            system_instruction=VOICE_SAFETY_INSTRUCTION,
+            system_prompt="",
             model="diagnostic:1b",
             timeout_seconds=85.0,
         )
 
-    @patch("assistant.management.commands.warm_ai_model.build_runtime_capability_registry")
-    @patch("assistant.management.commands.warm_ai_model.get_ai_execution_plan")
     @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_chat_prefix")
     @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_model")
     def test_exhausted_shared_timeout_does_not_start_prefix(
-        self, warm_model, warm_chat_prefix, get_plan, build_registry,
+        self, warm_model, warm_chat_prefix,
     ):
         warm_model.return_value = {"done": True}
         with (
@@ -620,12 +645,10 @@ class WarmModelCommandTests(TestCase):
             call_command("warm_ai_model", stdout=io.StringIO())
         warm_chat_prefix.assert_not_called()
 
-    @patch("assistant.management.commands.warm_ai_model.build_runtime_capability_registry")
-    @patch("assistant.management.commands.warm_ai_model.get_ai_execution_plan")
     @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_chat_prefix")
     @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_model")
     def test_readiness_and_both_stages_share_one_budget(
-        self, warm_model, warm_chat_prefix, get_plan, build_registry,
+        self, warm_model, warm_chat_prefix,
     ):
         clock = [100.0]
         self.wait_for_ollama.side_effect = lambda *_: clock.__setitem__(0, 103.0)
@@ -650,6 +673,8 @@ class WarmModelCommandTests(TestCase):
     def test_genuine_model_errors_are_not_retried(self, warm_model, warm_chat_prefix):
         for failure in (
             ModelUnavailableError("model not found"),
+            ModelUnavailableError("timed out waiting for llama-server to start"),
+            EngineTimeoutError("timed out waiting for llama-server to start"),
             EngineUnavailableError("runner failed"),
         ):
             with self.subTest(failure=type(failure).__name__):
@@ -662,12 +687,90 @@ class WarmModelCommandTests(TestCase):
                 self.wait_for_ollama.assert_called_once()
                 warm_chat_prefix.assert_not_called()
 
-    @patch("assistant.management.commands.warm_ai_model.build_runtime_capability_registry")
-    @patch("assistant.management.commands.warm_ai_model.get_ai_execution_plan")
+    @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_chat_prefix")
+    @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_model")
+    def test_runner_startup_retry_then_prefix_shares_remaining_budget(
+        self, warm_model, warm_chat_prefix,
+    ):
+        clock = [100.0]
+
+        def load_model(**kwargs):
+            clock[0] += 16.0 if warm_model.call_count == 1 else 30.0
+            if warm_model.call_count == 1:
+                raise EngineUnavailableError(
+                    "Ollama error (HTTP 500): timed out waiting for llama-server to start"
+                )
+            return {"done": True}
+
+        warm_model.side_effect = load_model
+        warm_chat_prefix.return_value = {"done": True}
+        output = io.StringIO()
+        with (
+            patch("assistant.management.commands.warm_ai_model.time.monotonic",
+                  side_effect=lambda: clock[0]),
+            patch("assistant.management.commands.warm_ai_model.time.sleep",
+                  side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)) as sleep,
+        ):
+            call_command("warm_ai_model", timeout=90, stdout=output)
+        sleep.assert_called_once_with(2.0)
+        self.assertEqual(
+            [call.kwargs["timeout_seconds"] for call in warm_model.call_args_list],
+            [90.0, 72.0],
+        )
+        warm_chat_prefix.assert_called_once_with(
+            system_instruction=VOICE_SAFETY_INSTRUCTION, system_prompt="",
+            model=settings.OLLAMA_MODEL, timeout_seconds=42.0,
+        )
+        self.assertIn("attempt 2/3", output.getvalue())
+        self.assertNotIn("HTTP 500", output.getvalue())
+
+    @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_chat_prefix")
+    @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_model")
+    def test_runner_startup_failures_stop_after_three_attempts(
+        self, warm_model, warm_chat_prefix,
+    ):
+        warm_model.side_effect = EngineUnavailableError(
+            "Ollama error (HTTP 500): timed out waiting for llama-server to start"
+        )
+        with (
+            patch("assistant.management.commands.warm_ai_model.time.monotonic", return_value=100.0),
+            patch("assistant.management.commands.warm_ai_model.time.sleep") as sleep,
+            self.assertRaisesRegex(CommandError, "Ollama is unavailable"),
+        ):
+            call_command("warm_ai_model", stdout=io.StringIO())
+        self.assertEqual(warm_model.call_count, 3)
+        self.assertEqual([call.args for call in sleep.call_args_list], [(2.0,), (2.0,)])
+        warm_chat_prefix.assert_not_called()
+
+    @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_chat_prefix")
+    @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_model")
+    def test_runner_retry_sleep_is_clipped_to_shared_deadline(
+        self, warm_model, warm_chat_prefix,
+    ):
+        clock = [100.0]
+
+        def fail_model(**kwargs):
+            clock[0] += 9.5
+            raise EngineUnavailableError("timed out waiting for llama-server to start")
+
+        warm_model.side_effect = fail_model
+        with (
+            patch("assistant.management.commands.warm_ai_model.time.monotonic",
+                  side_effect=lambda: clock[0]),
+            patch("assistant.management.commands.warm_ai_model.time.sleep",
+                  side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)) as sleep,
+            self.assertRaisesRegex(CommandError, "warm-up timed out"),
+        ):
+            call_command("warm_ai_model", timeout=10, stdout=io.StringIO())
+        sleep.assert_called_once_with(0.5)
+        warm_model.assert_called_once()
+        self.assertEqual(clock[0], 110.0)
+        warm_chat_prefix.assert_not_called()
+
     @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_chat_prefix")
     @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_model")
     def test_prefix_failure_does_not_report_success(
-        self, warm_model, warm_chat_prefix, get_plan, build_registry,
+        self, warm_model, warm_chat_prefix,
     ):
         warm_model.return_value = {"done": True}
         for failure in (
@@ -825,3 +928,6 @@ class StreamingFrontendStructureTests(TestCase):
         )
         self.assertNotIn("After=smart-ai-companion.service", warm_unit)
         self.assertIn("manage.py warm_ai_model --timeout 90", warm_unit)
+        self.assertIn("TimeoutStartSec=120", warm_unit)
+        self.assertIn("Restart=on-failure", warm_unit)
+        self.assertIn("RestartSec=5", warm_unit)
