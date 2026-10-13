@@ -101,10 +101,96 @@ class AdaptiveCaptureVADTests(SimpleTestCase):
     def test_resume_resets_candidate_silence(self):
         self.speak()
         self.feed(0.005, 39)
-        self.feed(0.018, 1)
+        self.feed(0.018, 3)
         self.feed(0.005, 39)
         self.assertIsNone(self.vad.stop_reason)
         self.assertEqual(self.feed(0.005, 1), ["stop"])
+
+    def test_calibrated_baseline_and_samples_freeze_while_waiting(self):
+        self.calibrate()
+        baseline = (self.vad.noise_floor, self.vad.start_threshold, self.vad.continue_threshold)
+        samples = list(self.vad.noise_samples)
+        self.feed(0.02, 60)
+        self.assertEqual(self.vad.calibrated_noise_floor, baseline[0])
+        self.assertEqual((self.vad.noise_floor, self.vad.start_threshold, self.vad.continue_threshold), baseline)
+        self.assertEqual(list(self.vad.noise_samples), samples)
+        self.assertFalse(self.vad.speech_started)
+
+    def test_soft_to_loud_opening_triggers_without_threshold_ratchet(self):
+        self.calibrate()
+        baseline = self.vad.start_threshold
+        self.feed(0.02, 10)
+        self.assertEqual(self.vad.start_threshold, baseline)
+        self.assertEqual(self.feed(0.035, 3), [None, None, "start"])
+        self.assertEqual(self.vad.start_threshold, baseline)
+
+    def test_one_ambiguous_spike_preserves_end_silence_progress(self):
+        self.speak()
+        voiced = self.vad.speech_duration
+        self.feed(0.005, 20)
+        self.feed(0.018, 1)
+        self.assertGreaterEqual(self.vad.silence_duration, 0.4)
+        self.assertEqual(self.vad.speech_duration, voiced)
+        self.feed(0.005, 19)
+        self.assertEqual(self.vad.stop_reason, "silence")
+
+    def test_definite_resumed_speech_resets_silence_immediately(self):
+        self.speak()
+        self.feed(0.005, 39)
+        self.feed(0.04, 1)
+        self.assertEqual(self.vad.silence_duration, 0)
+        self.assertIsNone(self.vad.stop_reason)
+
+    def test_final_noisy_silence_ends_despite_intermittent_spikes(self):
+        self.speak()
+        for _ in range(8):
+            self.feed(0.005, 4)
+            self.feed(0.018, 1)
+        self.feed(0.005, 1)
+        self.assertEqual(self.vad.stop_reason, "silence")
+        self.assertLess(self.vad.capture_duration, self.vad.max_seconds)
+
+    def test_two_ambiguous_chunks_do_not_confirm_resume(self):
+        self.speak()
+        self.feed(0.005, 20)
+        self.feed(0.018, 2)
+        self.assertGreaterEqual(self.vad.silence_duration, 0.4)
+        self.feed(0.005, 1)
+        self.assertEqual(self.vad.resume_duration, 0)
+
+    def test_isolated_boundary_spike_only_defers_stop_one_chunk(self):
+        self.speak()
+        self.feed(0.005, 39)
+        self.feed(0.018, 1)
+        self.assertIsNone(self.vad.stop_reason)
+        self.feed(0.005, 1)
+        self.assertEqual(self.vad.stop_reason, "silence")
+
+    def test_continuous_continuation_activity_still_hits_maximum(self):
+        self.vad = AdaptiveCaptureVAD(max_seconds=0.5)
+        self.calibrate()
+        self.feed(0.06, 3)
+        self.feed(0.018, 22)
+        self.assertEqual(self.vad.stop_reason, "max_duration")
+        self.assertAlmostEqual(self.vad.capture_duration, 0.5)
+
+    def test_pending_resume_cannot_extend_maximum_duration(self):
+        self.vad = AdaptiveCaptureVAD(max_seconds=0.5)
+        self.calibrate()
+        self.feed(0.06, 20)
+        self.feed(0.005, 4)
+        self.feed(0.018, 1)
+        self.assertEqual(self.vad.stop_reason, "max_duration")
+
+    def test_ambiguous_spikes_do_not_bypass_minimum_voiced_guard(self):
+        self.calibrate()
+        self.feed(0.06, 3)
+        for _ in range(8):
+            self.feed(0.005, 4)
+            self.feed(0.018, 1)
+        self.feed(0.005, 1)
+        self.assertFalse(self.vad.accepted)
+        self.assertFalse(self.vad.speech_started)
 
     def test_final_continuous_silence_ends_capture(self):
         self.speak()

@@ -9,11 +9,13 @@ class AdaptiveCaptureVAD:
     """Feed normalized RMS and audio duration; return start/reset/stop events.
 
     Calibrate in quiet before speaking. Median rejects isolated spikes. After
-    calibration only below-start, non-candidate samples update the recent floor;
-    it is frozen during speech. Internal constants deliberately remain bounded:
+    calibration the ambient floor and both thresholds remain frozen, including
+    while waiting for speech. Internal constants deliberately remain bounded:
     start = max(configured, min(1, 2.5 * noise + .002)); continue uses 25% of
     the floor-to-start gap. Clip the continuation floor to 95% of start so
     hysteresis remains strict even with saturated/clipped ambient input.
+    Continuation-level activity needs 60 ms consecutively to cancel end silence;
+    definite above-start speech cancels it immediately.
     """
 
     def __init__(self, *, start_threshold=0.02, silence_seconds=0.8,
@@ -37,6 +39,7 @@ class AdaptiveCaptureVAD:
         self.min_speech_seconds = min_speech_ms / 1000
         self.noise_samples = deque(maxlen=max(1, math.ceil(noise_calibration_seconds / chunk_seconds)))
         self.noise_floor = 0.0
+        self.calibrated_noise_floor = 0.0
         self.start_threshold = start_threshold
         self.continue_threshold = start_threshold
         self.elapsed = 0.0
@@ -44,6 +47,7 @@ class AdaptiveCaptureVAD:
         self.speech_duration = 0.0  # Voiced time, not elapsed time or pre-roll.
         self.candidate_duration = 0.0
         self.silence_duration = 0.0
+        self.resume_duration = 0.0
         self.speech_started = False
         self.stop_reason = None
         if adaptive:
@@ -61,6 +65,7 @@ class AdaptiveCaptureVAD:
 
     def _thresholds(self):
         self.noise_floor = median(self.noise_samples) if self.noise_samples else 0.0
+        self.calibrated_noise_floor = self.noise_floor
         self.start_threshold = max(self.configured_start, min(1.0, self.noise_floor * 2.5 + 0.002))
         floor = min(self.noise_floor, self.start_threshold * 0.95)
         self.continue_threshold = floor + 0.25 * (self.start_threshold - floor)
@@ -81,7 +86,8 @@ class AdaptiveCaptureVAD:
                 return "stop"
             if self.adaptive and not was_calibrated:
                 self.noise_samples.append(rms)
-                self._thresholds()
+                if self.calibrated:
+                    self._thresholds()
                 return None
             if rms >= self.start_threshold:
                 self.candidate_duration += seconds
@@ -102,22 +108,36 @@ class AdaptiveCaptureVAD:
                     return "start"
             else:
                 self.candidate_duration = 0.0
-                if self.adaptive:
-                    self.noise_samples.append(rms)
-                    self._thresholds()
             return None
 
         self.capture_duration += seconds
-        if rms >= self.continue_threshold:
+        resume_pending = False
+        if rms >= self.start_threshold:
             self.speech_duration += seconds
             self.silence_duration = 0.0
+            self.resume_duration = 0.0
+        elif self.adaptive and rms >= self.continue_threshold:
+            previous_resume = self.resume_duration
+            self.resume_duration += seconds
+            if self.resume_duration + 1e-9 >= 0.06:
+                # Count the confirmation run once, not isolated room-noise spikes.
+                self.speech_duration += (
+                    seconds if previous_resume + 1e-9 >= 0.06 else self.resume_duration
+                )
+                self.silence_duration = 0.0
+            else:
+                self.silence_duration += seconds
+                resume_pending = True
         else:
             self.silence_duration += seconds
+            self.resume_duration = 0.0
         # A minimum speech guard can never extend the maximum duration.
         if self.capture_duration + 1e-9 >= self.max_seconds:
             self.stop_reason = "max_duration"
             return "stop"
-        if self.silence_duration + 1e-9 >= self.silence_seconds:
+        # Allow an in-flight resume confirmation at the silence boundary, at
+        # most 60 ms. Maximum duration above still wins without any extension.
+        if self.silence_duration + 1e-9 >= self.silence_seconds and not resume_pending:
             if self.accepted:
                 self.stop_reason = "silence"
                 return "stop"
@@ -125,5 +145,6 @@ class AdaptiveCaptureVAD:
             self.speech_started = False
             self.capture_duration = self.speech_duration = 0.0
             self.candidate_duration = self.silence_duration = 0.0
+            self.resume_duration = 0.0
             return "reset"
         return None
