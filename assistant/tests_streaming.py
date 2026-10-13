@@ -673,6 +673,8 @@ class WarmModelCommandTests(TestCase):
     def test_genuine_model_errors_are_not_retried(self, warm_model, warm_chat_prefix):
         for failure in (
             ModelUnavailableError("model not found"),
+            ModelUnavailableError("timed out waiting for llama-server to start"),
+            EngineTimeoutError("timed out waiting for llama-server to start"),
             EngineUnavailableError("runner failed"),
         ):
             with self.subTest(failure=type(failure).__name__):
@@ -684,6 +686,86 @@ class WarmModelCommandTests(TestCase):
                 warm_model.assert_called_once()
                 self.wait_for_ollama.assert_called_once()
                 warm_chat_prefix.assert_not_called()
+
+    @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_chat_prefix")
+    @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_model")
+    def test_runner_startup_retry_then_prefix_shares_remaining_budget(
+        self, warm_model, warm_chat_prefix,
+    ):
+        clock = [100.0]
+
+        def load_model(**kwargs):
+            clock[0] += 16.0 if warm_model.call_count == 1 else 30.0
+            if warm_model.call_count == 1:
+                raise EngineUnavailableError(
+                    "Ollama error (HTTP 500): timed out waiting for llama-server to start"
+                )
+            return {"done": True}
+
+        warm_model.side_effect = load_model
+        warm_chat_prefix.return_value = {"done": True}
+        output = io.StringIO()
+        with (
+            patch("assistant.management.commands.warm_ai_model.time.monotonic",
+                  side_effect=lambda: clock[0]),
+            patch("assistant.management.commands.warm_ai_model.time.sleep",
+                  side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)) as sleep,
+        ):
+            call_command("warm_ai_model", timeout=90, stdout=output)
+        sleep.assert_called_once_with(2.0)
+        self.assertEqual(
+            [call.kwargs["timeout_seconds"] for call in warm_model.call_args_list],
+            [90.0, 72.0],
+        )
+        warm_chat_prefix.assert_called_once_with(
+            system_instruction=VOICE_SAFETY_INSTRUCTION, system_prompt="",
+            model=settings.OLLAMA_MODEL, timeout_seconds=42.0,
+        )
+        self.assertIn("attempt 2/3", output.getvalue())
+        self.assertNotIn("HTTP 500", output.getvalue())
+
+    @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_chat_prefix")
+    @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_model")
+    def test_runner_startup_failures_stop_after_three_attempts(
+        self, warm_model, warm_chat_prefix,
+    ):
+        warm_model.side_effect = EngineUnavailableError(
+            "Ollama error (HTTP 500): timed out waiting for llama-server to start"
+        )
+        with (
+            patch("assistant.management.commands.warm_ai_model.time.monotonic", return_value=100.0),
+            patch("assistant.management.commands.warm_ai_model.time.sleep") as sleep,
+            self.assertRaisesRegex(CommandError, "Ollama is unavailable"),
+        ):
+            call_command("warm_ai_model", stdout=io.StringIO())
+        self.assertEqual(warm_model.call_count, 3)
+        self.assertEqual([call.args for call in sleep.call_args_list], [(2.0,), (2.0,)])
+        warm_chat_prefix.assert_not_called()
+
+    @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_chat_prefix")
+    @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_model")
+    def test_runner_retry_sleep_is_clipped_to_shared_deadline(
+        self, warm_model, warm_chat_prefix,
+    ):
+        clock = [100.0]
+
+        def fail_model(**kwargs):
+            clock[0] += 9.5
+            raise EngineUnavailableError("timed out waiting for llama-server to start")
+
+        warm_model.side_effect = fail_model
+        with (
+            patch("assistant.management.commands.warm_ai_model.time.monotonic",
+                  side_effect=lambda: clock[0]),
+            patch("assistant.management.commands.warm_ai_model.time.sleep",
+                  side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)) as sleep,
+            self.assertRaisesRegex(CommandError, "warm-up timed out"),
+        ):
+            call_command("warm_ai_model", timeout=10, stdout=io.StringIO())
+        sleep.assert_called_once_with(0.5)
+        warm_model.assert_called_once()
+        self.assertEqual(clock[0], 110.0)
+        warm_chat_prefix.assert_not_called()
 
     @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_chat_prefix")
     @patch("assistant.management.commands.warm_ai_model.LocalLLMEngine.warm_model")
@@ -846,3 +928,6 @@ class StreamingFrontendStructureTests(TestCase):
         )
         self.assertNotIn("After=smart-ai-companion.service", warm_unit)
         self.assertIn("manage.py warm_ai_model --timeout 90", warm_unit)
+        self.assertIn("TimeoutStartSec=120", warm_unit)
+        self.assertIn("Restart=on-failure", warm_unit)
+        self.assertIn("RestartSec=5", warm_unit)

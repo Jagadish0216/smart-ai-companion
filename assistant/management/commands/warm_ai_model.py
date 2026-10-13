@@ -88,10 +88,30 @@ class Command(BaseCommand):
         deadline = time.monotonic() + timeout
         try:
             _wait_for_ollama(settings.OLLAMA_HOST, deadline)
-            model_result = engine.warm_model(
-                model=model,
-                timeout_seconds=_remaining_timeout(deadline),
-            )
+            for attempt in range(1, 4):
+                try:
+                    model_result = engine.warm_model(
+                        model=model,
+                        timeout_seconds=_remaining_timeout(deadline),
+                    )
+                    break
+                except (ModelUnavailableError, EngineTimeoutError):
+                    raise
+                except EngineUnavailableError as exc:
+                    # An HTTP-ready Ollama can still be starting its cold runner.
+                    # Do not retry unrelated HTTP/model errors or prefix failures.
+                    if (
+                        "timed out waiting for llama-server to start"
+                        not in str(exc).casefold()
+                        or attempt == 3
+                    ):
+                        raise
+                    delay = min(2.0, _remaining_timeout(deadline))
+                    self.stdout.write(
+                        "Ollama model runner is still starting; "
+                        f"retrying warm-up (attempt {attempt + 1}/3)."
+                    )
+                    time.sleep(delay)
 
             prefix_result = engine.warm_chat_prefix(
                 system_instruction=VOICE_SAFETY_INSTRUCTION,
