@@ -10,8 +10,13 @@ from dataclasses import dataclass
 
 from django.conf import settings
 from django.db.models import Q
+from django.utils import timezone
 
 from .models import KnowledgeChunk
+
+
+def usable_knowledge_filter():
+    return Q(document__source_type="MANUAL") | Q(document__source_type="ONLINE", document__expires_at__gt=timezone.now())
 
 
 _STOP_WORDS = {
@@ -88,6 +93,7 @@ class LexicalRetriever(KnowledgeRetriever):
         candidates = (
             KnowledgeChunk.objects
             .filter(document__status="INDEXED")
+            .filter(usable_knowledge_filter())
             .filter(candidate_filter)
             .select_related("document")
             .order_by("document_id", "chunk_index")

@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly Smart AI Companion online knowledge synchronization
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=5m
+Unit=smart-ai-companion-knowledge-sync.service
+
+[Install]
+WantedBy=timers.target

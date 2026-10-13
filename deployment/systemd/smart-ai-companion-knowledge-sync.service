@@ -1,0 +1,14 @@
+[Unit]
+Description=Synchronize stale Smart AI Companion online knowledge
+After=network.target
+
+[Service]
+Type=oneshot
+User=jagadish
+Group=jagadish
+WorkingDirectory=/home/jagadish/apps/smart-ai-companion
+EnvironmentFile=-/home/jagadish/apps/smart-ai-companion/.env
+ExecStart=/home/jagadish/apps/smart-ai-companion/venv/bin/python /home/jagadish/apps/smart-ai-companion/manage.py sync_online_knowledge
+TimeoutStartSec=1800
+PrivateTmp=true
+NoNewPrivileges=true

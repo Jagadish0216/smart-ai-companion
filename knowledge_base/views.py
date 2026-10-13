@@ -12,6 +12,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import Document
+from .online_sync import OnlineKnowledgeSyncService
 from .services import (
     KnowledgeIngestionError, KnowledgeIngestionService, MAX_UPLOAD_BYTES,
     SUPPORTED_FORMATS, safe_document_filename,
@@ -32,6 +33,16 @@ def document_payload(document):
         "uploaded_at": document.uploaded_at.isoformat(),
         "indexed_at": document.indexed_at.isoformat() if document.indexed_at else None,
         "error_message": document.error_message,
+        "source_type": document.source_type,
+        "provider": document.provider,
+        "source_url": document.source_url,
+        "source_title": document.source_title,
+        "sync_query": document.sync_query,
+        "retrieved_at": document.retrieved_at.isoformat() if document.retrieved_at else None,
+        "last_synced_at": document.last_synced_at.isoformat() if document.last_synced_at else None,
+        "expires_at": document.expires_at.isoformat() if document.expires_at else None,
+        "freshness": document.freshness,
+        "sync_error_message": document.sync_error_message,
     }
 
 
@@ -95,7 +106,42 @@ class ReindexDocumentAPIView(APIView):
             document = Document.objects.get(pk=document_id)
         except Document.DoesNotExist:
             return Response({"error": "Document not found."}, status=404)
+        if document.source_type == Document.SourceType.ONLINE:
+            return Response({"error": "Use Sync to refresh an online source."}, status=400)
         return index_document(document)
+
+
+class SyncDocumentAPIView(APIView):
+    authentication_classes = [SessionAuthentication]
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, document_id):
+        try:
+            document = Document.objects.get(pk=document_id)
+        except Document.DoesNotExist:
+            return Response({"error": "Document not found."}, status=404)
+        if document.source_type != Document.SourceType.ONLINE:
+            return Response({"error": "Only online sources can be synchronized."}, status=400)
+        try:
+            result = OnlineKnowledgeSyncService().sync_document(document)
+            document.refresh_from_db()
+            return Response({"sync": result.as_dict(), "document": document_payload(document)})
+        except Exception:
+            logger.warning("Manual online knowledge synchronization unavailable")
+            return Response({"error": "Synchronization could not run. Check configuration and local storage."}, status=503)
+
+
+class SyncStaleKnowledgeAPIView(APIView):
+    authentication_classes = [SessionAuthentication]
+    permission_classes = [IsAdminUser]
+
+    def post(self, request):
+        try:
+            result = OnlineKnowledgeSyncService().sync_stale()
+            return Response({"sync": result.as_dict()})
+        except Exception:
+            logger.warning("Stale online knowledge synchronization unavailable")
+            return Response({"error": "Synchronization could not run. Check configuration and local storage."}, status=503)
 
 
 class DeleteDocumentAPIView(APIView):

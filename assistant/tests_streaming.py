@@ -226,6 +226,7 @@ class LocalStreamingEngineTests(TestCase):
                     self.engine.warm_chat_prefix()
 
 
+@override_settings(ONLINE_KNOWLEDGE_AUTO_PERSIST=False)
 class GenerationInstructionOrderingTests(TestCase):
     @patch("assistant.services.build_rag_instruction", return_value="RAG_DYNAMIC")
     def test_stable_grounding_precedes_dynamic_context(self, build_rag):
