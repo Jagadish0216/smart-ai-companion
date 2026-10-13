@@ -44,6 +44,7 @@ from assistant.voice.factory import close_tts_provider, get_stt_provider, get_tt
 from assistant.voice.processes import run_cancellable  # noqa: E402
 from assistant.voice.tts import TextToSpeechProvider  # noqa: E402
 from assistant.voice.alsa_stream import PersistentAlsaPlayer, trim_pcm_edges  # noqa: E402
+from assistant.voice.capture_vad import AdaptiveCaptureVAD  # noqa: E402
 
 CAPTURE_SAMPLE_RATE = 16000
 CAPTURE_SAMPLE_WIDTH = 2
@@ -89,6 +90,10 @@ class VoiceLoopConfig:
     stream_inter_chunk_silence_seconds: float = 0.12
     stream_first_chunk_min_chars: int = 60
     stream_first_chunk_target_chars: int = 100
+    capture_vad_adaptive: bool = True
+    capture_vad_noise_calibration_seconds: float = 0.5
+    capture_vad_start_confirm_ms: int = 60
+    capture_vad_min_speech_ms: int = 300
 
     @classmethod
     def from_settings(cls, *, require_capture: bool = True) -> "VoiceLoopConfig":
@@ -134,6 +139,10 @@ class VoiceLoopConfig:
             ),
             stream_first_chunk_min_chars=int(getattr(settings, "VOICE_STREAM_FIRST_CHUNK_MIN_CHARS", 60)),
             stream_first_chunk_target_chars=int(getattr(settings, "VOICE_STREAM_FIRST_CHUNK_TARGET_CHARS", 100)),
+            capture_vad_adaptive=_as_bool(getattr(settings, "VOICE_CAPTURE_VAD_ADAPTIVE", True)),
+            capture_vad_noise_calibration_seconds=float(getattr(settings, "VOICE_CAPTURE_VAD_NOISE_CALIBRATION_SECONDS", 0.5)),
+            capture_vad_start_confirm_ms=int(getattr(settings, "VOICE_CAPTURE_VAD_START_CONFIRM_MS", 60)),
+            capture_vad_min_speech_ms=int(getattr(settings, "VOICE_CAPTURE_VAD_MIN_SPEECH_MS", 300)),
         )
         config.validate(require_capture=require_capture)
         return config
@@ -193,6 +202,11 @@ class VoiceLoopConfig:
             raise VoiceLoopError(
                 "VOICE_CAPTURE_VAD_START_TIMEOUT_SECONDS must be greater than zero."
             )
+        for name in ("capture_vad_noise_calibration_seconds", "capture_vad_start_confirm_ms", "capture_vad_min_speech_ms"):
+            if not math.isfinite(getattr(self, name)) or getattr(self, name) <= 0:
+                raise VoiceLoopError(f"Voice setting {name} must be finite and positive.")
+        if not 40 <= self.capture_vad_start_confirm_ms <= 100:
+            raise VoiceLoopError("VOICE_CAPTURE_VAD_START_CONFIRM_MS must be between 40 and 100.")
 
 
 def _as_bool(value) -> bool:
@@ -330,9 +344,18 @@ def record_audio_with_capture_vad(
     silence_seconds: float,
     max_seconds: float,
     start_timeout_seconds: float,
-    *, backend: str = "pulse",
+    *, backend: str = "pulse", adaptive: bool = True,
+    noise_calibration_seconds: float = 0.5, start_confirm_ms: int = 60,
+    min_speech_ms: int = 300,
 ) -> None:
     """Record raw PCM until speech ends, retaining a short pre-roll buffer."""
+    vad = AdaptiveCaptureVAD(
+        start_threshold=start_threshold, silence_seconds=silence_seconds,
+        max_seconds=max_seconds, start_timeout_seconds=start_timeout_seconds,
+        adaptive=adaptive, noise_calibration_seconds=noise_calibration_seconds,
+        start_confirm_ms=start_confirm_ms, min_speech_ms=min_speech_ms,
+        chunk_seconds=CAPTURE_CHUNK_SECONDS,
+    )
     sample_rate, sample_width, channels = CAPTURE_SAMPLE_RATE, CAPTURE_SAMPLE_WIDTH, 1
     command = [
         "parecord",
@@ -372,10 +395,6 @@ def record_audio_with_capture_vad(
     )
     preroll = deque(maxlen=preroll_chunks)
     frames: list[bytes] = []
-    wait_elapsed = 0.0
-    capture_elapsed = 0.0
-    silence_elapsed = 0.0
-    speech_started = False
     watchdog = None
     if backend == "alsa":
         # A stalled arecord pipe must not block forever waiting for PCM. Killing
@@ -395,7 +414,10 @@ def record_audio_with_capture_vad(
         if watchdog is not None:
             watchdog.start()
         time.sleep(warmup_seconds)
-        print("Speak now...")
+        if adaptive:
+            print(f"Keep quiet: calibrating capture noise for {noise_calibration_seconds:g}s...")
+        else:
+            print("Speak now...")
         if process.stdout is None:
             raise VoiceLoopError(f"Recording failed: {binary} audio stream is unavailable.")
 
@@ -412,32 +434,27 @@ def record_audio_with_capture_vad(
                 _normalized_alsa_left_rms(chunk)
                 if backend == "alsa" else _normalized_pcm_rms(chunk)
             )
-            has_speech = rms >= start_threshold
-
-            if not speech_started:
+            was_started, was_calibrated = vad.speech_started, vad.calibrated
+            event = vad.feed(rms, chunk_duration)
+            if not was_calibrated and vad.calibrated:
+                print("Speak now...")
+            if not was_started:
                 preroll.append(chunk)
-                wait_elapsed += chunk_duration
-                if has_speech:
-                    speech_started = True
+                if event == "start":
                     frames.extend(preroll)
                     preroll.clear()
-                    capture_elapsed = chunk_duration
-                elif wait_elapsed >= start_timeout_seconds:
-                    raise VoiceLoopError(
-                        "Recording stopped: no speech detected before the start timeout."
-                    )
-                continue
-
-            frames.append(chunk)
-            capture_elapsed += chunk_duration
-            if has_speech:
-                silence_elapsed = 0.0
             else:
-                silence_elapsed += chunk_duration
-
-            if silence_elapsed >= silence_seconds:
-                break
-            if capture_elapsed >= max_seconds:
+                frames.append(chunk)
+            if event == "reset":
+                frames.clear()
+                preroll.clear()
+            if vad.stop_reason == "start_timeout":
+                raise VoiceLoopError(
+                    "Recording stopped: no speech detected before the start timeout."
+                )
+            if vad.stop_reason is not None:
+                if not vad.accepted:
+                    raise VoiceLoopError("Recording stopped: insufficient voiced speech before maximum duration.")
                 break
     except KeyboardInterrupt:
         try:
@@ -465,6 +482,15 @@ def record_audio_with_capture_vad(
     finally:
         if watchdog is not None:
             watchdog.cancel()
+        if vad.stop_reason is not None:
+            print(
+                f"Capture VAD: noise_floor={vad.noise_floor:.4f} "
+                f"start_threshold={vad.start_threshold:.4f} "
+                f"continue_threshold={vad.continue_threshold:.4f} "
+                f"speech_duration={vad.speech_duration:.2f}s "
+                f"capture_duration={vad.capture_duration:.2f}s "
+                f"elapsed={vad.elapsed:.2f}s stop_reason={vad.stop_reason}"
+            )
 
     try:
         with wave.open(str(output_path), "wb") as wav_file:
@@ -1405,6 +1431,10 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
                         config.capture_vad_silence_seconds,
                         config.capture_vad_max_seconds,
                         config.capture_vad_start_timeout_seconds,
+                        adaptive=config.capture_vad_adaptive,
+                        noise_calibration_seconds=config.capture_vad_noise_calibration_seconds,
+                        start_confirm_ms=config.capture_vad_start_confirm_ms,
+                        min_speech_ms=config.capture_vad_min_speech_ms,
                         **({"backend": "alsa"} if config.audio_backend == "alsa" else {}),
                     )
                 else:

@@ -259,7 +259,7 @@ class DisplayVoiceLifecycleTests(SimpleTestCase):
             self.mocks[name] = patcher.start()
             self.addCleanup(patcher.stop)
         self.mocks["record_audio"].side_effect = lambda *args: self.events.append("record")
-        self.mocks["record_audio_with_capture_vad"].side_effect = lambda *args: self.events.append("record_vad")
+        self.mocks["record_audio_with_capture_vad"].side_effect = lambda *args, **kwargs: self.events.append("record_vad")
         self.mocks["normalize_audio"].side_effect = lambda *args: self.events.append("normalize")
         self.stt = self.mocks["get_stt_provider"].return_value
         self.stt.transcribe.side_effect = lambda *args: self.events.append("stt") or "Explain local AI."

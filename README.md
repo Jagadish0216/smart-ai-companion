@@ -438,7 +438,11 @@ Mock mode requires no external services and is useful for frontend development.
 | `VOICE_CAPTURE_VAD_START_THRESHOLD` | `0.02` | Normalized PCM RMS level (0–1) that starts speech capture |
 | `VOICE_CAPTURE_VAD_SILENCE_SECONDS` | `0.8` | Trailing silence that ends speech-driven capture |
 | `VOICE_CAPTURE_VAD_MAX_SECONDS` | `10` | Maximum speech capture duration after speech starts |
-| `VOICE_CAPTURE_VAD_START_TIMEOUT_SECONDS` | `5` | Maximum time to wait for speech after `Speak now...` |
+| `VOICE_CAPTURE_VAD_START_TIMEOUT_SECONDS` | `5` | Maximum pre-speech wait, including adaptive calibration |
+| `VOICE_CAPTURE_VAD_ADAPTIVE` | `true` | Adaptive capture-only RMS hysteresis; `false` selects the legacy single-threshold gate |
+| `VOICE_CAPTURE_VAD_NOISE_CALIBRATION_SECONDS` | `0.5` | Initial quiet median-noise calibration; included in the existing start timeout |
+| `VOICE_CAPTURE_VAD_START_CONFIRM_MS` | `60` | Consecutive above-start audio needed to start (40–100 ms) |
+| `VOICE_CAPTURE_VAD_MIN_SPEECH_MS` | `300` | Minimum voiced time before accepting a silence-ended recording |
 | `VOICE_LEADING_SILENCE_SECONDS` | `0.7` | Digital silence on the first playback chunk only; set `0.5` for Pi I2S |
 | `VOICE_STREAM_TTS_TARGET_CHARS` | `180` | Center target for sentence coalescing and long-text word-boundary fallback |
 | `VOICE_STREAM_FIRST_CHUNK_MIN_CHARS` | `60` | Minimum sanitized first-unit characters while streaming (final short answers still flush); must be positive |
@@ -481,7 +485,7 @@ The loop bounds fixed capture in Python (warm-up plus `VOICE_RECORD_SECONDS`, fo
 
 Whisper uses an explicit, configurable `STT_WHISPER_THREADS=4`, with or without Silero VAD. Invalid/non-positive thread values fail with `STTError` before transcription launches; timeout/error handling is otherwise unchanged. For the validated Pi 5, base.en is the recommended current deployment model: set `STT_WHISPER_MODEL` in the Pi's `.env` to its actual installed base.en path. No deployment-specific home path or model switch is introduced into portable source defaults. Supplied Pi base.en measurements were approximately 3.48/2.50/2.02 seconds with 2/3/4 threads, with accurate transcripts and throttle flags 0x0; these are prior physical results, not a new benchmark of this patch.
 
-Optional Silero VAD runs inside whisper.cpp after the fixed-duration recording. To enable it, set `STT_VAD_ENABLED=true` and copy the exact Silero model path on the Pi into `STT_VAD_MODEL`; disabling it removes only the VAD arguments, not the explicit thread setting. Microphone capture/VAD implementation is unchanged.
+Optional Silero VAD runs inside whisper.cpp after recording. To enable it, set `STT_VAD_ENABLED=true` and copy the exact Silero model path on the Pi into `STT_VAD_MODEL`; disabling it removes only the VAD arguments, not the explicit thread setting. This STT VAD is independent of the capture-only RMS state machine below.
 
 ```env
 STT_WHISPER_THREADS=4
@@ -515,6 +519,10 @@ VOICE_CAPTURE_VAD_START_THRESHOLD=0.02
 VOICE_CAPTURE_VAD_SILENCE_SECONDS=0.8
 VOICE_CAPTURE_VAD_MAX_SECONDS=10
 VOICE_CAPTURE_VAD_START_TIMEOUT_SECONDS=5
+VOICE_CAPTURE_VAD_ADAPTIVE=true
+VOICE_CAPTURE_VAD_NOISE_CALIBRATION_SECONDS=0.5
+VOICE_CAPTURE_VAD_START_CONFIRM_MS=60
+VOICE_CAPTURE_VAD_MIN_SPEECH_MS=300
 VOICE_TTS_CHUNK_CHARS=300
 VOICE_TTS_MAX_TOTAL_CHARS=0
 VOICE_STREAM_TTS_TARGET_CHARS=180
@@ -531,7 +539,19 @@ With the chosen backend configured, run:
 python scripts/voice_loop.py
 ```
 
-Press Enter to record one cycle, wait for `Speak now...`, or type `q` and press Enter to exit. By default, the microphone remains open for the warm-up plus the full `VOICE_RECORD_SECONDS` window, preserving the original fixed-duration behavior. Set `VOICE_CAPTURE_VAD_ENABLED=true` to wait for speech and stop after trailing silence instead. This live mode uses a lightweight PCM RMS gate and keeps 300 ms of pre-roll to avoid clipping the first word; whisper.cpp Silero VAD remains a separate downstream validation option. The `record` timing includes the complete microphone-open operation, and live mode also prints the captured audio duration.
+Press Enter to record one cycle, wait for `Speak now...`, or type `q` and press Enter to exit. By default, the microphone remains open for the warm-up plus the full `VOICE_RECORD_SECONDS` window, preserving the original fixed-duration behavior. Set `VOICE_CAPTURE_VAD_ENABLED=true` to wait for speech and stop after trailing silence instead. Keep quiet during the initial calibration prompt (default 0.5 s), then speak. Live capture retains 300 ms of pre-roll, including start-confirmation audio, to avoid clipping the first word. Whisper/Silero VAD remains an independent downstream stage. The `record` timing includes the complete microphone-open operation.
+
+Adaptive capture uses the median of a recent calibration-sized window of RMS samples. ALSA still uses only the signed 32-bit LEFT channel; Pulse uses mono signed 16-bit PCM. After calibration, only below-start, non-candidate samples update the noise estimate; active speech never updates it. Internal conservative constants are a 2.5 noise multiplier, 0.002 normalized RMS margin, and 25% continuation-gap fraction:
+
+```text
+start = max(VOICE_CAPTURE_VAD_START_THRESHOLD, min(1, 2.5 * noise_floor + 0.002))
+floor = min(noise_floor, 0.95 * start)
+continue = floor + 0.25 * (start - floor)
+```
+
+The floor clamp ensures `continue < start` even for saturated noise. A single spike cannot start capture: the default confirmation needs three consecutive 20 ms chunks. Once started, quieter words above `continue` remain speech and reset silence; only continuous below-continue audio reaches the existing 0.8 s silence stop. Shorter pauses do not accumulate across resumed words. A burst with less than 300 ms of voiced audio is rejected and capture waits again within the original start-timeout budget. The maximum post-start duration always wins, including when the minimum-voice guard is unmet (then the recording is rejected). Calibration and rejected bursts never receive a fresh start timeout. Set `VOICE_CAPTURE_VAD_ADAPTIVE=false` to retain the legacy one-chunk, single-threshold behavior without calibration/confirmation/minimum-voice checks; fixed-duration capture is unaffected.
+
+One `Capture VAD:` diagnostic line reports `noise_floor`, `start_threshold`, `continue_threshold`, voiced `speech_duration`, post-onset `capture_duration` (excluding pre-roll), total input `elapsed`, and `stop_reason=silence|max_duration|start_timeout`. The existing `Capture complete:` line reports actual saved audio including pre-roll. These deterministic RMS tests do not validate physical microphone/VAD performance; acceptance still requires human speech on the Pi. Injected audio/text modes never instantiate capture VAD.
 
 #### Persistent Piper initialization and cleanup
 

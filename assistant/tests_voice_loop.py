@@ -310,6 +310,7 @@ class VoiceLoopTests(SimpleTestCase):
                 silence_seconds=0.04,
                 max_seconds=10,
                 start_timeout_seconds=5,
+                adaptive=False,  # Legacy single-threshold/pre-roll compatibility.
             )
             with wave.open(str(output_path), "rb") as wav_file:
                 self.assertEqual(wav_file.getnframes(), 6 * 320)
@@ -343,6 +344,7 @@ class VoiceLoopTests(SimpleTestCase):
                 silence_seconds=1,
                 max_seconds=0.06,
                 start_timeout_seconds=1,
+                adaptive=False,
             )
             with wave.open(str(output_path), "rb") as wav_file:
                 self.assertEqual(wav_file.getnframes(), 3 * 320)
@@ -758,6 +760,7 @@ class VoiceInputInjectionTests(SimpleTestCase):
             "record_audio", "record_audio_alsa", "record_audio_with_capture_vad", "normalize_audio",
             "get_stt_provider", "get_tts_provider", "get_companion_display", "prepare_alsa_playback",
             "VoiceLoopConfig.from_settings", "AssistantService.process_message_stream",
+            "AdaptiveCaptureVAD",
         )
         for name in targets:
             patcher = patch("scripts.voice_loop." + name)
@@ -803,7 +806,7 @@ class VoiceInputInjectionTests(SimpleTestCase):
             self.addCleanup(patcher.stop)
 
     def assert_no_capture(self):
-        for name in ("record_audio", "record_audio_alsa", "record_audio_with_capture_vad"):
+        for name in ("record_audio", "record_audio_alsa", "record_audio_with_capture_vad", "AdaptiveCaptureVAD"):
             self.mocks[name].assert_not_called()
 
     def assert_reaped(self):
@@ -883,7 +886,10 @@ class VoiceInputInjectionTests(SimpleTestCase):
             self.assertEqual(voice_loop.main([]), 0)
         self.mocks["VoiceLoopConfig.from_settings"].assert_called_once_with()
         self.mocks["record_audio_with_capture_vad"].assert_called_once()
-        self.assertEqual(self.mocks["record_audio_with_capture_vad"].call_args.kwargs, {"backend": "alsa"})
+        self.assertEqual(self.mocks["record_audio_with_capture_vad"].call_args.kwargs, {
+            "backend": "alsa", "adaptive": True, "noise_calibration_seconds": 0.5,
+            "start_confirm_ms": 60, "min_speech_ms": 300,
+        })
         self.assertEqual(self.mocks["normalize_audio"].call_args.kwargs, {"left_channel": True})
         self.mocks["get_stt_provider"].return_value.transcribe.assert_called_once()
         self.assertEqual(self.states, ["READY", "LISTENING", "THINKING", "SPEAKING", "READY"])

@@ -81,7 +81,8 @@ class AlsaCaptureTests(SimpleTestCase):
 
     def capture_vad(self, **options):
         kwargs = dict(warmup_seconds=0.25, start_threshold=0.02,
-                      silence_seconds=0.04, max_seconds=1, start_timeout_seconds=0.1)
+                      silence_seconds=0.04, max_seconds=1, start_timeout_seconds=0.1,
+                      adaptive=False)  # Preserve legacy native-format coverage.
         kwargs.update(options)
         voice_loop.record_audio_with_capture_vad(self.output, DEVICE, backend="alsa", **kwargs)
 
@@ -324,7 +325,10 @@ class AlsaLifecycleTests(SimpleTestCase):
         self.mocks["record_audio_alsa"].assert_not_called()
         capture = self.mocks["record_audio_with_capture_vad"].call_args
         self.assertEqual(capture.args[1], DEVICE)
-        self.assertEqual(capture.kwargs, {"backend": "alsa"})
+        self.assertEqual(capture.kwargs, {
+            "backend": "alsa", "adaptive": True, "noise_calibration_seconds": 0.5,
+            "start_confirm_ms": 60, "min_speech_ms": 300,
+        })
 
     def test_first_chunk_has_half_second_digital_silence_only(self):
         source = piper_wav()
