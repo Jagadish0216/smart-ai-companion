@@ -616,6 +616,116 @@ pgrep -a aplay
 
 Verify transcription prints only in audio-file mode, normal streamed output/timing and speaker audio appear in both, TFT transitions remain correct, and no `aplay` child remains after each command has finished (when no other audio session is running). Also interrupt one injected response with Ctrl+C and repeat the process check. Optionally run `python scripts/voice_loop.py` afterward to confirm the existing microphone entry point is still available; the synthetic runs alone do not validate it.
 
+### Hands-free wake word (Phase 1)
+
+Offline hands-free operation is opt-in. Phase 1 uses the built-in **"Hey Jarvis"**
+phrase to validate the architecture. Install `requirements.txt` in the Pi's active
+Python environment (`openwakeword==0.6.0`). On Debian 13 with Python 3.13 (or
+Linux Python >=3.12), use the ONNX installation path below. The PyPI release
+hard-requires `tflite-runtime` on Linux, whose wheels stop at Python 3.11.
+`requirements.txt` therefore installs pinned ONNX prerequisites on newer Linux
+Python and leaves the engine installation explicit:
+
+```bash
+python -m pip install -r requirements.txt
+# Linux Python >=3.12 only; ONNX prerequisites were installed above:
+python -m pip install --no-deps openwakeword==0.6.0
+```
+
+On Windows or Linux Python <=3.11, `requirements.txt` installs the engine normally.
+The explicit ONNX path bypasses the unused upstream TFLite dependency; `pip check`
+will still report that missing upstream requirement. It does not affect ONNX
+inference. Dependency details are available in the [release metadata](https://pypi.org/project/openwakeword/0.6.0/).
+Then explicitly prepare the model:
+
+```bash
+python manage.py prepare_wake_word_model
+# Optional built-in override for this command only:
+python manage.py prepare_wake_word_model --model hey_jarvis
+```
+
+This command downloads only the selected built-in ONNX model and shared feature
+and Silero VAD assets into openWakeWord's installed resource directory. Run it as
+the same user/environment that runs the voice loop, with write permission to that
+directory. HTTP failures are reported cleanly, each HTTP operation has a 30-second
+timeout, and downloads replace files atomically. Preparation never edits `.env`.
+Django startup, `check`, `--help` and ordinary tests never download or load models.
+After preparation, wake inference runs offline. The pretrained models' licensing
+and input format are described in the [openWakeWord project](https://github.com/dscripka/openWakeWord/tree/v0.6.0).
+
+Set these overrides yourself for the existing Pi I2S setup:
+
+```dotenv
+VOICE_AUDIO_BACKEND=alsa
+VOICE_CAPTURE_VAD_ENABLED=true
+VOICE_WAKE_WORD_ENABLED=true
+VOICE_WAKE_WORD_ENGINE=openwakeword
+VOICE_WAKE_WORD_MODEL=hey_jarvis
+VOICE_WAKE_WORD_MODEL_PATH=
+VOICE_WAKE_WORD_THRESHOLD=0.5
+VOICE_WAKE_WORD_VAD_THRESHOLD=0.5
+VOICE_WAKE_WORD_TIMEOUT_SECONDS=0
+VOICE_WAKE_WORD_COOLDOWN_SECONDS=0.75
+```
+
+```bash
+python scripts/voice_loop.py --hands-free
+```
+
+Say "Hey Jarvis", then speak your request after LISTENING appears. Phase 1 closes
+wake capture and starts a fresh production request capture, including the existing
+microphone warm-up/calibration; leave that short gap before your request. Speech
+immediately attached to the wake phrase is not carried into request capture.
+
+The display initializes, Piper warms once, and the wake model warms once. READY
+waits for detection; LISTENING uses the existing adaptive microphone VAD; THINKING
+and SPEAKING use the existing STT/service/TTS/playback cycle. After playback fully
+drains, the cycle retains its READY/ECO/PROTECTIVE idle state, waits the cooldown,
+resets detector history, and resumes wake listening. No wake capture runs during
+request capture, inference, synthesis or playback. Exactly one microphone owner
+is active at a time, on `VOICE_ALSA_CAPTURE_DEVICE` (normally
+`hw:CARD=sndrpigooglevoi,DEV=0`). This serialization applies within this runtime;
+avoid running another microphone application or a second voice loop on the device.
+
+Idle audio stays in bounded memory buffers: arecord reads native stereo 48 kHz
+S32_LE, Python/NumPy extracts LEFT, applies a 63-tap 7 kHz low-pass FIR, decimates
+by three and clips to mono 16 kHz S16_LE. FIR history, byte fragments and sampling
+phase survive pipe boundaries. openWakeWord receives 1280-sample (80 ms) frames.
+There are no idle audio files, per-frame subprocesses or extra detector threads.
+The wake model stays resident; Whisper is reached only by the existing voice cycle.
+
+| Setting | Development default | Validation / behavior |
+| --- | --- | --- |
+| `VOICE_WAKE_WORD_ENABLED` | `false` | `--hands-free` requires `true`; ordinary modes bypass wake word |
+| `VOICE_WAKE_WORD_ENGINE` | `openwakeword` | Provider abstraction keeps engine code outside the voice loop |
+| `VOICE_WAKE_WORD_MODEL` | `hey_jarvis` | Built-in name; overridden by MODEL_PATH |
+| `VOICE_WAKE_WORD_MODEL_PATH` | empty | Existing custom `.onnx` or `.tflite` file |
+| `VOICE_WAKE_WORD_THRESHOLD` | `0.5` | Finite, greater than 0 and at most 1; score at threshold triggers |
+| `VOICE_WAKE_WORD_VAD_THRESHOLD` | `0.5` | Finite 0..1; 0 disables wake-engine VAD, independently of capture VAD |
+| `VOICE_WAKE_WORD_TIMEOUT_SECONDS` | `0` | Finite, nonnegative; 0 waits indefinitely; timeout resumes listening |
+| `VOICE_WAKE_WORD_COOLDOWN_SECONDS` | `0.75` | Finite 0..5 seconds after fully drained playback |
+
+For a future custom phrase, set `VOICE_WAKE_WORD_MODEL_PATH=/absolute/path/custom.onnx`
+and run preparation again to install shared assets. The custom file must already
+exist and is never downloaded or replaced; MODEL_PATH takes precedence over MODEL.
+ONNX is the recommended Pi backend. TFLite custom models require a compatible
+`tflite-runtime` installed separately. The voice loop needs no change for a custom
+model. Tune thresholds on real hardware; phase-1 automated tests mock the engine
+and do not establish acoustic detection accuracy.
+
+Startup prints engine/model/threshold; detections print model/score/elapsed wait.
+Per-frame scores are debug-level logging only. Recoverable request or microphone
+errors show ERROR and retry after at least 0.5 seconds, retaining the last successful
+conversation. A missing dependency/model fails at startup with a preparation hint.
+Ctrl+C stops and reaps wake arecord, closes the wake provider and Piper, then closes
+the display; the existing cycle remains responsible for request/playback cleanup.
+
+To disable, set `VOICE_WAKE_WORD_ENABLED=false` and run `python scripts/voice_loop.py`
+without `--hands-free` for the original Enter-to-record operation. `--text`,
+`--text-mode` and `--audio-file` always bypass wake word even when it is enabled;
+all four input modes are mutually exclusive. The existing systemd/web deployment
+does not automatically start hands-free operation.
+
 The voice loop applies the assistant response policy before generation. Brief requests stay direct, normal requests remain concise but sufficient, and explicit requests for detail, steps, examples, or comparisons can use the larger detailed budget and produce complete answers. Ambiguous commands ask for clarification. Recognized actions that require an unavailable sensor, device, camera, retrieval source, or scheduler are answered honestly instead of being presented as completed.
 
 The voice loop consumes `AssistantService.process_message_stream()` directly: `start` selects the conversation ID, `delta` feeds a sentence-aware speech buffer, `done` flushes the final speech remainder and supplies the canonical response/metadata, and `error` cancels audio and reports ERROR. Routing, grounding, memory, model selection, response budgets and persistence remain owned by the service; there is no additional AI call or browser endpoint change. The service still persists the complete canonical response, including any resource notices.

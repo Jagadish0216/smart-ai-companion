@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Standalone push-to-talk voice loop for the Raspberry Pi."""
+"""Standalone interactive or opt-in hands-free voice loop for the Raspberry Pi."""
 
 from __future__ import annotations
 
@@ -45,6 +45,8 @@ from assistant.voice.processes import run_cancellable  # noqa: E402
 from assistant.voice.tts import TextToSpeechProvider  # noqa: E402
 from assistant.voice.alsa_stream import PersistentAlsaPlayer, trim_pcm_edges  # noqa: E402
 from assistant.voice.capture_vad import AdaptiveCaptureVAD  # noqa: E402
+from assistant.voice.wakeword.base import WakeWordConfig, WakeWordError  # noqa: E402
+from assistant.voice.wakeword.factory import get_wake_word_provider  # noqa: E402
 
 CAPTURE_SAMPLE_RATE = 16000
 CAPTURE_SAMPLE_WIDTH = 2
@@ -1496,22 +1498,67 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
     return next_conversation_id
 
 
+def run_hands_free(config, wake_config, provider, display):
+    """Serialize wake capture, the complete production cycle and cooldown.
+
+    The provider releases arecord before returning. run_voice_cycle returns
+    only after playback drains (or its failure cleanup finishes). No detector
+    thread exists to hear request capture, inference, TTS or speaker output.
+    """
+    conversation_id = None
+    print("Wake word:")
+    print(f"  engine={wake_config.engine}")
+    print(f"  model={wake_config.selected_model}")
+    print(f"  threshold={wake_config.threshold:.2f}")
+    provider.warm()
+    _set_display_state(display, DisplayState.READY)
+    while True:
+        try:
+            detection = provider.wait_for_wake_word(config.alsa_capture_device)
+            if not detection.detected:
+                provider.reset()
+                # A tiny configured timeout must not create a rapid reopen loop.
+                time.sleep(max(0.1, wake_config.cooldown_seconds))
+                continue
+            print(f"Wake detected: model={detection.model} score={detection.score:.3f} latency={detection.elapsed_seconds:.3f}s")
+            _set_display_state(display, DisplayState.LISTENING)
+            conversation_id = run_voice_cycle(config, conversation_id, display=display)
+            time.sleep(wake_config.cooldown_seconds)
+            provider.reset()
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:
+            _set_display_state(display, DisplayState.ERROR)
+            print(f"Hands-free cycle error: {exc}", file=sys.stderr)
+            time.sleep(max(0.5, wake_config.cooldown_seconds))
+            provider.reset()
+            _set_display_state(display, DisplayState.READY)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Production voice loop with optional development input injection.")
     inputs = parser.add_mutually_exclusive_group()
     inputs.add_argument("--audio-file", type=Path, help="Run once using an audio file instead of microphone capture.")
     inputs.add_argument("--text", help="Run once using text, bypassing capture, normalization and STT.")
     inputs.add_argument("--text-mode", action="store_true", help="Interactively enter text while retaining the conversation.")
+    inputs.add_argument("--hands-free", action="store_true", help="Continuously wait for the offline wake word, then run a microphone voice cycle (requires enabled wake word and ALSA capture VAD).")
     args = parser.parse_args(argv)
     if args.text is not None and not args.text.strip():
         parser.error("--text must not be empty")
     single_input = args.audio_file is not None or args.text is not None
+    wake_config = None
     try:
         config = (
             VoiceLoopConfig.from_settings(require_capture=False) if single_input or args.text_mode
             else VoiceLoopConfig.from_settings()
         )
-    except (TypeError, ValueError, VoiceLoopError) as exc:
+        if args.hands_free:
+            wake_config = WakeWordConfig.from_settings()
+            if not wake_config.enabled:
+                raise WakeWordError("--hands-free requires VOICE_WAKE_WORD_ENABLED=true. Omit the flag for Enter-to-record mode.")
+            if config.audio_backend != "alsa" or not config.capture_vad_enabled:
+                raise WakeWordError("--hands-free requires VOICE_AUDIO_BACKEND=alsa and VOICE_CAPTURE_VAD_ENABLED=true.")
+    except (TypeError, ValueError, VoiceLoopError, WakeWordError) as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 1
 
@@ -1519,10 +1566,12 @@ def main(argv=None) -> int:
     print(f"Audio backend: {config.audio_backend}")
     if not single_input and not args.text_mode:
         print(f"Input source: {config.alsa_capture_device if config.audio_backend == 'alsa' else config.input_source}")
-        print("Press Enter to record, or type q and press Enter to quit.")
+        if not args.hands_free:
+            print("Press Enter to record, or type q and press Enter to quit.")
     conversation_id = None
     display = get_companion_display()
     tts_provider = None
+    wake_provider = None
     try:
         _set_display_state(display, DisplayState.READY)
         try:
@@ -1537,6 +1586,17 @@ def main(argv=None) -> int:
             _set_display_state(display, DisplayState.ERROR)
             print(f"TTS warm-up failed: {exc}", file=sys.stderr)
             return 1
+        if args.hands_free:
+            try:
+                wake_provider = get_wake_word_provider(wake_config)
+                run_hands_free(config, wake_config, wake_provider, display)
+            except KeyboardInterrupt:
+                print("\nExiting hands-free voice loop.")
+                return 130
+            except Exception as exc:
+                _set_display_state(display, DisplayState.ERROR)
+                print(f"Hands-free startup/runtime failed: {exc}", file=sys.stderr)
+                return 1
         while True:
             injection = {}
             if single_input:
@@ -1577,15 +1637,21 @@ def main(argv=None) -> int:
                 return exit_code
     finally:
         try:
-            if tts_provider is not None:
-                tts_provider.close()
+            if wake_provider is not None:
+                wake_provider.close()
         except Exception:
-            logger.warning("Speech provider cleanup failed")
+            logger.warning("Wake provider cleanup failed")
         finally:
             try:
-                display.close()
+                if tts_provider is not None:
+                    tts_provider.close()
             except Exception:
-                logger.warning("Companion display cleanup failed")
+                logger.warning("Speech provider cleanup failed")
+            finally:
+                try:
+                    display.close()
+                except Exception:
+                    logger.warning("Companion display cleanup failed")
 
 
 if __name__ == "__main__":
