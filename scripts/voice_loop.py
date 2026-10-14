@@ -68,6 +68,15 @@ def _set_display_state(display, state):
             logger.warning("Companion display update failed; voice interaction continues")
 
 
+def _set_display_text(display, text):
+    """Keep answer-text display failures out of the voice path and logs."""
+    if display is not None:
+        try:
+            display.set_text(text)
+        except Exception:
+            logger.warning("Companion display text update failed; voice interaction continues")
+
+
 class VoiceLoopError(Exception):
     """Raised when one stage of a voice cycle cannot complete."""
 
@@ -943,12 +952,34 @@ class LeadingResourceNoticeFilter:
 class PreparedAudio:
     number: int
     path: Path
+    speech_text: str
     leading_silence_frames: int = 0
     trailing_silence_frames: int = 0
 
 
+def split_caption_pages(text):
+    """Paginate exact speech words, preferring substantial clause boundaries."""
+    remaining = " ".join(text.split())
+    pages = []
+    while remaining:
+        if len(remaining) <= 40:
+            pages.append(remaining)
+            break
+        end = remaining.rfind(" ", 0, 41)
+        if end <= 0:
+            end = 40  # Only an oversized token may be split inside a word.
+        else:
+            boundaries = list(re.finditer(r"[,.;:!?](?=\s|$)", remaining[:end]))
+            if boundaries and boundaries[-1].end() >= 20:
+                end = boundaries[-1].end()
+        pages.append(remaining[:end])
+        remaining = remaining[end:].lstrip()
+    return pages
+
+
 def speak_stream_response(events, tts_provider, temp_path, config, timings, cycle_started,
-                          on_playback_start=None):
+                          on_playback_start: Callable[[str], None] | None = None,
+                          on_caption: Callable[[str], None] | None = None):
     """Service producer -> bounded text -> one preparer -> bounded audio -> one player."""
     pending = Queue(maxsize=2)
     ready_audio = Queue(maxsize=2)
@@ -989,7 +1020,7 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                 pass
         return finish
 
-    def prepare_audio(audio, number):
+    def prepare_audio(audio, number, text):
         if number == 1 and config.audio_backend != "alsa":
             audio = prepend_leading_silence(audio, config.leading_silence_seconds)
         playback_path = temp_path / f"stream-playback-{number:03d}.wav"
@@ -999,8 +1030,8 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
             speaker_path = temp_path / f"stream-speaker-{number:03d}.pcm"
             prepare_alsa_playback(playback_path, source_pcm, config.playback_gain, cancel_event=stopped, raw_pcm=True)
             leading, trailing = trim_pcm_edges(source_pcm, speaker_path, trim_leading=number > 1, cancel_event=stopped)
-            return PreparedAudio(number, speaker_path, leading, trailing)
-        return PreparedAudio(number, playback_path)
+            return PreparedAudio(number, speaker_path, text, leading, trailing)
+        return PreparedAudio(number, playback_path, text)
 
     def preparation_worker():
         number = 0
@@ -1027,7 +1058,7 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                 if stopped.is_set():
                     return
                 try:
-                    prepared = _timed_call(timings, "audio_prepare", prepare_audio, audio, number)
+                    prepared = _timed_call(timings, "audio_prepare", prepare_audio, audio, number, text)
                 except Exception as exc:
                     raise VoiceLoopError(f"Audio preparation failed on streaming chunk {number}: {exc}") from exc
                 if number == 1:
@@ -1041,6 +1072,18 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
         player = None
         playback_started = None
         previous_trailing_frames = 0
+        last_caption = None
+
+        def caption(page):
+            nonlocal last_caption
+            if page == last_caption:
+                return
+            last_caption = page
+            try:
+                on_caption(page)
+            except Exception:
+                logger.warning("Companion display caption update failed; audio continues")
+
         timings.update(playback_chunks=0, playback_starvation_ms=0.0, max_playback_starvation_ms=0.0)
         try:
             while not stopped.is_set():
@@ -1073,12 +1116,29 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                 if prepared.number == 1:
                     if on_playback_start is not None:
                         try:
-                            on_playback_start()
+                            on_playback_start(prepared.speech_text)
                         except Exception:
                             logger.warning("Companion display playback update failed; audio continues")
+                pages = split_caption_pages(prepared.speech_text) if on_caption is not None else []
+                if pages:
+                    caption(pages[0])
+                if prepared.number == 1:
                     playback_started = time.perf_counter()
                     timings["first_speech"] = playback_started - cycle_started
                     timings["ai_to_first_speech"] = playback_started - stream_started
+                page_index = 0
+                total_chars = sum(map(len, pages))
+                threshold_chars = len(pages[0]) if pages else 0
+
+                def caption_progress(written, total):
+                    # Text-weighted PCM write progress approximates phrases;
+                    # aplay buffering means this is not a word timestamp.
+                    nonlocal page_index, threshold_chars
+                    while page_index + 1 < len(pages) and written * total_chars >= total * threshold_chars:
+                        page_index += 1
+                        caption(pages[page_index])
+                        threshold_chars += len(pages[page_index])
+
                 try:
                     if config.audio_backend == "alsa":
                         if player is None:
@@ -1089,7 +1149,10 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                             gap_frames = max(0, round(config.stream_inter_chunk_silence_seconds * ALSA_SAMPLE_RATE)
                                              - previous_trailing_frames - prepared.leading_silence_frames)
                             player.write_silence(gap_frames)
-                        player.write_file(prepared.path)
+                        if len(pages) > 1:
+                            player.write_file(prepared.path, on_progress=caption_progress)
+                        else:
+                            player.write_file(prepared.path)
                         previous_trailing_frames = prepared.trailing_silence_frames
                     else:
                         _timed_call(timings, "playback", play_audio, prepared.path, cancel_event=stopped)
@@ -1513,13 +1576,18 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
 
         if not hands_free_request:
             _set_display_state(display, DisplayState.THINKING)
+
+        def on_playback_start(first_speech_text):
+            _set_display_state(display, DisplayState.SPEAKING)
+
         try:
             events = AssistantService.process_message_stream(
                 transcript, conversation_id=conversation_id, response_plan=response_plan,
             )
             returned_id, metadata = speak_stream_response(
                 events, get_tts_provider(), temp_path, config, timings, cycle_started,
-                on_playback_start=lambda: _set_display_state(display, DisplayState.SPEAKING),
+                on_playback_start=on_playback_start,
+                on_caption=lambda page: _set_display_text(display, page),
             )
         except VoiceLoopError:
             raise

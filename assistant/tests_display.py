@@ -1,4 +1,6 @@
 import io
+import os
+import struct
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -245,22 +247,56 @@ class DisplayCommandTests(SimpleTestCase):
         factory.assert_not_called()
 
 
+class CaptionPaginationTests(SimpleTestCase):
+    def test_words_punctuation_and_order_survive_paging(self):
+        text = "A Raspberry Pi is a small, credit-card-sized computer used for learning and making projects."
+        pages = voice_loop.split_caption_pages(text)
+        self.assertEqual(pages, ["A Raspberry Pi is a small,", "credit-card-sized computer used for",
+                                 "learning and making projects."])
+        for sample in (text, FIRST_SENTENCE, SECOND_SENTENCE, THIRD_SENTENCE,
+                       "  Hello\nworld!\tHere are words; and more words to preserve, exactly.  "):
+            with self.subTest(text=sample):
+                pages = voice_loop.split_caption_pages(sample)
+                self.assertTrue(all(0 < len(page) <= 40 for page in pages))
+                self.assertEqual(" ".join(pages), " ".join(sample.split()))
+                self.assertEqual(pages, voice_loop.split_caption_pages(sample))
+
+    def test_empty_and_exact_limit(self):
+        for text in ("", " \n\t "):
+            self.assertEqual(voice_loop.split_caption_pages(text), [])
+        self.assertEqual(voice_loop.split_caption_pages("x" * 40), ["x" * 40])
+        text = "abcd " * 7 + "abcde"
+        self.assertEqual(len(text), 40)
+        self.assertEqual(voice_loop.split_caption_pages(text), [text])
+
+    def test_oversized_token_only_hard_splits_when_needed(self):
+        token = "x" * 93
+        self.assertEqual(voice_loop.split_caption_pages(token), ["x" * 40, "x" * 40, "x" * 13])
+        pages = voice_loop.split_caption_pages("Before " + token + " after.")
+        self.assertTrue(all(len(page) <= 40 for page in pages))
+        self.assertEqual(pages[0], "Before")
+        self.assertEqual("".join(pages[1:]).replace(" after.", ""), token)
+        self.assertTrue(pages[-1].endswith(" after."))
+
+
 @override_settings(RAG_ENABLED=False, ONLINE_RETRIEVAL_ENABLED=False, DEVICE_CONTROL_ENABLED=False)
 class DisplayVoiceLifecycleTests(SimpleTestCase):
     def setUp(self):
         self.events = []
         self.display = MagicMock()
         self.display.set_state.side_effect = lambda state: self.events.append(state.value)
+        self.display.set_text.side_effect = lambda text: self.events.append("TEXT:" + text)
         self.mocks = {}
-        targets = ("record_audio", "record_audio_with_capture_vad", "normalize_audio", "get_stt_provider",
+        targets = ("record_audio", "record_audio_alsa", "record_audio_with_capture_vad", "normalize_audio", "get_stt_provider",
                    "get_tts_provider", "AssistantService.process_message_stream", "play_audio", "prepend_leading_silence")
         for name in targets:
             patcher = patch("scripts.voice_loop." + name)
             self.mocks[name] = patcher.start()
             self.addCleanup(patcher.stop)
         self.mocks["record_audio"].side_effect = lambda *args: self.events.append("record")
+        self.mocks["record_audio_alsa"].side_effect = lambda *args: self.events.append("record")
         self.mocks["record_audio_with_capture_vad"].side_effect = lambda *args, **kwargs: self.events.append("record_vad")
-        self.mocks["normalize_audio"].side_effect = lambda *args: self.events.append("normalize")
+        self.mocks["normalize_audio"].side_effect = lambda *args, **kwargs: self.events.append("normalize")
         self.stt = self.mocks["get_stt_provider"].return_value
         self.stt.transcribe.side_effect = lambda *args: self.events.append("stt") or "Explain local AI."
         self.tts = self.mocks["get_tts_provider"].return_value
@@ -287,10 +323,187 @@ class DisplayVoiceLifecycleTests(SimpleTestCase):
         self.assertEqual([event for event in self.events if event in {state.value for state in DisplayState}],
                          ["LISTENING", "THINKING", "SPEAKING", "READY"])
         main_events = [event for event in self.events if event != "tts"]
-        self.assertEqual(main_events[main_events.index("SPEAKING") + 1], "play")
+        first_pages = [voice_loop.split_caption_pages(text)[0]
+                       for text in (FIRST_SENTENCE, SECOND_SENTENCE, THIRD_SENTENCE)]
+        self.assertEqual(main_events[main_events.index("SPEAKING"):],
+                         ["SPEAKING", "TEXT:" + first_pages[0], "play", "TEXT:" + first_pages[1],
+                          "play", "TEXT:" + first_pages[2], "play", "READY"])
+        self.assertEqual(self.display.set_text.call_args_list, [call(page) for page in first_pages])
+        self.assertEqual(self.tts.synthesize.call_args_list,
+                         [call(FIRST_SENTENCE), call(SECOND_SENTENCE), call(THIRD_SENTENCE)])
+        self.assertLess(self.events.index("SPEAKING"), self.events.index("TEXT:" + first_pages[0]))
+        self.assertLess(self.events.index("TEXT:" + first_pages[0]), self.events.index("play"))
         self.assertLess(self.events.index("tts"), self.events.index("SPEAKING"))
         self.assertEqual(self.events.count("play"), 3)
         self.assertEqual(self.events[-1], "READY")
+        self.display.clear_text.assert_not_called()
+
+    def alsa_cycle(self, display):
+        received = []
+        original_write = os.write
+        payload = struct.pack("<ii", 2**25, -(2**25)) * 48000
+
+        def prepare(path, output, gain, **kwargs):
+            self.events.append("prepare")
+            output.write_bytes(payload)
+
+        def write(fd, data):
+            if fd != 123:
+                return original_write(fd, data)
+            count = min(4096, len(data))  # Real partial writes drive caption thresholds.
+            block = bytes(data[:count])
+            received.append(block)
+            if any(block):
+                self.events.append("play")
+            return count
+
+        with patch("scripts.voice_loop.prepare_alsa_playback", side_effect=prepare), \
+                patch("assistant.voice.alsa_stream.subprocess.Popen") as popen, \
+                patch("assistant.voice.alsa_stream.os.set_blocking"), \
+                patch("assistant.voice.alsa_stream.os.write", side_effect=write):
+            child = popen.return_value
+            child.poll.return_value = None
+            child.stdin.fileno.return_value = 123
+
+            def wait(**kwargs):
+                child.poll.return_value = 0
+                return 0
+
+            child.wait.side_effect = wait
+            result = voice_loop.run_voice_cycle(voice_loop.VoiceLoopConfig("source", audio_backend="alsa"),
+                                                conversation_id=12, display=display)
+            popen.assert_called_once()
+            child.terminate.assert_not_called()
+        # All three native PCM speech chunks survive, with existing startup/gap silence.
+        self.assertEqual(b"".join(received), b"\x00" * (33600 * 8) + payload
+                         + b"\x00" * (5760 * 8) + payload + b"\x00" * (5760 * 8) + payload)
+        self.assertEqual(self.tts.synthesize.call_args_list,
+                         [call(FIRST_SENTENCE), call(SECOND_SENTENCE), call(THIRD_SENTENCE)])
+        return result
+
+    def test_alsa_first_prepared_speech_text_precedes_first_pcm_playback(self):
+        self.assertEqual(self.alsa_cycle(self.display), 42)
+        pages = [page for text in (FIRST_SENTENCE, SECOND_SENTENCE, THIRD_SENTENCE)
+                 for page in voice_loop.split_caption_pages(text)]
+        self.assertEqual(self.display.set_text.call_args_list, [call(page) for page in pages])
+        self.assertLess(self.events.index("prepare"), self.events.index("SPEAKING"))
+        self.assertLess(self.events.index("SPEAKING"), self.events.index("TEXT:" + pages[0]))
+        self.assertLess(self.events.index("TEXT:" + pages[0]), self.events.index("play"))
+        self.assertEqual(self.events.count("SPEAKING"), 1)
+        # Each new page has PCM writes before the next transition; no timer drives it.
+        text_indices = [index for index, event in enumerate(self.events) if event.startswith("TEXT:")]
+        for index, next_index in zip(text_indices, text_indices[1:] + [len(self.events)]):
+            self.assertIn("play", self.events[index + 1:next_index])
+        self.assertEqual(self.events[-1], "READY")
+        self.mocks["play_audio"].assert_not_called()
+        self.display.clear_text.assert_not_called()
+
+    def test_display_text_failure_is_nonfatal_and_warning_contains_no_private_text(self):
+        self.display.set_text.side_effect = RuntimeError("private port details: " + FIRST_SENTENCE)
+        with self.assertLogs("scripts.voice_loop", level="WARNING") as logs:
+            self.assertEqual(self.alsa_cycle(self.display), 42)
+        pages = [page for text in (FIRST_SENTENCE, SECOND_SENTENCE, THIRD_SENTENCE)
+                 for page in voice_loop.split_caption_pages(text)]
+        self.assertEqual(self.display.set_text.call_args_list, [call(page) for page in pages])
+        self.assertGreater(self.events.count("play"), 3)
+        self.assertEqual(self.events[-1], "READY")
+        self.assertEqual(logs.output, [
+            "WARNING:scripts.voice_loop:Companion display text update failed; voice interaction continues",
+        ] * len(pages))
+        self.assertNotIn("private", str(logs.output))
+        for sentence in (FIRST_SENTENCE, SECOND_SENTENCE, THIRD_SENTENCE):
+            self.assertNotIn(sentence, str(logs.output))
+        self.display.clear_text.assert_not_called()
+
+    @override_settings(COMPANION_DISPLAY_ENABLED=False)
+    @patch("assistant.display.serial_display.serial")
+    def test_disabled_noop_and_absent_display_preserve_all_playback(self, serial):
+        for display in (get_companion_display(), None):
+            with self.subTest(display=type(display).__name__):
+                self.events.clear()
+                self.mocks["play_audio"].reset_mock()
+                self.assertEqual(voice_loop.run_voice_cycle(
+                    voice_loop.VoiceLoopConfig("source"), display=display), 42)
+                self.assertEqual(self.mocks["play_audio"].call_count, 3)
+        serial.Serial.assert_not_called()
+
+    @override_settings(COMPANION_DISPLAY_ENABLED=False)
+    @patch("assistant.display.serial_display.serial")
+    def test_disabled_noop_and_absent_display_preserve_native_pcm(self, serial):
+        for display in (get_companion_display(), None):
+            with self.subTest(display=type(display).__name__):
+                self.events.clear()
+                self.tts.synthesize.reset_mock()
+                self.assertEqual(self.alsa_cycle(display), 42)
+        serial.Serial.assert_not_called()
+
+    @patch("scripts.voice_loop.PersistentAlsaPlayer")
+    @patch("scripts.voice_loop.trim_pcm_edges", return_value=(0, 0))
+    @patch("scripts.voice_loop.prepare_alsa_playback")
+    def test_weighted_progress_and_duplicate_progress_do_not_repeat_pages(self, prepare, trim, player):
+        text = "A Raspberry Pi is a small, credit-card-sized computer used for learning and making projects."
+        pages = voice_loop.split_caption_pages(text)
+        captions = []
+
+        def consume(path, *, on_progress):
+            self.assertEqual(captions, [pages[0]])
+            total = sum(map(len, pages)) * 8
+            threshold = len(pages[0]) * 8
+            for written in (0, threshold - 8, threshold - 8):
+                on_progress(written, total)
+                self.assertEqual(captions, [pages[0]])
+            on_progress(threshold, total)
+            self.assertEqual(captions, pages[:2])
+            on_progress(threshold, total)
+            self.assertEqual(captions, pages[:2])
+            on_progress(sum(map(len, pages[:2])) * 8, total)
+            on_progress(total, total)
+            self.assertEqual(captions, pages)
+
+        player.return_value.write_file.side_effect = consume
+        with tempfile.TemporaryDirectory() as directory:
+            voice_loop.speak_stream_response(
+                [{"type": "start", "direct": True}, {"type": "delta", "text": text},
+                 {"type": "done", "response": text}], self.tts, Path(directory),
+                voice_loop.VoiceLoopConfig("", audio_backend="alsa"), {}, voice_loop.time.perf_counter(),
+                on_caption=captions.append)
+
+    @patch("scripts.voice_loop.PersistentAlsaPlayer")
+    @patch("scripts.voice_loop.trim_pcm_edges", return_value=(0, 0))
+    @patch("scripts.voice_loop.prepare_alsa_playback")
+    def test_unchanged_pages_and_caption_callback_failures_do_not_stop_audio(self, prepare, trim, player):
+        def consume(path, *, on_progress):
+            on_progress(32, 64)
+            on_progress(64, 64)
+
+        player.return_value.write_file.side_effect = consume
+        for failure in (False, True):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                callback = MagicMock(side_effect=RuntimeError("private caption") if failure else None)
+                with patch("scripts.voice_loop.logger.warning") as warning:
+                    voice_loop.speak_stream_response(
+                        [{"type": "start", "direct": True}, {"type": "delta", "text": "x" * 80},
+                         {"type": "done", "response": "x" * 80}], self.tts, Path(directory),
+                        voice_loop.VoiceLoopConfig("", audio_backend="alsa"), {}, voice_loop.time.perf_counter(),
+                        on_caption=callback)
+                callback.assert_called_once_with("x" * 40)
+                if failure:
+                    warning.assert_called_once_with("Companion display caption update failed; audio continues")
+                else:
+                    warning.assert_not_called()
+        self.assertEqual(player.return_value.write_file.call_count, 2)
+        self.assertEqual(player.return_value.finish.call_count, 2)
+
+    def test_streaming_callback_failure_still_plays_all_audio(self):
+        callback = MagicMock(side_effect=OSError("private callback failure"))
+        with tempfile.TemporaryDirectory() as temp_dir, self.assertLogs("scripts.voice_loop", level="WARNING") as logs:
+            returned_id, _ = voice_loop.speak_stream_response(
+                self.generate(), self.tts, Path(temp_dir), voice_loop.VoiceLoopConfig("source"),
+                {}, voice_loop.time.perf_counter(), on_playback_start=callback)
+        self.assertEqual(returned_id, 42)
+        callback.assert_called_once_with(FIRST_SENTENCE)
+        self.assertEqual(self.mocks["play_audio"].call_count, 3)
+        self.assertNotIn("private", str(logs.output))
 
     def test_capture_vad_is_listening_before_recording(self):
         self.cycle(capture_vad_enabled=True)

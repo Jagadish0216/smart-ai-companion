@@ -145,6 +145,85 @@ class PersistentPlayerTests(SimpleTestCase):
         self.player.write(audio)
         self.assertEqual(b"".join(received), audio)
 
+    def test_absent_progress_preserves_original_file_writes_without_metadata_lookup(self):
+        path = self.directory / "audio.pcm"
+        audio = pcm(2**25, 20000)
+        path.write_bytes(audio)
+        self.player.start()
+        with patch("assistant.voice.alsa_stream.os.fstat") as metadata:
+            self.player.write_file(path)
+        metadata.assert_not_called()
+        self.assertEqual(b"".join(self.written), audio)
+        self.assertEqual([len(block) for block in self.written], [65536, 65536, 28928])
+
+    def test_progress_reports_only_successful_partial_writes_with_exact_total(self):
+        path = self.directory / "audio.pcm"
+        audio = pcm(2**25, 20000)
+        path.write_bytes(audio)
+        received, reports = [], []
+        blocked = False
+
+        def write(fd, data):
+            nonlocal blocked
+            if not blocked:
+                blocked = True
+                raise BlockingIOError
+            count = min(4096, len(data))
+            received.append(bytes(data[:count]))
+            return count
+
+        def progress(written, total):
+            self.assertEqual(written, sum(map(len, received)))
+            self.assertEqual(total, len(audio))
+            reports.append(written)
+
+        self.os_write.side_effect = write
+        self.player.start()
+        self.player.write_file(path, on_progress=progress)
+        self.assertEqual(b"".join(received), audio)
+        self.assertEqual(reports[-1], len(audio))
+        self.assertTrue(all(a < b for a, b in zip(reports, reports[1:])))
+        self.assertEqual(len(reports), len(received))
+
+    def test_progress_exception_is_generic_nonfatal_and_disables_observer_for_file(self):
+        path = self.directory / "audio.pcm"
+        audio = pcm(2**25, 20000)
+        path.write_bytes(audio)
+        callback = MagicMock(side_effect=RuntimeError("private path and answer"))
+        self.player.start()
+        with self.assertLogs("assistant.voice.alsa_stream", level="WARNING") as logs:
+            self.player.write_file(path, on_progress=callback)
+        callback.assert_called_once_with(65536, len(audio))
+        self.assertEqual(b"".join(self.written), audio)
+        self.assertEqual(logs.output, [
+            "WARNING:assistant.voice.alsa_stream:Playback progress update failed; audio continues",
+        ])
+
+    def test_progress_does_not_bypass_cancellation_deadline_or_broken_pipe(self):
+        path = self.directory / "audio.pcm"
+        path.write_bytes(pcm(2**25, 20000))
+        self.player.start()
+        callback = MagicMock(side_effect=lambda *args: self.stopped.set())
+        with self.assertRaises(AudioCancelledError):
+            self.player.write_file(path, on_progress=callback)
+        callback.assert_called_once()
+        self.assertEqual(sum(map(len, self.written)), 65536)
+        self.stopped.clear()
+        self.written.clear()
+
+        def expire(*args):
+            self.player.deadline = 0
+
+        with self.assertRaisesRegex(alsa_stream.AlsaStreamError, "bounded playback timeout"):
+            self.player.write_file(path, on_progress=expire)
+        self.assertEqual(sum(map(len, self.written)), 65536)
+        self.player.deadline = None
+        self.os_write.side_effect = BrokenPipeError
+        callback = MagicMock()
+        with self.assertRaisesRegex(alsa_stream.AlsaStreamError, "stdin closed"):
+            self.player.write_file(path, on_progress=callback)
+        callback.assert_not_called()
+
     def test_missing_binary_and_device_setup_error_clean_up(self):
         self.popen.side_effect = FileNotFoundError
         with self.assertRaisesRegex(alsa_stream.AlsaStreamError, "aplay was not found"):
@@ -228,7 +307,7 @@ class PersistentPipelineTests(SimpleTestCase):
     def speak(self, events):
         with tempfile.TemporaryDirectory() as directory:
             result = voice_loop.speak_stream_response(events, self.provider, Path(directory), self.config, self.timings,
-                                                      voice_loop.time.perf_counter(), lambda: self.states.append("SPEAKING"))
+                                                      voice_loop.time.perf_counter(), lambda text: self.states.append("SPEAKING"))
         self.assertFalse(any(thread.name.startswith("voice-stream-audio") for thread in threads()))
         return result
 
@@ -360,6 +439,7 @@ class PersistentPipelineTests(SimpleTestCase):
         player.return_value.abort.assert_called()
         self.assertFalse(any(thread.name.startswith("voice-stream-audio") for thread in threads()))
 
+    @override_settings(RAG_ENABLED=False)
     def test_ai_failure_before_or_after_speech_sets_error_and_closes_player(self):
         for partial in (False, True):
             with self.subTest(partial=partial):
@@ -374,7 +454,7 @@ class PersistentPipelineTests(SimpleTestCase):
                         patch("scripts.voice_loop.AssistantService.process_message_stream") as service:
                     stt.return_value.transcribe.return_value = "A question."
                     def factory(device, stopped, path):
-                        def write(raw_path):
+                        def write(raw_path, *, on_progress=None):
                             active.set()
                             self.assertTrue(stopped.wait(2))
                             raise AudioCancelledError("cancelled")

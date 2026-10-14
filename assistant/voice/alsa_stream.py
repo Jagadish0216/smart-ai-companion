@@ -1,6 +1,7 @@
 """File-backed PCM preparation and a cancellable, response-long ALSA player."""
 
 import os
+import logging
 from pathlib import Path
 import struct
 import subprocess
@@ -15,6 +16,7 @@ COPY_BYTES = 65536
 EDGE_WINDOW_FRAMES = 480  # 10 ms analysis windows.
 EDGE_PADDING_FRAMES = 1440  # Preserve 30 ms beside each detected speech edge.
 EDGE_THRESHOLD = round(2147483648 * 0.0001)  # -80 dBFS peak, deliberately conservative.
+logger = logging.getLogger(__name__)
 
 
 class AlsaStreamError(Exception):
@@ -130,7 +132,7 @@ class PersistentAlsaPlayer:
         text = self.stderr.read().decode("utf-8", errors="replace").strip()
         return ": " + text if text else "."
 
-    def write(self, data):
+    def write(self, data, *, on_write=None):
         remaining = memoryview(data)
         while remaining:
             self.check()
@@ -144,6 +146,8 @@ class PersistentAlsaPlayer:
             if count <= 0:
                 raise AlsaStreamError("Persistent aplay accepted no PCM data.")
             remaining = remaining[count:]
+            if on_write is not None:
+                on_write(count)
 
     def write_silence(self, frames):
         zero_block = b"\x00" * COPY_BYTES
@@ -153,14 +157,36 @@ class PersistentAlsaPlayer:
             self.write(zero_block[:count])
             remaining -= count
 
-    def write_file(self, path):
+    def write_file(self, path, *, on_progress=None):
+        """Optionally report accepted PCM bytes / total, not device timestamps.
+
+        Reports run on the existing writer after each successful partial write.
+        A failed observer is disabled for this file without interrupting audio.
+        """
         with path.open("rb") as audio:
+            if on_progress is not None:
+                total = os.fstat(audio.fileno()).st_size
+                written = 0
+
+                def report(count):
+                    nonlocal written, on_progress
+                    written += count
+                    if on_progress is not None:
+                        try:
+                            on_progress(written, total)
+                        except Exception:
+                            on_progress = None
+                            logger.warning("Playback progress update failed; audio continues")
+
             while True:
                 self.check()
                 block = audio.read(COPY_BYTES)
                 if not block:
                     return
-                self.write(block)
+                if on_progress is None:
+                    self.write(block)
+                else:
+                    self.write(block, on_write=report)
 
     def finish(self):
         """EOF, drain the device, verify status, reap, then release descriptors."""
