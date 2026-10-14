@@ -439,6 +439,7 @@ class PersistentPipelineTests(SimpleTestCase):
         player.return_value.abort.assert_called()
         self.assertFalse(any(thread.name.startswith("voice-stream-audio") for thread in threads()))
 
+    @override_settings(RAG_ENABLED=False)
     def test_ai_failure_before_or_after_speech_sets_error_and_closes_player(self):
         for partial in (False, True):
             with self.subTest(partial=partial):
