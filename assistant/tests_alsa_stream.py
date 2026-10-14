@@ -228,7 +228,7 @@ class PersistentPipelineTests(SimpleTestCase):
     def speak(self, events):
         with tempfile.TemporaryDirectory() as directory:
             result = voice_loop.speak_stream_response(events, self.provider, Path(directory), self.config, self.timings,
-                                                      voice_loop.time.perf_counter(), lambda: self.states.append("SPEAKING"))
+                                                      voice_loop.time.perf_counter(), lambda text: self.states.append("SPEAKING"))
         self.assertFalse(any(thread.name.startswith("voice-stream-audio") for thread in threads()))
         return result
 

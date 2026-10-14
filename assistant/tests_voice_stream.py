@@ -455,7 +455,7 @@ class StreamingAudioTests(SimpleTestCase):
         with tempfile.TemporaryDirectory() as directory:
             result = voice_loop.speak_stream_response(
                 events, self.provider, Path(directory), config or self.config, self.timings,
-                voice_loop.time.perf_counter(), on_playback_start=lambda: self.states.append("SPEAKING"))
+                voice_loop.time.perf_counter(), on_playback_start=lambda text: self.states.append("SPEAKING"))
         self.assertFalse(any(thread.name.startswith("voice-stream-audio") for thread in enumerate_threads()))
         return result
 
@@ -660,7 +660,7 @@ class StreamingAudioTests(SimpleTestCase):
         with tempfile.TemporaryDirectory() as directory, patch("scripts.voice_loop.time.perf_counter", side_effect=lambda: clock[0]):
             voice_loop.speak_stream_response(
                 stream_events("An answer."), self.provider, Path(directory), self.config, timings, 0,
-                on_playback_start=lambda: clock.__setitem__(0, 3))
+                on_playback_start=lambda text: clock.__setitem__(0, 3))
         self.assertEqual(timings["first_speech"], 3)
 
     def test_error_after_first_playback_cancels_active_audio_and_discards_queue(self):
@@ -735,7 +735,7 @@ class StreamingAudioTests(SimpleTestCase):
         with tempfile.TemporaryDirectory() as directory, patch("scripts.voice_loop.time.sleep") as sleep:
             voice_loop.speak_stream_response(stream_events(FIRST_SENTENCE + " " + SECOND_SENTENCE), self.provider,
                                             Path(directory), config, {}, voice_loop.time.perf_counter(),
-                                            on_playback_start=lambda: order.append("SPEAKING"))
+                                            on_playback_start=lambda text: order.append("SPEAKING"))
         self.assertEqual(order.count("SPEAKING"), 1)
         self.assertEqual(order.count("play"), 2)
         self.assertLess(order.index("convert"), order.index("SPEAKING"))

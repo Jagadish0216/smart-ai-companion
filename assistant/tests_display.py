@@ -251,16 +251,18 @@ class DisplayVoiceLifecycleTests(SimpleTestCase):
         self.events = []
         self.display = MagicMock()
         self.display.set_state.side_effect = lambda state: self.events.append(state.value)
+        self.display.set_text.side_effect = lambda text: self.events.append("TEXT:" + text)
         self.mocks = {}
-        targets = ("record_audio", "record_audio_with_capture_vad", "normalize_audio", "get_stt_provider",
+        targets = ("record_audio", "record_audio_alsa", "record_audio_with_capture_vad", "normalize_audio", "get_stt_provider",
                    "get_tts_provider", "AssistantService.process_message_stream", "play_audio", "prepend_leading_silence")
         for name in targets:
             patcher = patch("scripts.voice_loop." + name)
             self.mocks[name] = patcher.start()
             self.addCleanup(patcher.stop)
         self.mocks["record_audio"].side_effect = lambda *args: self.events.append("record")
+        self.mocks["record_audio_alsa"].side_effect = lambda *args: self.events.append("record")
         self.mocks["record_audio_with_capture_vad"].side_effect = lambda *args, **kwargs: self.events.append("record_vad")
-        self.mocks["normalize_audio"].side_effect = lambda *args: self.events.append("normalize")
+        self.mocks["normalize_audio"].side_effect = lambda *args, **kwargs: self.events.append("normalize")
         self.stt = self.mocks["get_stt_provider"].return_value
         self.stt.transcribe.side_effect = lambda *args: self.events.append("stt") or "Explain local AI."
         self.tts = self.mocks["get_tts_provider"].return_value
@@ -287,10 +289,71 @@ class DisplayVoiceLifecycleTests(SimpleTestCase):
         self.assertEqual([event for event in self.events if event in {state.value for state in DisplayState}],
                          ["LISTENING", "THINKING", "SPEAKING", "READY"])
         main_events = [event for event in self.events if event != "tts"]
-        self.assertEqual(main_events[main_events.index("SPEAKING") + 1], "play")
+        self.assertEqual(main_events[main_events.index("SPEAKING"):],
+                         ["SPEAKING", "TEXT:" + FIRST_SENTENCE, "play", "play", "play", "READY"])
+        self.display.set_text.assert_called_once_with(FIRST_SENTENCE)
+        self.assertEqual(self.tts.synthesize.call_args_list,
+                         [call(FIRST_SENTENCE), call(SECOND_SENTENCE), call(THIRD_SENTENCE)])
+        self.assertLess(self.events.index("SPEAKING"), self.events.index("TEXT:" + FIRST_SENTENCE))
+        self.assertLess(self.events.index("TEXT:" + FIRST_SENTENCE), self.events.index("play"))
         self.assertLess(self.events.index("tts"), self.events.index("SPEAKING"))
         self.assertEqual(self.events.count("play"), 3)
         self.assertEqual(self.events[-1], "READY")
+        self.display.clear_text.assert_not_called()
+
+    @patch("scripts.voice_loop.PersistentAlsaPlayer")
+    @patch("scripts.voice_loop.trim_pcm_edges", return_value=(0, 0))
+    @patch("scripts.voice_loop.prepare_alsa_playback")
+    def test_alsa_first_prepared_speech_text_precedes_first_pcm_playback(self, prepare, trim, player):
+        prepare.side_effect = lambda *args, **kwargs: self.events.append("prepare")
+        player.return_value.write_file.side_effect = lambda path: self.events.append("play")
+        self.assertEqual(self.cycle(audio_backend="alsa"), 42)
+        self.display.set_text.assert_called_once_with(FIRST_SENTENCE)
+        self.assertLess(self.events.index("prepare"), self.events.index("SPEAKING"))
+        self.assertLess(self.events.index("SPEAKING"), self.events.index("TEXT:" + FIRST_SENTENCE))
+        self.assertLess(self.events.index("TEXT:" + FIRST_SENTENCE), self.events.index("play"))
+        self.assertEqual(player.return_value.write_file.call_count, 3)
+        self.assertEqual(self.events[-1], "READY")
+        self.mocks["play_audio"].assert_not_called()
+        self.display.clear_text.assert_not_called()
+
+    def test_display_text_failure_is_nonfatal_and_warning_contains_no_private_text(self):
+        self.display.set_text.side_effect = RuntimeError("private port details: " + FIRST_SENTENCE)
+        with self.assertLogs("scripts.voice_loop", level="WARNING") as logs:
+            self.assertEqual(self.cycle(), 42)
+        self.display.set_text.assert_called_once_with(FIRST_SENTENCE)
+        self.assertEqual(self.events.count("play"), 3)
+        self.assertEqual(self.events[-1], "READY")
+        self.assertEqual(logs.output, [
+            "WARNING:scripts.voice_loop:Companion display text update failed; voice interaction continues",
+        ])
+        self.assertNotIn("private", str(logs.output))
+        for sentence in (FIRST_SENTENCE, SECOND_SENTENCE, THIRD_SENTENCE):
+            self.assertNotIn(sentence, str(logs.output))
+        self.display.clear_text.assert_not_called()
+
+    @override_settings(COMPANION_DISPLAY_ENABLED=False)
+    @patch("assistant.display.serial_display.serial")
+    def test_disabled_noop_and_absent_display_preserve_all_playback(self, serial):
+        for display in (get_companion_display(), None):
+            with self.subTest(display=type(display).__name__):
+                self.events.clear()
+                self.mocks["play_audio"].reset_mock()
+                self.assertEqual(voice_loop.run_voice_cycle(
+                    voice_loop.VoiceLoopConfig("source"), display=display), 42)
+                self.assertEqual(self.mocks["play_audio"].call_count, 3)
+        serial.Serial.assert_not_called()
+
+    def test_streaming_callback_failure_still_plays_all_audio(self):
+        callback = MagicMock(side_effect=OSError("private callback failure"))
+        with tempfile.TemporaryDirectory() as temp_dir, self.assertLogs("scripts.voice_loop", level="WARNING") as logs:
+            returned_id, _ = voice_loop.speak_stream_response(
+                self.generate(), self.tts, Path(temp_dir), voice_loop.VoiceLoopConfig("source"),
+                {}, voice_loop.time.perf_counter(), on_playback_start=callback)
+        self.assertEqual(returned_id, 42)
+        callback.assert_called_once_with(FIRST_SENTENCE)
+        self.assertEqual(self.mocks["play_audio"].call_count, 3)
+        self.assertNotIn("private", str(logs.output))
 
     def test_capture_vad_is_listening_before_recording(self):
         self.cycle(capture_vad_enabled=True)

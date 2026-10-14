@@ -68,6 +68,15 @@ def _set_display_state(display, state):
             logger.warning("Companion display update failed; voice interaction continues")
 
 
+def _set_display_text(display, text):
+    """Keep answer-text display failures out of the voice path and logs."""
+    if display is not None:
+        try:
+            display.set_text(text)
+        except Exception:
+            logger.warning("Companion display text update failed; voice interaction continues")
+
+
 class VoiceLoopError(Exception):
     """Raised when one stage of a voice cycle cannot complete."""
 
@@ -943,12 +952,13 @@ class LeadingResourceNoticeFilter:
 class PreparedAudio:
     number: int
     path: Path
+    speech_text: str
     leading_silence_frames: int = 0
     trailing_silence_frames: int = 0
 
 
 def speak_stream_response(events, tts_provider, temp_path, config, timings, cycle_started,
-                          on_playback_start=None):
+                          on_playback_start: Callable[[str], None] | None = None):
     """Service producer -> bounded text -> one preparer -> bounded audio -> one player."""
     pending = Queue(maxsize=2)
     ready_audio = Queue(maxsize=2)
@@ -989,7 +999,7 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                 pass
         return finish
 
-    def prepare_audio(audio, number):
+    def prepare_audio(audio, number, text):
         if number == 1 and config.audio_backend != "alsa":
             audio = prepend_leading_silence(audio, config.leading_silence_seconds)
         playback_path = temp_path / f"stream-playback-{number:03d}.wav"
@@ -999,8 +1009,8 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
             speaker_path = temp_path / f"stream-speaker-{number:03d}.pcm"
             prepare_alsa_playback(playback_path, source_pcm, config.playback_gain, cancel_event=stopped, raw_pcm=True)
             leading, trailing = trim_pcm_edges(source_pcm, speaker_path, trim_leading=number > 1, cancel_event=stopped)
-            return PreparedAudio(number, speaker_path, leading, trailing)
-        return PreparedAudio(number, playback_path)
+            return PreparedAudio(number, speaker_path, text, leading, trailing)
+        return PreparedAudio(number, playback_path, text)
 
     def preparation_worker():
         number = 0
@@ -1027,7 +1037,7 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                 if stopped.is_set():
                     return
                 try:
-                    prepared = _timed_call(timings, "audio_prepare", prepare_audio, audio, number)
+                    prepared = _timed_call(timings, "audio_prepare", prepare_audio, audio, number, text)
                 except Exception as exc:
                     raise VoiceLoopError(f"Audio preparation failed on streaming chunk {number}: {exc}") from exc
                 if number == 1:
@@ -1073,7 +1083,7 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                 if prepared.number == 1:
                     if on_playback_start is not None:
                         try:
-                            on_playback_start()
+                            on_playback_start(prepared.speech_text)
                         except Exception:
                             logger.warning("Companion display playback update failed; audio continues")
                     playback_started = time.perf_counter()
@@ -1513,13 +1523,18 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
 
         if not hands_free_request:
             _set_display_state(display, DisplayState.THINKING)
+
+        def on_playback_start(first_speech_text):
+            _set_display_state(display, DisplayState.SPEAKING)
+            _set_display_text(display, first_speech_text)
+
         try:
             events = AssistantService.process_message_stream(
                 transcript, conversation_id=conversation_id, response_plan=response_plan,
             )
             returned_id, metadata = speak_stream_response(
                 events, get_tts_provider(), temp_path, config, timings, cycle_started,
-                on_playback_start=lambda: _set_display_state(display, DisplayState.SPEAKING),
+                on_playback_start=on_playback_start,
             )
         except VoiceLoopError:
             raise
