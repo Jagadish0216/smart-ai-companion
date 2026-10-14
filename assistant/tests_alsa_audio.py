@@ -289,7 +289,7 @@ class AlsaLifecycleTests(SimpleTestCase):
         self.mocks["trim_pcm_edges"].return_value = (0, 0)
         def player_factory(device, stopped, temp_path):
             player = MagicMock()
-            player.write_file.side_effect = lambda path: self.mocks["play_audio_alsa"](path, device, cancel_event=stopped)
+            player.write_file.side_effect = lambda path, on_progress=None: self.mocks["play_audio_alsa"](path, device, cancel_event=stopped)
             return player
         self.mocks["PersistentAlsaPlayer"].side_effect = player_factory
 
