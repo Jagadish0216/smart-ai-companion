@@ -1,55 +1,47 @@
 #pragma once
-
 #include <Arduino.h>
-
 namespace DisplayConfig {
-
 constexpr int16_t SCREEN_WIDTH = 480;
 constexpr int16_t SCREEN_HEIGHT = 320;
 constexpr uint8_t DISPLAY_ROTATION = 1;
-
-constexpr int16_t FACE_TOP = 0;
-constexpr int16_t FACE_BOTTOM = 224;
-constexpr int16_t FACE_HEIGHT = FACE_BOTTOM - FACE_TOP + 1;
-
-constexpr int16_t DIVIDER_Y = 229;
-constexpr int16_t DIVIDER_HEIGHT = 2;
-
-constexpr int16_t STATUS_TOP = 230;
-constexpr int16_t STATUS_BOTTOM = 319;
-constexpr int16_t STATUS_HEIGHT = STATUS_BOTTOM - STATUS_TOP + 1;
-constexpr int16_t STATUS_CENTER_X = SCREEN_WIDTH / 2;
-constexpr int16_t STATUS_PRIMARY_Y = 266;
-constexpr int16_t STATUS_STATE_Y = 301;
-
-constexpr int16_t LEFT_EYE_CENTER_X = 145;
-constexpr int16_t RIGHT_EYE_CENTER_X = 335;
-constexpr int16_t EYE_CENTER_Y = 108;
-
-constexpr int16_t EYE_DIRTY_WIDTH = 126;
-constexpr int16_t EYE_DIRTY_HEIGHT = 86;
-constexpr int16_t EYE_DIRTY_Y = EYE_CENTER_Y - (EYE_DIRTY_HEIGHT / 2);
-constexpr int16_t LEFT_EYE_DIRTY_X =
-    LEFT_EYE_CENTER_X - (EYE_DIRTY_WIDTH / 2);
-constexpr int16_t RIGHT_EYE_DIRTY_X =
-    RIGHT_EYE_CENTER_X - (EYE_DIRTY_WIDTH / 2);
-
-constexpr int16_t MOUTH_CENTER_X = STATUS_CENTER_X;
-constexpr int16_t MOUTH_CENTER_Y = 181;
-constexpr int16_t MOUTH_DIRTY_X = 190;
-constexpr int16_t MOUTH_DIRTY_Y = 158;
-constexpr int16_t MOUTH_DIRTY_WIDTH = 100;
+constexpr int16_t LEFT_EYE_CENTER_X = 150;
+constexpr int16_t RIGHT_EYE_CENTER_X = 330;
+constexpr int16_t EYE_CENTER_Y = 100;
+constexpr int16_t EYE_DIRTY_WIDTH = 84;
+constexpr int16_t EYE_DIRTY_HEIGHT = 104;
+constexpr int16_t EYE_DIRTY_Y = 48;
+constexpr int16_t MOUTH_DIRTY_X = 186;
+constexpr int16_t MOUTH_DIRTY_Y = 157;
+constexpr int16_t MOUTH_DIRTY_WIDTH = 108;
 constexpr int16_t MOUTH_DIRTY_HEIGHT = 48;
-
-constexpr int16_t STATUS_DOT_X = 28;
-constexpr int16_t STATUS_DOT_Y = 268;
-constexpr int16_t ACTIVITY_INDICATOR_X = 448;
-constexpr int16_t ACTIVITY_INDICATOR_Y = 268;
-constexpr int16_t ACTIVITY_DIRTY_X = 424;
-constexpr int16_t ACTIVITY_DIRTY_Y = 244;
-constexpr int16_t ACTIVITY_DIRTY_SIZE = 48;
-
+constexpr int16_t BAND_Y = 220;
+constexpr int16_t BAND_HEIGHT = 100;
+constexpr int16_t CONTENT_X = 24;
+constexpr int16_t CONTENT_Y = 250;
+constexpr int16_t CONTENT_WIDTH = 432;
+constexpr int16_t CONTENT_HEIGHT = 62;
+constexpr int16_t TEXT_INSET = 2;
+constexpr int16_t LISTENING_TEXT_WIDTH = 260;
+constexpr int16_t MODE_X = 336;
+constexpr int16_t MODE_Y = 228;
+constexpr int16_t MODE_WIDTH = 120;
+constexpr int16_t MODE_HEIGHT = 18;
+constexpr int16_t INDICATOR_X = 24;
+constexpr int16_t INDICATOR_Y = 228;
+constexpr int16_t INDICATOR_WIDTH = 64;
+constexpr int16_t INDICATOR_HEIGHT = 18;
+constexpr int16_t METER_X = 306;
+constexpr int16_t METER_Y = 254;
+constexpr int16_t METER_WIDTH = 140;
+constexpr int16_t METER_HEIGHT = 44;
+constexpr uint8_t METER_BARS = 7;
 constexpr size_t MAX_STATUS_TEXT_LENGTH = 40;
+constexpr size_t MAX_QUERY_TEXT_LENGTH = 80;
 constexpr size_t SERIAL_LINE_BUFFER_SIZE = 96;
-
+constexpr uint32_t LEVEL_STALE_MS = 1200;
+constexpr size_t SERIAL_BYTES_PER_LOOP = 64;
+static_assert(MAX_QUERY_TEXT_LENGTH + 7 <= SERIAL_LINE_BUFFER_SIZE,
+              "Query command must fit the bounded serial line");
+static_assert(EYE_DIRTY_Y + EYE_DIRTY_HEIGHT <= MOUTH_DIRTY_Y,
+              "Eye and mouth replacements must not overlap");
 }  // namespace DisplayConfig
