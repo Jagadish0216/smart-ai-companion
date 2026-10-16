@@ -9,3 +9,7 @@ media/
 staticfiles/
 .idea/
 .vscode/
+
+# Generated enclosure distribution/archive packages (keep local, do not version)
+/hardware/enclosure.zip
+/hardware/enclosure/**/*.zip

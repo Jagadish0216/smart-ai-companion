@@ -1,0 +1,111 @@
+{
+  "archive": "Smart_Companion_Cost_Optimized_Print_Package.zip",
+  "archive_sha256": "906166d63b923a3e9e30db2dbadefed1fbc8f576aed7e8dae68cc51b0cc49b52",
+  "entries": {
+    "Smart_Companion_Cost_Optimized/01_STL_FILES/base_bottom_cover.stl": {
+      "bytes": 847184,
+      "sha256": "9c26b18ba7741bd3620de241a23889a9d7fbc712a314891c52f2027d152c2c0d"
+    },
+    "Smart_Companion_Cost_Optimized/01_STL_FILES/base_shell.stl": {
+      "bytes": 419784,
+      "sha256": "ae1f03c3de1963d393605ffd270550815d6d757020778dfa81088d861a4b445c"
+    },
+    "Smart_Companion_Cost_Optimized/01_STL_FILES/button_actuator.stl": {
+      "bytes": 38284,
+      "sha256": "0d04874672e59d84b143c2d968e6bdf87703922b735474a062de0c3242451683"
+    },
+    "Smart_Companion_Cost_Optimized/01_STL_FILES/camera_blank_insert.stl": {
+      "bytes": 89884,
+      "sha256": "c53f3eeac89806ec5e7b644258070a94798215cf8e532496ffb95d70b58a6b61"
+    },
+    "Smart_Companion_Cost_Optimized/01_STL_FILES/camera_carrier.stl": {
+      "bytes": 101084,
+      "sha256": "4a339925bd6630646c45d591faa1e022cfae92cdcdbd2654ba7087452309b4cc"
+    },
+    "Smart_Companion_Cost_Optimized/01_STL_FILES/camera_lens_insert.stl": {
+      "bytes": 102884,
+      "sha256": "c37acd3612b7495ad8d4799aaed4e9b3f4f460d3f922e2a9c2e42fb0a9b9ad3f"
+    },
+    "Smart_Companion_Cost_Optimized/01_STL_FILES/front_bezel.stl": {
+      "bytes": 129684,
+      "sha256": "dff6e31e9c462711af991670e80dd1eea93f69b14f9fe420b5698f599b2d685b"
+    },
+    "Smart_Companion_Cost_Optimized/01_STL_FILES/head_rear_cover.stl": {
+      "bytes": 228684,
+      "sha256": "2fb6c1e225db211468fbe1f5d4b19ddc7ea30c8558e317236ddc8ca6c1bf01f6"
+    },
+    "Smart_Companion_Cost_Optimized/01_STL_FILES/head_shell.stl": {
+      "bytes": 834884,
+      "sha256": "529313b4d0c8f1ce3b1458d135c86e6cbaf55ced48d515f9c11868be8c0bf682"
+    },
+    "Smart_Companion_Cost_Optimized/01_STL_FILES/round_microphone_holder.stl": {
+      "bytes": 90084,
+      "sha256": "cb0e11f3cdaeaf8a4d3c7a281a69f80d5ceabcb544828793467519260e327dc4"
+    },
+    "Smart_Companion_Cost_Optimized/01_STL_FILES/tactile_button_holder.stl": {
+      "bytes": 57884,
+      "sha256": "720473b71f555676965c8dbc0ed677e88dcc648d9ebf49c19c1253c5d6520bc8"
+    },
+    "Smart_Companion_Cost_Optimized/01_STL_FILES/universal_speaker_mount.stl": {
+      "bytes": 311284,
+      "sha256": "9814fb1912753716e1df17c5a24930b0236c1230ebd9651d4b0c11b46922db88"
+    },
+    "Smart_Companion_Cost_Optimized/02_PREVIEW_IMAGES/comparison_66mm_vs_optimized.png": {
+      "bytes": 60102,
+      "sha256": "a972f2d59203c4e6c36385b2af3e34139cd1cf3c678f17882404ffe2e25371a0"
+    },
+    "Smart_Companion_Cost_Optimized/02_PREVIEW_IMAGES/final_base_internal.png": {
+      "bytes": 133512,
+      "sha256": "1038d326429bec408c5165b92046185b9a0eada9811beacd4f23403a5e2a7d39"
+    },
+    "Smart_Companion_Cost_Optimized/02_PREVIEW_IMAGES/final_bottom.png": {
+      "bytes": 68353,
+      "sha256": "88459de0354af32b5511a43087c149d96822d2076c3cdf567a20c133f6b80733"
+    },
+    "Smart_Companion_Cost_Optimized/02_PREVIEW_IMAGES/final_cutaway.png": {
+      "bytes": 86183,
+      "sha256": "d37afe9a8d48a682ba3e77bbaf4e9762320c478636049b73890e96ce591a9e25"
+    },
+    "Smart_Companion_Cost_Optimized/02_PREVIEW_IMAGES/final_exploded.png": {
+      "bytes": 70364,
+      "sha256": "4cee0d30e322c8257a509edc1c408c585676a99ca6cae23d9cda90615e1b2354"
+    },
+    "Smart_Companion_Cost_Optimized/02_PREVIEW_IMAGES/final_front_left.png": {
+      "bytes": 45449,
+      "sha256": "f738901c9ca6e6625732bcf5afe0165498b9742d3b918879fdbd9abd92f62e9c"
+    },
+    "Smart_Companion_Cost_Optimized/02_PREVIEW_IMAGES/final_front_right.png": {
+      "bytes": 53874,
+      "sha256": "b3350b830612926fc596dbf2b63fd3fe1584652d98c6ec65266807ff4b077b61"
+    },
+    "Smart_Companion_Cost_Optimized/02_PREVIEW_IMAGES/final_rear.png": {
+      "bytes": 67142,
+      "sha256": "f9ef1c4e33bb875023856b0aee47cac7317fbfe7522bba8d5670aed8bca0bd5c"
+    },
+    "Smart_Companion_Cost_Optimized/02_PREVIEW_IMAGES/final_side.png": {
+      "bytes": 31207,
+      "sha256": "397130f402218b99580796585d4b3a3f22061c841a10750273611812a781567a"
+    },
+    "Smart_Companion_Cost_Optimized/03_INSTRUCTIONS/ASSEMBLY.md": {
+      "bytes": 8037,
+      "sha256": "c9e6a89cf1dc78e1910af6e04b2be76c1d1b920f42916470ed382b1096f78dd8"
+    },
+    "Smart_Companion_Cost_Optimized/03_INSTRUCTIONS/COST_OPTIMIZATION.md": {
+      "bytes": 4511,
+      "sha256": "f73c1a122052cefef99d6481a6fd6c3f2a331f4fb1e865b95eb5810e6e8babb6"
+    },
+    "Smart_Companion_Cost_Optimized/03_INSTRUCTIONS/PRINTING.md": {
+      "bytes": 4676,
+      "sha256": "1c70de9918f1219bf77cb7bab199e83c1d97bc6a0eee6b67309b05f28590a4b3"
+    },
+    "Smart_Companion_Cost_Optimized/03_INSTRUCTIONS/VALIDATION.md": {
+      "bytes": 8165,
+      "sha256": "1f20638dc59aef2e7a6f6793d276ff6e6ca2d77d2a046fd03ea549cda8196ad2"
+    },
+    "Smart_Companion_Cost_Optimized/READ_ME_FIRST.txt": {
+      "bytes": 1433,
+      "sha256": "b8c3cd30257e3dd5c8fb793e5d7b7b35b66f602a18b3350a3bdb143c311bf296"
+    }
+  },
+  "verification": "PASS: exact inventory, nonzero size, CRC and SHA256"
+}

@@ -1,0 +1,9 @@
+ECHO: "head_body_WHDepth", [138, 112, 68]
+ECHO: "base_WDH", [174, 114, 62]
+ECHO: "body_height", 187.149
+ECHO: "height_with_10mm_feet", 195.949
+ECHO: "cooler_air_height", 22.4
+ECHO: "neck_cable_WD", [28, 20]
+ECHO: "TFT_active_centre_XY", [-2.33, 12.5]
+ECHO: "TFT_front_PCB_header_depths", [3.5, 7.7, 17.68]
+ECHO: "minimum_head_base_gap", 3.04269

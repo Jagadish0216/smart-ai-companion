@@ -1,0 +1,226 @@
+[
+  {
+    "number": 1,
+    "check": "TFT fits",
+    "result": "PASS (CAD)",
+    "evidence": "head_components",
+    "scope": "98 \u00d7 56.34 PCB, 14.18 depth; frozen head"
+  },
+  {
+    "number": 2,
+    "check": "TFT mounting holes align",
+    "result": "PASS (CAD)",
+    "evidence": "head_components",
+    "scope": "92 \u00d7 49.5 centres; unchanged oriented facets"
+  },
+  {
+    "number": 3,
+    "check": "TFT screws reachable",
+    "result": "PASS (CAD)",
+    "evidence": "tft_drivers",
+    "scope": "Four \u00d86 driver paths; rear cover removed"
+  },
+  {
+    "number": 4,
+    "check": "ESP32 fits",
+    "result": "PASS (CAD)",
+    "evidence": "head_components",
+    "scope": "51.5 \u00d7 28.5 PCB and existing jumper/header space"
+  },
+  {
+    "number": 5,
+    "check": "Round microphone fits",
+    "result": "PASS (CAD)",
+    "evidence": "head_adapters",
+    "scope": "\u00d826 board / \u00d827 pocket; physical board to measure"
+  },
+  {
+    "number": 6,
+    "check": "Camera Module 3 fits",
+    "result": "PASS (CAD)",
+    "evidence": "camera_carrier",
+    "scope": "32 \u00d7 32 \u00d7 16 reservation; unchanged carrier placed 5 mm lower"
+  },
+  {
+    "number": 7,
+    "check": "Tactile switch and actuator fit",
+    "result": "PASS (CAD)",
+    "evidence": "head_adapters",
+    "scope": "6 \u00d7 6 \u00d7 5 reference; universal shim holder; 0.8 motion check"
+  },
+  {
+    "number": 8,
+    "check": "Neck wiring space",
+    "result": "PASS (CAD)",
+    "evidence": "neck_bend",
+    "scope": "28 \u00d7 20 throat plus 8 mm clear bend region"
+  },
+  {
+    "number": 9,
+    "check": "Speaker 78 \u00d7 78 \u00d7 40 fits",
+    "result": "PASS (CAD)",
+    "evidence": "base_components",
+    "scope": "Full 78 \u00d7 78 \u00d7 40 envelope: X=-77..1, Y=-39..39, Z=10.8..50.8; unchanged speaker, lowered 2.7 mm."
+  },
+  {
+    "number": 10,
+    "check": "Speaker frame clears walls",
+    "result": "PASS (CAD)",
+    "evidence": "base_components",
+    "scope": "Actual tapered shell versus full reservation"
+  },
+  {
+    "number": 11,
+    "check": "Speaker / magnet clear Pi",
+    "result": "PASS (CAD)",
+    "evidence": "speaker_separation",
+    "scope": "Whole speaker envelope separate from Pi/cooler"
+  },
+  {
+    "number": 12,
+    "check": "Speaker clears amplifier",
+    "result": "PASS (CAD)",
+    "evidence": "speaker_separation",
+    "scope": "Vertical front-left panel and terminal reservation"
+  },
+  {
+    "number": 13,
+    "check": "Cone acoustic path clear",
+    "result": "PASS (CAD)",
+    "evidence": "acoustic_path",
+    "scope": "\u00d850 clear cylinder above floor through \u00d854 carrier"
+  },
+  {
+    "number": 14,
+    "check": "Grille cannot contact static cone envelope",
+    "result": "PASS (CAD)",
+    "evidence": "acoustic_path",
+    "scope": "9.00 mm above 1.8 mm grille; \u22657 mm requirement."
+  },
+  {
+    "number": 15,
+    "check": "Carrier installs and removes",
+    "result": "PASS (CAD)",
+    "evidence": "speaker_removal",
+    "scope": "Five upward withdrawal positions; tray removed first; all carrier screws accessible after speaker removal."
+  },
+  {
+    "number": 16,
+    "check": "Pi fits",
+    "result": "PASS (CAD)",
+    "evidence": "base_components",
+    "scope": "85 \u00d7 56 board; 7 mm standoffs; standard M2.5 pattern"
+  },
+  {
+    "number": 17,
+    "check": "Pi removable",
+    "result": "PASS (CAD)",
+    "evidence": "tray_removal",
+    "scope": "Nine withdrawal positions plus continuous conservative sweep; Pi driver check"
+  },
+  {
+    "number": 18,
+    "check": "70 \u00d7 50 \u00d7 22 cooler reservation fits",
+    "result": "PASS (CAD)",
+    "evidence": "base_components",
+    "scope": "Enclosure fit only; choose Pi-5-compatible hardware"
+  },
+  {
+    "number": 19,
+    "check": "Useful air above cooler",
+    "result": "PASS (CAD)",
+    "evidence": "cooler_air",
+    "scope": "22.40 mm minimum above cooler to the local 3 mm roof reinforcement; broad 1.8 mm roof gives 23.6 mm."
+  },
+  {
+    "number": 20,
+    "check": "Pi intake open",
+    "result": "PASS (CAD)",
+    "evidence": "base_components",
+    "scope": "854.826 mm\u00b2 actual through-area; independent of speaker grille; no rib crosses intake."
+  },
+  {
+    "number": 21,
+    "check": "Rear exhaust open",
+    "result": "PASS (CAD)",
+    "evidence": "cooler_air",
+    "scope": "688.915 mm\u00b2 actual through-area; no major cooling passage blocked."
+  },
+  {
+    "number": 22,
+    "check": "USB plugs fit",
+    "result": "PASS (CAD)",
+    "evidence": "plugs",
+    "scope": "Two 16 \u00d7 18 mm moulding sections"
+  },
+  {
+    "number": 23,
+    "check": "Ethernet plug fits",
+    "result": "PASS (CAD)",
+    "evidence": "plugs",
+    "scope": "18 \u00d7 18 mm moulding section"
+  },
+  {
+    "number": 24,
+    "check": "USB-C plug fits",
+    "result": "PASS (CAD)",
+    "evidence": "plugs",
+    "scope": "14 \u00d7 9 mm moulding section"
+  },
+  {
+    "number": 25,
+    "check": "Both micro-HDMI plugs fit",
+    "result": "PASS (CAD)",
+    "evidence": "plugs",
+    "scope": "Two 11 \u00d7 10 mm moulding sections"
+  },
+  {
+    "number": 26,
+    "check": "Bottom cover fits",
+    "result": "PASS (CAD)",
+    "evidence": "base_mates",
+    "scope": "Actual exported tray/shell mating surfaces"
+  },
+  {
+    "number": 27,
+    "check": "Feet clear speaker grille",
+    "result": "PASS (CAD)",
+    "evidence": "feet",
+    "scope": "Four \u00d811.5 recesses at X\u00b168/Y\u00b142"
+  },
+  {
+    "number": 28,
+    "check": "Feet clear Pi intake",
+    "result": "PASS (CAD)",
+    "evidence": "feet",
+    "scope": "8.8 mm exposed foot height; screw heads also clear"
+  },
+  {
+    "number": 29,
+    "check": "Screw bosses clear hardware",
+    "result": "PASS (CAD)",
+    "evidence": "base_components",
+    "scope": "Head/base component, carrier, plug and tool checks"
+  },
+  {
+    "number": 30,
+    "check": "Static stability model",
+    "result": "PASS (CAD)",
+    "evidence": "stability",
+    "scope": "34.113 mm margin / 20.809\u00b0 ideal tip angle, 16384 mass cases."
+  },
+  {
+    "number": 31,
+    "check": "Thin walls structurally reasonable",
+    "result": "PASS (design review)",
+    "evidence": "Dimensions + mesh + geometry review",
+    "scope": "1.8 mm skins; 3 mm neck land; sparse ribs; 3 mm foot/pilot lands; retained 7 mm base screw engagement. No FEA or printed load test."
+  },
+  {
+    "number": 32,
+    "check": "Speaker mount has no obvious flex/rattle issue",
+    "result": "PASS (design review)",
+    "evidence": "Connected frame + four supports + gasket",
+    "scope": "86 mm outer frame, 2.2 mm webs/ring, 2.8 mm screw pads, four braced posts and flush countersinks. Continuous 2.5 mm gasket on available lands and ties; physical flex/audio test still required."
+  }
+]

@@ -1,0 +1,19 @@
+git branch --show-current
+exit_code=0
+enclosure-v1
+
+git status --short
+exit_code=0
+?? hardware/enclosure.zip
+?? hardware/enclosure/
+
+git diff --check
+exit_code=0
+(no output)
+
+git diff --stat
+exit_code=0
+(no output)
+
+NO COMMIT
+NO PUSH

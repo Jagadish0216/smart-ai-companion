@@ -1,0 +1,83 @@
+[
+  {
+    "file": "comparison_66mm_vs_optimized.png",
+    "pixels": [
+      2000,
+      1200
+    ],
+    "visual_review": "PASS: geometry visible, no clipped subject or labels, requested view present",
+    "source": "OpenSCAD production-mesh rendering; no AI images"
+  },
+  {
+    "file": "final_base_internal.png",
+    "pixels": [
+      1600,
+      1200
+    ],
+    "visual_review": "PASS: geometry visible, no clipped subject or labels, requested view present",
+    "source": "OpenSCAD production-mesh rendering; no AI images"
+  },
+  {
+    "file": "final_bottom.png",
+    "pixels": [
+      1600,
+      1200
+    ],
+    "visual_review": "PASS: geometry visible, no clipped subject or labels, requested view present",
+    "source": "OpenSCAD production-mesh rendering; no AI images"
+  },
+  {
+    "file": "final_cutaway.png",
+    "pixels": [
+      1600,
+      1200
+    ],
+    "visual_review": "PASS: geometry visible, no clipped subject or labels, requested view present",
+    "source": "OpenSCAD production-mesh rendering; no AI images"
+  },
+  {
+    "file": "final_exploded.png",
+    "pixels": [
+      1600,
+      1200
+    ],
+    "visual_review": "PASS: geometry visible, no clipped subject or labels, requested view present",
+    "source": "OpenSCAD production-mesh rendering; no AI images"
+  },
+  {
+    "file": "final_front_left.png",
+    "pixels": [
+      1600,
+      1200
+    ],
+    "visual_review": "PASS: geometry visible, no clipped subject or labels, requested view present",
+    "source": "OpenSCAD production-mesh rendering; no AI images"
+  },
+  {
+    "file": "final_front_right.png",
+    "pixels": [
+      1600,
+      1200
+    ],
+    "visual_review": "PASS: geometry visible, no clipped subject or labels, requested view present",
+    "source": "OpenSCAD production-mesh rendering; no AI images"
+  },
+  {
+    "file": "final_rear.png",
+    "pixels": [
+      1600,
+      1200
+    ],
+    "visual_review": "PASS: geometry visible, no clipped subject or labels, requested view present",
+    "source": "OpenSCAD production-mesh rendering; no AI images"
+  },
+  {
+    "file": "final_side.png",
+    "pixels": [
+      1600,
+      1200
+    ],
+    "visual_review": "PASS: geometry visible, no clipped subject or labels, requested view present",
+    "source": "OpenSCAD production-mesh rendering; no AI images"
+  }
+]

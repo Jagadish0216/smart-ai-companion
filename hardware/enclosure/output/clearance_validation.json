@@ -1,0 +1,21 @@
+{
+  "head_components": "clear",
+  "base_components": "clear",
+  "plugs": "clear",
+  "cooler_air": "clear",
+  "head_mates": "clear",
+  "base_mates": "clear",
+  "tft_drivers": "clear",
+  "camera_carrier": "clear",
+  "service_volume": "clear",
+  "tft_removal": "clear",
+  "camera_removal": "clear",
+  "speaker_separation": "clear",
+  "acoustic_path": "clear",
+  "feet": "clear",
+  "tray_removal": "clear",
+  "speaker_removal": "clear",
+  "head_adapters": "clear",
+  "neck_bend": "clear",
+  "pi_driver": "clear"
+}

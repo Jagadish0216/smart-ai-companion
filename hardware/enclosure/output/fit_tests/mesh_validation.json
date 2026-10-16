@@ -1,0 +1,210 @@
+[
+  {
+    "file": "TFT_FIT_TEST.stl",
+    "bytes": 151284,
+    "triangles": 3024,
+    "bounds_mm": [
+      [
+        -51.6,
+        -30.77,
+        -0.0
+      ],
+      [
+        51.6,
+        30.77,
+        7.5
+      ]
+    ],
+    "size_mm": [
+      103.2,
+      61.54,
+      7.5
+    ],
+    "signed_volume_mm3": 8085.45,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "connected_surface_shells": 1
+  },
+  {
+    "file": "PI_USB_ETHERNET_PORT_TEST.stl",
+    "bytes": 203084,
+    "triangles": 4060,
+    "bounds_mm": [
+      [
+        -39.5,
+        -23.0,
+        0.0
+      ],
+      [
+        39.5,
+        23.0,
+        33.35
+      ]
+    ],
+    "size_mm": [
+      79.0,
+      46.0,
+      33.35
+    ],
+    "signed_volume_mm3": 9676.35,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "connected_surface_shells": 1
+  },
+  {
+    "file": "PI_POWER_HDMI_PORT_TEST.stl",
+    "bytes": 89484,
+    "triangles": 1788,
+    "bounds_mm": [
+      [
+        -20.0,
+        -38.0,
+        0.0
+      ],
+      [
+        20.0,
+        44.35,
+        17.2
+      ]
+    ],
+    "size_mm": [
+      40.0,
+      82.35,
+      17.2
+    ],
+    "signed_volume_mm3": 8637.34,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "connected_surface_shells": 1
+  },
+  {
+    "file": "BUTTON_TACTILE_TEST.stl",
+    "bytes": 109684,
+    "triangles": 2192,
+    "bounds_mm": [
+      [
+        -43.5,
+        -10.6,
+        0.0
+      ],
+      [
+        39.5,
+        10.6,
+        14.0
+      ]
+    ],
+    "size_mm": [
+      83.0,
+      21.2,
+      14.0
+    ],
+    "signed_volume_mm3": 4077.04,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "connected_surface_shells": 3
+  },
+  {
+    "file": "CAMERA_INSERT_FIT_TEST.stl",
+    "bytes": 276684,
+    "triangles": 5532,
+    "bounds_mm": [
+      [
+        -50.0,
+        -15.1,
+        0.0
+      ],
+      [
+        50.0,
+        46.1,
+        10.8
+      ]
+    ],
+    "size_mm": [
+      100.0,
+      61.2,
+      10.8
+    ],
+    "signed_volume_mm3": 9484.94,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "connected_surface_shells": 3
+  },
+  {
+    "file": "COVER_CLEARANCE_TEST.stl",
+    "bytes": 53484,
+    "triangles": 1068,
+    "bounds_mm": [
+      [
+        -34.2,
+        -15.6,
+        -0.0
+      ],
+      [
+        34.2,
+        15.6,
+        12.1
+      ]
+    ],
+    "size_mm": [
+      68.4,
+      31.2,
+      12.1
+    ],
+    "signed_volume_mm3": 5756.99,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "connected_surface_shells": 2
+  },
+  {
+    "file": "SPEAKER_FIT_TEST.stl",
+    "bytes": 258484,
+    "triangles": 5168,
+    "bounds_mm": [
+      [
+        -43.0,
+        -43.0,
+        0.0
+      ],
+      [
+        43.0,
+        43.0,
+        45.5
+      ]
+    ],
+    "size_mm": [
+      86.0,
+      86.0,
+      45.5
+    ],
+    "signed_volume_mm3": 24103.64,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "connected_surface_shells": 1
+  },
+  {
+    "file": "MICROPHONE_FIT_TEST.stl",
+    "bytes": 90084,
+    "triangles": 1800,
+    "bounds_mm": [
+      [
+        -20.0,
+        -15.5,
+        0.0
+      ],
+      [
+        20.0,
+        15.5,
+        5.0
+      ]
+    ],
+    "size_mm": [
+      40.0,
+      31.0,
+      5.0
+    ],
+    "signed_volume_mm3": 1588.18,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "connected_surface_shells": 1
+  }
+]
