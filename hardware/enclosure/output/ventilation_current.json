@@ -1,0 +1,11 @@
+{
+  "intake": {
+    "through_area_mm2": 854.826,
+    "polygon_contours": 6
+  },
+  "exhaust": {
+    "through_area_mm2": 688.915,
+    "polygon_contours": 9
+  },
+  "method": "Projected normal through-open area of exported meshes; includes capsule ends and blocked mounting lands; excludes connector openings."
+}

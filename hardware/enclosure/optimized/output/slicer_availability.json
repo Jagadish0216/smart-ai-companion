@@ -1,0 +1,21 @@
+{
+  "PATH_results": {
+    "PrusaSlicer": null,
+    "prusa-slicer": null,
+    "OrcaSlicer": null,
+    "CuraEngine": null,
+    "BambuStudio": null,
+    "bambu-studio": null,
+    "slic3r": null
+  },
+  "additional_search": [
+    "Windows uninstall registry (HKLM/HKCU, native and WOW6432Node)",
+    "Program Files",
+    "Program Files (x86)",
+    "LocalAppData/Programs",
+    "Downloads"
+  ],
+  "matching_executables": [],
+  "result": "No authoritative slicer estimate was available.",
+  "installation_performed": false
+}

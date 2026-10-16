@@ -1,0 +1,159 @@
+{
+  "scope": "hardware/enclosure/ only",
+  "strategy": "Independent optimized/ source tree; original source/output preserved",
+  "changed_or_new_optimized_files": [
+    {
+      "file": "ASSEMBLY.md",
+      "optimized_sha256": "c9e6a89cf1dc78e1910af6e04b2be76c1d1b920f42916470ed382b1096f78dd8",
+      "original_sha256": "212cf42cea92e0b82e4f0ef48a4cebf719010a0e7c2bf393bff73d1f058f7e76"
+    },
+    {
+      "file": "base_bottom_cover.scad",
+      "optimized_sha256": "3fe3431cda1c236a9c8b1a68d66e7615b3cac6b4cf345fb84fdd0c296f101c52",
+      "original_sha256": "4f64ec6a83c281058df0052fb3175e59094a59c00dc6804ac7334aa04d896357"
+    },
+    {
+      "file": "base_shell.scad",
+      "optimized_sha256": "6992c2c8a79ca3fec7e62e2b2ca821df32b0843ab216ffea4ecdc6057df338e0",
+      "original_sha256": "0805ca1a4d7b11b8795d06cd1a01dd4ef59ad958d576a279bc8fd3eb113cd8d5"
+    },
+    {
+      "file": "BOM.md",
+      "optimized_sha256": "59a92e65eae398cb3e16b2ab0c22a05a25e26dd6cd64e6aa512e53d52221f0e9",
+      "original_sha256": "89ee6a49ef6b570d34cd2cda04b10154652c7cafb4a2434d020c15c90c66ff64"
+    },
+    {
+      "file": "build.py",
+      "optimized_sha256": "64f40d920093387dbba4a58471a41105ed839fb5138b0b323b981e9bfdaa770b",
+      "original_sha256": "2fc8bc07cd54dcd6c29ca89311ffe7704efa32f388f1407caf3ccc3cea320736"
+    },
+    {
+      "file": "clearance_checks.scad",
+      "optimized_sha256": "e45f3f3bbafbd7b6ef7c44e4e58c9cad6ccf150ba3f0563c3fb37754957eb3f1",
+      "original_sha256": "53ce621a6f395ed9a87c72ebec254a7e8081c2e1d838769f75e0cbafe44cdf43"
+    },
+    {
+      "file": "comparison.scad",
+      "optimized_sha256": "bf556441feae6914ad9a462c8bb64826daafa0546fa7008f17bbad175a900df8"
+    },
+    {
+      "file": "dimensions.scad",
+      "optimized_sha256": "e297255d12deb21b7845ff101e92efdc55384b4666711b5a6c28b40dc8c5d62b",
+      "original_sha256": "2f8aa3569b2d17d817b03938657b7691ba75970f2dde851d95026f328394aa27"
+    },
+    {
+      "file": "engineering_report.py",
+      "optimized_sha256": "623ca2bebcc5586a1f0f3e2efcf3ffb974e909d462201cb6313fb60522592a79"
+    },
+    {
+      "file": "package_optimized.py",
+      "optimized_sha256": "6b31c5de39b3c99ef01e75ea62982f83107c49ee7dc5ed0142d0004e4d8b7548"
+    },
+    {
+      "file": "PRINTING.md",
+      "optimized_sha256": "1c70de9918f1219bf77cb7bab199e83c1d97bc6a0eee6b67309b05f28590a4b3",
+      "original_sha256": "fffa71c451d16e80e033a0576fe219bd850308e1fcb58f47f8781a9afe72f03d"
+    },
+    {
+      "file": "README.md",
+      "optimized_sha256": "b70cf2926cb77c3901f9166019bdce6db70f0950e7aa94d17060d811e4fe7c83",
+      "original_sha256": "a0557c6191e3633b3de47e964cced6171856a4ed7a2084600d7e65ede148d1f7"
+    },
+    {
+      "file": "render_comparison.py",
+      "optimized_sha256": "5107d8b5545eef2686c29a523ead4827462f78376f837c0a556daf606974ce67"
+    },
+    {
+      "file": "speaker_mount.scad",
+      "optimized_sha256": "8ef2ddb48b3109ea996c17cbe25db950fb1666a15b867d6bed4d807f475d27ca",
+      "original_sha256": "b291b9855eab16a97ef93ff49b834e6590e711788315c11f177948da737ccc41"
+    },
+    {
+      "file": "VALIDATION.md",
+      "optimized_sha256": "1f20638dc59aef2e7a6f6793d276ff6e6ca2d77d2a046fd03ea549cda8196ad2",
+      "original_sha256": "02ff9220df0c80ad5a4e1c5f0934c66580671ecac13bfe7ffb4972ef0c17777b"
+    }
+  ],
+  "identical_source_files": [
+    {
+      "file": "camera_insert.scad",
+      "optimized_sha256": "1a39f19da4b504a7e644cd90961e4218abe8500b7646d467b05bbddaf3a32802",
+      "original_sha256": "1a39f19da4b504a7e644cd90961e4218abe8500b7646d467b05bbddaf3a32802"
+    },
+    {
+      "file": "check_clearances.py",
+      "optimized_sha256": "56ebbc7f2b3a29c1e9ee77909ac935b9fd0ad49e2cda2527f27e642ce4c36448",
+      "original_sha256": "56ebbc7f2b3a29c1e9ee77909ac935b9fd0ad49e2cda2527f27e642ce4c36448"
+    },
+    {
+      "file": "companion_enclosure.scad",
+      "optimized_sha256": "d052ab1622c9d346bff5533c5a3fa33cd9be4672fbbb7f654837deee1c991ba0",
+      "original_sha256": "d052ab1622c9d346bff5533c5a3fa33cd9be4672fbbb7f654837deee1c991ba0"
+    },
+    {
+      "file": "components.scad",
+      "optimized_sha256": "9109ceed9121dc0ec2e5f5265fa0aea26cbf9fdf93a958a537f9e32312509c79",
+      "original_sha256": "9109ceed9121dc0ec2e5f5265fa0aea26cbf9fdf93a958a537f9e32312509c79"
+    },
+    {
+      "file": "COST_OPTIMIZATION.md",
+      "optimized_sha256": "f73c1a122052cefef99d6481a6fd6c3f2a331f4fb1e865b95eb5810e6e8babb6",
+      "original_sha256": "f73c1a122052cefef99d6481a6fd6c3f2a331f4fb1e865b95eb5810e6e8babb6"
+    },
+    {
+      "file": "front_bezel.scad",
+      "optimized_sha256": "6b31c8d2df3c0f0557c8e0c26ce64aa115b55c184ce8a28e9551f96a47d30e9e",
+      "original_sha256": "6b31c8d2df3c0f0557c8e0c26ce64aa115b55c184ce8a28e9551f96a47d30e9e"
+    },
+    {
+      "file": "head_adapters.scad",
+      "optimized_sha256": "17477f715e8c11036f3012839f740ddeb7a1db7fb1b81d3b2add3b3a98f58da5",
+      "original_sha256": "17477f715e8c11036f3012839f740ddeb7a1db7fb1b81d3b2add3b3a98f58da5"
+    },
+    {
+      "file": "head_rear_cover.scad",
+      "optimized_sha256": "5ecb83691c6d702e825503f5f700b5f08581c85d820db087771a42a6e7e24974",
+      "original_sha256": "5ecb83691c6d702e825503f5f700b5f08581c85d820db087771a42a6e7e24974"
+    },
+    {
+      "file": "head_shell.scad",
+      "optimized_sha256": "c8e247afd90257781db13bc631069cfea529854d71708c4a270c792bbe067f07",
+      "original_sha256": "c8e247afd90257781db13bc631069cfea529854d71708c4a270c792bbe067f07"
+    },
+    {
+      "file": "measure_ventilation.py",
+      "optimized_sha256": "115925172877be15eec2a40a6a5bd1f6fc0077d873bd1fd31c6a3c821712a18f",
+      "original_sha256": "115925172877be15eec2a40a6a5bd1f6fc0077d873bd1fd31c6a3c821712a18f"
+    },
+    {
+      "file": "presentation.scad",
+      "optimized_sha256": "6690628794a3e4a5ee25e1c0318644c63066a8ab97fef0a74c0a6a59d833e461",
+      "original_sha256": "6690628794a3e4a5ee25e1c0318644c63066a8ab97fef0a74c0a6a59d833e461"
+    },
+    {
+      "file": "projections.scad",
+      "optimized_sha256": "5545cbb99ebbe2e61a1cc7a15c904e4cb0388d2716f079027d8917c2ad9bc769",
+      "original_sha256": "5545cbb99ebbe2e61a1cc7a15c904e4cb0388d2716f079027d8917c2ad9bc769"
+    },
+    {
+      "file": "render_final.py",
+      "optimized_sha256": "abf7b5ca8cd3c5e0994fd0a1c43fa8ae35af340749fd1a8e5d8650794b7815e7",
+      "original_sha256": "abf7b5ca8cd3c5e0994fd0a1c43fa8ae35af340749fd1a8e5d8650794b7815e7"
+    },
+    {
+      "file": "utilities.scad",
+      "optimized_sha256": "e0fc6b50c616d5152753c01ab6cb840515459d819967504bf42233abf7bd550e",
+      "original_sha256": "e0fc6b50c616d5152753c01ab6cb840515459d819967504bf42233abf7bd550e"
+    },
+    {
+      "file": "ventilation_area.scad",
+      "optimized_sha256": "74afb410c4dd5356ded7c80ea2b801c2e21c2b4124b0f1e4a6de2f219ddf2582",
+      "original_sha256": "74afb410c4dd5356ded7c80ea2b801c2e21c2b4124b0f1e4a6de2f219ddf2582"
+    },
+    {
+      "file": "WIRING.md",
+      "optimized_sha256": "e19b34456ce5991ce835331e4d47d13a50122216b39251d809b1e745aafaabc0",
+      "original_sha256": "e19b34456ce5991ce835331e4d47d13a50122216b39251d809b1e745aafaabc0"
+    }
+  ]
+}

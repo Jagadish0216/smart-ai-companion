@@ -1,0 +1,15 @@
+git status --short
+?? hardware/enclosure.zip
+?? hardware/enclosure/
+
+git branch --show-current
+enclosure-v1
+
+git diff --check
+(no output)
+
+git diff --stat
+(no output)
+
+NO COMMIT
+NO PUSH

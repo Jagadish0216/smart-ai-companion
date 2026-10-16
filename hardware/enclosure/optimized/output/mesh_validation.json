@@ -1,0 +1,314 @@
+[
+  {
+    "file": "head_shell.stl",
+    "bytes": 834884,
+    "triangles": 16696,
+    "bounds_mm": [
+      [
+        -69.0,
+        -56.0,
+        0.0
+      ],
+      [
+        69.0,
+        67.8947,
+        65.4
+      ]
+    ],
+    "size_mm": [
+      138.0,
+      123.8947,
+      65.4
+    ],
+    "signed_volume_mm3": 152801.98,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "connected_surface_shells": 1
+  },
+  {
+    "file": "head_rear_cover.stl",
+    "bytes": 228684,
+    "triangles": 4572,
+    "bounds_mm": [
+      [
+        -69.0,
+        -56.0,
+        0.0
+      ],
+      [
+        69.0,
+        56.0,
+        5.6
+      ]
+    ],
+    "size_mm": [
+      138.0,
+      112.0,
+      5.6
+    ],
+    "signed_volume_mm3": 46993.1,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "connected_surface_shells": 1
+  },
+  {
+    "file": "front_bezel.stl",
+    "bytes": 129684,
+    "triangles": 2592,
+    "bounds_mm": [
+      [
+        -59.0,
+        -26.0,
+        0.0
+      ],
+      [
+        59.0,
+        52.0,
+        9.0
+      ]
+    ],
+    "size_mm": [
+      118.0,
+      78.0,
+      9.0
+    ],
+    "signed_volume_mm3": 9893.09,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "connected_surface_shells": 1
+  },
+  {
+    "file": "base_shell.stl",
+    "bytes": 419784,
+    "triangles": 8394,
+    "bounds_mm": [
+      [
+        -87.0,
+        -57.0,
+        0.0
+      ],
+      [
+        87.0,
+        57.0,
+        59.0
+      ]
+    ],
+    "size_mm": [
+      174.0,
+      114.0,
+      59.0
+    ],
+    "signed_volume_mm3": 79126.59,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "connected_surface_shells": 1
+  },
+  {
+    "file": "base_bottom_cover.stl",
+    "bytes": 847184,
+    "triangles": 16942,
+    "bounds_mm": [
+      [
+        -87.0,
+        -57.0,
+        0.0
+      ],
+      [
+        87.0,
+        57.0,
+        50.0
+      ]
+    ],
+    "size_mm": [
+      174.0,
+      114.0,
+      50.0
+    ],
+    "signed_volume_mm3": 47074.64,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "connected_surface_shells": 1
+  },
+  {
+    "file": "camera_blank_insert.stl",
+    "bytes": 89884,
+    "triangles": 1796,
+    "bounds_mm": [
+      [
+        -23.5,
+        -12.5,
+        -0.0
+      ],
+      [
+        23.5,
+        12.5,
+        10.8
+      ]
+    ],
+    "size_mm": [
+      47.0,
+      25.0,
+      10.8
+    ],
+    "signed_volume_mm3": 2734.26,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "connected_surface_shells": 1
+  },
+  {
+    "file": "camera_lens_insert.stl",
+    "bytes": 102884,
+    "triangles": 2056,
+    "bounds_mm": [
+      [
+        -23.5,
+        -12.5,
+        -0.0
+      ],
+      [
+        23.5,
+        12.5,
+        10.8
+      ]
+    ],
+    "size_mm": [
+      47.0,
+      25.0,
+      10.8
+    ],
+    "signed_volume_mm3": 2612.81,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "connected_surface_shells": 1
+  },
+  {
+    "file": "universal_speaker_mount.stl",
+    "bytes": 311284,
+    "triangles": 6224,
+    "bounds_mm": [
+      [
+        -43.0,
+        -43.0,
+        0.0
+      ],
+      [
+        43.0,
+        43.0,
+        2.8
+      ]
+    ],
+    "size_mm": [
+      86.0,
+      86.0,
+      2.8
+    ],
+    "signed_volume_mm3": 7298.58,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "connected_surface_shells": 1
+  },
+  {
+    "file": "camera_carrier.stl",
+    "bytes": 101084,
+    "triangles": 2020,
+    "bounds_mm": [
+      [
+        -25.0,
+        -10.0,
+        0.0
+      ],
+      [
+        25.0,
+        10.0,
+        2.4
+      ]
+    ],
+    "size_mm": [
+      50.0,
+      20.0,
+      2.4
+    ],
+    "signed_volume_mm3": 2022.83,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "connected_surface_shells": 1
+  },
+  {
+    "file": "round_microphone_holder.stl",
+    "bytes": 90084,
+    "triangles": 1800,
+    "bounds_mm": [
+      [
+        -20.0,
+        -15.5,
+        0.0
+      ],
+      [
+        20.0,
+        15.5,
+        5.0
+      ]
+    ],
+    "size_mm": [
+      40.0,
+      31.0,
+      5.0
+    ],
+    "signed_volume_mm3": 1588.18,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "connected_surface_shells": 1
+  },
+  {
+    "file": "button_actuator.stl",
+    "bytes": 38284,
+    "triangles": 764,
+    "bounds_mm": [
+      [
+        -7.5,
+        -7.5,
+        0.0
+      ],
+      [
+        7.5,
+        7.5,
+        10.8
+      ]
+    ],
+    "size_mm": [
+      15.0,
+      15.0,
+      10.8
+    ],
+    "signed_volume_mm3": 765.64,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "connected_surface_shells": 1
+  },
+  {
+    "file": "tactile_button_holder.stl",
+    "bytes": 57884,
+    "triangles": 1156,
+    "bounds_mm": [
+      [
+        -11.5,
+        -10.0,
+        0.0
+      ],
+      [
+        11.5,
+        10.0,
+        14.0
+      ]
+    ],
+    "size_mm": [
+      23.0,
+      20.0,
+      14.0
+    ],
+    "signed_volume_mm3": 2451.3,
+    "boundary_or_nonmanifold_edges": 0,
+    "inconsistent_edges": 0,
+    "connected_surface_shells": 1
+  }
+]

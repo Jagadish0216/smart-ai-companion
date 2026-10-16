@@ -1,0 +1,16 @@
+{
+  "dimensions.scad": "2f8aa3569b2d17d817b03938657b7691ba75970f2dde851d95026f328394aa27",
+  "fit_tests.scad": "d7a13787f7f6080fb0d7f91893023185646c49beba5074d6e9773ea3ff9783a3",
+  "output/head_shell.stl": "529313b4d0c8f1ce3b1458d135c86e6cbaf55ced48d515f9c11868be8c0bf682",
+  "output/head_rear_cover.stl": "2fb6c1e225db211468fbe1f5d4b19ddc7ea30c8558e317236ddc8ca6c1bf01f6",
+  "output/front_bezel.stl": "dff6e31e9c462711af991670e80dd1eea93f69b14f9fe420b5698f599b2d685b",
+  "output/base_shell.stl": "b89f402b1c6e12a2a8c77287760f1ecfa38d50b1523d085dc2d22dcbd11f9a35",
+  "output/base_bottom_cover.stl": "e23febe6da60e04ee69ff8a53b874566ca2f3f051b18204523d5607a4258bed2",
+  "output/camera_blank_insert.stl": "c53f3eeac89806ec5e7b644258070a94798215cf8e532496ffb95d70b58a6b61",
+  "output/camera_lens_insert.stl": "c37acd3612b7495ad8d4799aaed4e9b3f4f460d3f922e2a9c2e42fb0a9b9ad3f",
+  "output/universal_speaker_mount.stl": "a04a2cc96f0d3842b57dbd1efdd3cb7e4f6ffa2b6de854c7218c0ab0eff4a7dc",
+  "output/camera_carrier.stl": "4a339925bd6630646c45d591faa1e022cfae92cdcdbd2654ba7087452309b4cc",
+  "output/round_microphone_holder.stl": "cb0e11f3cdaeaf8a4d3c7a281a69f80d5ceabcb544828793467519260e327dc4",
+  "output/button_actuator.stl": "0d04874672e59d84b143c2d968e6bdf87703922b735474a062de0c3242451683",
+  "output/tactile_button_holder.stl": "720473b71f555676965c8dbc0ed677e88dcc648d9ebf49c19c1253c5d6520bc8"
+}

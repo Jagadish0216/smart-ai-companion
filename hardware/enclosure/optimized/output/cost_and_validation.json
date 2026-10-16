@@ -1,0 +1,227 @@
+{
+  "base_mm": [
+    174,
+    114,
+    62.0
+  ],
+  "head_mm": [
+    138,
+    112,
+    68
+  ],
+  "head_tilt_deg": 10,
+  "speaker_envelope_mm": [
+    78,
+    78,
+    40
+  ],
+  "speaker_to_grille_mm": 9.0,
+  "desk_gap_mm": 8.8,
+  "cooler_reservation_mm": [
+    70,
+    50,
+    22
+  ],
+  "cooler_minimum_free_air_mm": 22.4,
+  "intake_mm2": 854.826,
+  "exhaust_mm2": 688.915,
+  "stability": {
+    "minimum_foot_centre_margin_mm": 34.112631946883795,
+    "minimum_static_tilt_angle_deg": 20.80941801281303,
+    "cases": 16384,
+    "COM_bounds_mm": [
+      [
+        -25.56400614206215,
+        -7.887368053116202,
+        45.23317660686601
+      ],
+      [
+        7.351104745721255,
+        5.2851984008519866,
+        91.55281955129863
+      ]
+    ],
+    "assembled_bounds_mm": [
+      [
+        -87.0,
+        -57.0,
+        0.0
+      ],
+      [
+        87.0,
+        57.0,
+        187.14923416868365
+      ]
+    ],
+    "status": "PASS (CAD mass sensitivity); not a physical tipping test",
+    "assumptions": "Original 16384-case model: printed mass 55\u2013100% of solid volume at 1.25 g/cm3, NOT a slicing estimate; TFT 60\u2013110g, ESP32 8\u201316g, mic 2\u20136g, camera 4\u201310g, switch 1\u20135g, Pi 40\u201370g, cooler 10\u201360g, amp 2\u201310g; speaker 80\u2013500g, x=-48..-28,y=-10..10,z=26..50 shifted with the speaker. Feet omitted from mass; 8.8 mm ground gap included. Camera lens/carrier installed; spare blank excluded from assembly."
+  },
+  "original_stability": {
+    "minimum_foot_centre_margin_mm": 34.404924477418604,
+    "minimum_static_tilt_angle_deg": 21.102793032907442,
+    "cases": 16384,
+    "COM_bounds_mm": [
+      [
+        -24.605518011671442,
+        -7.595075522581395,
+        46.43329876011277
+      ],
+      [
+        6.2686485080672005,
+        4.9502553445979744,
+        90.49489511836519
+      ]
+    ],
+    "assembled_bounds_mm": [
+      [
+        -87.0,
+        -57.0,
+        0.0
+      ],
+      [
+        87.0,
+        57.0,
+        191.14923416868365
+      ]
+    ],
+    "status": "PASS (CAD mass sensitivity); not a physical tipping test",
+    "assumptions": "Original 16384-case model: printed mass 55\u2013100% of solid volume at 1.25 g/cm3, NOT a slicing estimate; TFT 60\u2013110g, ESP32 8\u201316g, mic 2\u20136g, camera 4\u201310g, switch 1\u20135g, Pi 40\u201370g, cooler 10\u201360g, amp 2\u201310g; speaker 80\u2013500g, x=-48..-28,y=-10..10,z=26..50 shifted with the speaker. Feet omitted from mass; 8.8 mm ground gap included. Camera lens/carrier installed; spare blank excluded from assembly."
+  },
+  "original_CAD_cm3": 422.1879400000001,
+  "optimized_CAD_cm3": 355.36300000000006,
+  "CAD_reduction_pct": 15.828244643842742,
+  "parts": [
+    {
+      "part": "head_shell.stl",
+      "original_cm3": 152.80198000000001,
+      "optimized_cm3": 152.80198000000001,
+      "saved_cm3": 0.0,
+      "reduction_pct": 0.0
+    },
+    {
+      "part": "head_rear_cover.stl",
+      "original_cm3": 46.9931,
+      "optimized_cm3": 46.9931,
+      "saved_cm3": 0.0,
+      "reduction_pct": 0.0
+    },
+    {
+      "part": "front_bezel.stl",
+      "original_cm3": 9.89309,
+      "optimized_cm3": 9.89309,
+      "saved_cm3": 0.0,
+      "reduction_pct": 0.0
+    },
+    {
+      "part": "base_shell.stl",
+      "original_cm3": 118.96042,
+      "optimized_cm3": 79.12659,
+      "saved_cm3": 39.833830000000006,
+      "reduction_pct": 33.48494398388977
+    },
+    {
+      "part": "base_bottom_cover.stl",
+      "original_cm3": 68.48308,
+      "optimized_cm3": 47.07464,
+      "saved_cm3": 21.40844,
+      "reduction_pct": 31.260918755406447
+    },
+    {
+      "part": "camera_blank_insert.stl",
+      "original_cm3": 2.7342600000000004,
+      "optimized_cm3": 2.7342600000000004,
+      "saved_cm3": 0.0,
+      "reduction_pct": 0.0
+    },
+    {
+      "part": "camera_lens_insert.stl",
+      "original_cm3": 2.61281,
+      "optimized_cm3": 2.61281,
+      "saved_cm3": 0.0,
+      "reduction_pct": 0.0
+    },
+    {
+      "part": "universal_speaker_mount.stl",
+      "original_cm3": 12.88125,
+      "optimized_cm3": 7.29858,
+      "saved_cm3": 5.582669999999999,
+      "reduction_pct": 43.33950509461426
+    },
+    {
+      "part": "camera_carrier.stl",
+      "original_cm3": 2.02283,
+      "optimized_cm3": 2.02283,
+      "saved_cm3": 0.0,
+      "reduction_pct": 0.0
+    },
+    {
+      "part": "round_microphone_holder.stl",
+      "original_cm3": 1.5881800000000001,
+      "optimized_cm3": 1.5881800000000001,
+      "saved_cm3": 0.0,
+      "reduction_pct": 0.0
+    },
+    {
+      "part": "button_actuator.stl",
+      "original_cm3": 0.76564,
+      "optimized_cm3": 0.76564,
+      "saved_cm3": 0.0,
+      "reduction_pct": 0.0
+    },
+    {
+      "part": "tactile_button_holder.stl",
+      "original_cm3": 2.4513000000000003,
+      "optimized_cm3": 2.4513000000000003,
+      "saved_cm3": 0.0,
+      "reduction_pct": 0.0
+    }
+  ],
+  "frozen_head_sha256": {
+    "front_bezel": {
+      "original": "dff6e31e9c462711af991670e80dd1eea93f69b14f9fe420b5698f599b2d685b",
+      "optimized": "dff6e31e9c462711af991670e80dd1eea93f69b14f9fe420b5698f599b2d685b",
+      "result": "BYTE IDENTICAL"
+    },
+    "camera_carrier": {
+      "original": "4a339925bd6630646c45d591faa1e022cfae92cdcdbd2654ba7087452309b4cc",
+      "optimized": "4a339925bd6630646c45d591faa1e022cfae92cdcdbd2654ba7087452309b4cc",
+      "result": "BYTE IDENTICAL"
+    },
+    "camera_lens_insert": {
+      "original": "c37acd3612b7495ad8d4799aaed4e9b3f4f460d3f922e2a9c2e42fb0a9b9ad3f",
+      "optimized": "c37acd3612b7495ad8d4799aaed4e9b3f4f460d3f922e2a9c2e42fb0a9b9ad3f",
+      "result": "BYTE IDENTICAL"
+    },
+    "round_microphone_holder": {
+      "original": "cb0e11f3cdaeaf8a4d3c7a281a69f80d5ceabcb544828793467519260e327dc4",
+      "optimized": "cb0e11f3cdaeaf8a4d3c7a281a69f80d5ceabcb544828793467519260e327dc4",
+      "result": "BYTE IDENTICAL"
+    },
+    "camera_blank_insert": {
+      "original": "c53f3eeac89806ec5e7b644258070a94798215cf8e532496ffb95d70b58a6b61",
+      "optimized": "c53f3eeac89806ec5e7b644258070a94798215cf8e532496ffb95d70b58a6b61",
+      "result": "BYTE IDENTICAL"
+    },
+    "button_actuator": {
+      "original": "0d04874672e59d84b143c2d968e6bdf87703922b735474a062de0c3242451683",
+      "optimized": "0d04874672e59d84b143c2d968e6bdf87703922b735474a062de0c3242451683",
+      "result": "BYTE IDENTICAL"
+    },
+    "head_shell": {
+      "original": "529313b4d0c8f1ce3b1458d135c86e6cbaf55ced48d515f9c11868be8c0bf682",
+      "optimized": "529313b4d0c8f1ce3b1458d135c86e6cbaf55ced48d515f9c11868be8c0bf682",
+      "result": "BYTE IDENTICAL"
+    },
+    "head_rear_cover": {
+      "original": "2fb6c1e225db211468fbe1f5d4b19ddc7ea30c8558e317236ddc8ca6c1bf01f6",
+      "optimized": "2fb6c1e225db211468fbe1f5d4b19ddc7ea30c8558e317236ddc8ca6c1bf01f6",
+      "result": "BYTE IDENTICAL"
+    },
+    "tactile_button_holder": {
+      "original": "720473b71f555676965c8dbc0ed677e88dcc648d9ebf49c19c1253c5d6520bc8",
+      "optimized": "720473b71f555676965c8dbc0ed677e88dcc648d9ebf49c19c1253c5d6520bc8",
+      "result": "BYTE IDENTICAL"
+    }
+  },
+  "slicer": "No authoritative slicer estimate was available."
+}

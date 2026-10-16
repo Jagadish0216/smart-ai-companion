@@ -1,0 +1,51 @@
+{
+  "shop": {
+    "archive": "Smart_Companion_Cost_Optimized_Print_Package.zip",
+    "bytes": 1173340,
+    "file_count": 26,
+    "sha256": "906166d63b923a3e9e30db2dbadefed1fbc8f576aed7e8dae68cc51b0cc49b52",
+    "manifest": "Smart_Companion_Cost_Optimized_Print_Package.manifest.json",
+    "result": "PASS"
+  },
+  "full_project": {
+    "archive": "Smart_Companion_Cost_Optimized_Full_Project.zip",
+    "bytes": 6153304,
+    "file_count": 127,
+    "sha256": "22e732af4a3f9f5b9b42709ed7279e8c9af1584050be222620814dad596bcc40",
+    "manifest": "Smart_Companion_Cost_Optimized_Full_Project.manifest.json",
+    "result": "PASS"
+  },
+  "shop_production_STLs": 12,
+  "shop_preview_PNGs": 9,
+  "shop_instruction_files": 4,
+  "all_original_archive_members_unchanged": true,
+  "frozen_head_STLs_byte_identical": 9,
+  "zero_byte_files": 0,
+  "forbidden_shop_files": 0,
+  "git": [
+    {
+      "command": "git status --short",
+      "exit_code": 0,
+      "stdout": "?? hardware/enclosure.zip\n?? hardware/enclosure/\n",
+      "stderr": ""
+    },
+    {
+      "command": "git branch --show-current",
+      "exit_code": 0,
+      "stdout": "enclosure-v1\n",
+      "stderr": ""
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": "git diff --stat",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ]
+}

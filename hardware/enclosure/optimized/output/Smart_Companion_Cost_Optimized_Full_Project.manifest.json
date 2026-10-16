@@ -1,0 +1,515 @@
+{
+  "archive": "Smart_Companion_Cost_Optimized_Full_Project.zip",
+  "archive_sha256": "22e732af4a3f9f5b9b42709ed7279e8c9af1584050be222620814dad596bcc40",
+  "entries": {
+    "Smart_Companion_Cost_Optimized_Full_Project/README.txt": {
+      "bytes": 179,
+      "sha256": "e33b0ecf22b13030c4bcc3670b3e1e8634259643670fb1a66d026524871665cc"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/ASSEMBLY.md": {
+      "bytes": 8037,
+      "sha256": "c9e6a89cf1dc78e1910af6e04b2be76c1d1b920f42916470ed382b1096f78dd8"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/BOM.md": {
+      "bytes": 2135,
+      "sha256": "59a92e65eae398cb3e16b2ab0c22a05a25e26dd6cd64e6aa512e53d52221f0e9"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/COST_OPTIMIZATION.md": {
+      "bytes": 4511,
+      "sha256": "f73c1a122052cefef99d6481a6fd6c3f2a331f4fb1e865b95eb5810e6e8babb6"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/PRINTING.md": {
+      "bytes": 4676,
+      "sha256": "1c70de9918f1219bf77cb7bab199e83c1d97bc6a0eee6b67309b05f28590a4b3"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/README.md": {
+      "bytes": 1241,
+      "sha256": "b70cf2926cb77c3901f9166019bdce6db70f0950e7aa94d17060d811e4fe7c83"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/VALIDATION.md": {
+      "bytes": 8165,
+      "sha256": "1f20638dc59aef2e7a6f6793d276ff6e6ca2d77d2a046fd03ea549cda8196ad2"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/WIRING.md": {
+      "bytes": 2420,
+      "sha256": "e19b34456ce5991ce835331e4d47d13a50122216b39251d809b1e745aafaabc0"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/base_bottom_cover.scad": {
+      "bytes": 4281,
+      "sha256": "3fe3431cda1c236a9c8b1a68d66e7615b3cac6b4cf345fb84fdd0c296f101c52"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/base_shell.scad": {
+      "bytes": 2905,
+      "sha256": "6992c2c8a79ca3fec7e62e2b2ca821df32b0843ab216ffea4ecdc6057df338e0"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/build.py": {
+      "bytes": 8214,
+      "sha256": "64f40d920093387dbba4a58471a41105ed839fb5138b0b323b981e9bfdaa770b"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/camera_insert.scad": {
+      "bytes": 2031,
+      "sha256": "1a39f19da4b504a7e644cd90961e4218abe8500b7646d467b05bbddaf3a32802"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/check_clearances.py": {
+      "bytes": 2017,
+      "sha256": "56ebbc7f2b3a29c1e9ee77909ac935b9fd0ad49e2cda2527f27e642ce4c36448"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/clearance_checks.scad": {
+      "bytes": 9866,
+      "sha256": "e45f3f3bbafbd7b6ef7c44e4e58c9cad6ccf150ba3f0563c3fb37754957eb3f1"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/companion_enclosure.scad": {
+      "bytes": 7498,
+      "sha256": "d052ab1622c9d346bff5533c5a3fa33cd9be4672fbbb7f654837deee1c991ba0"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/comparison.scad": {
+      "bytes": 1895,
+      "sha256": "bf556441feae6914ad9a462c8bb64826daafa0546fa7008f17bbad175a900df8"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/components.scad": {
+      "bytes": 4596,
+      "sha256": "9109ceed9121dc0ec2e5f5265fa0aea26cbf9fdf93a958a537f9e32312509c79"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/dimensions.scad": {
+      "bytes": 7422,
+      "sha256": "e297255d12deb21b7845ff101e92efdc55384b4666711b5a6c28b40dc8c5d62b"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/engineering_report.py": {
+      "bytes": 16379,
+      "sha256": "623ca2bebcc5586a1f0f3e2efcf3ffb974e909d462201cb6313fb60522592a79"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/front_bezel.scad": {
+      "bytes": 563,
+      "sha256": "6b31c8d2df3c0f0557c8e0c26ce64aa115b55c184ce8a28e9551f96a47d30e9e"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/head_adapters.scad": {
+      "bytes": 1698,
+      "sha256": "17477f715e8c11036f3012839f740ddeb7a1db7fb1b81d3b2add3b3a98f58da5"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/head_rear_cover.scad": {
+      "bytes": 1426,
+      "sha256": "5ecb83691c6d702e825503f5f700b5f08581c85d820db087771a42a6e7e24974"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/head_shell.scad": {
+      "bytes": 4681,
+      "sha256": "c8e247afd90257781db13bc631069cfea529854d71708c4a270c792bbe067f07"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/measure_ventilation.py": {
+      "bytes": 2007,
+      "sha256": "115925172877be15eec2a40a6a5bd1f6fc0077d873bd1fd31c6a3c821712a18f"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/READ_ME_FIRST.txt": {
+      "bytes": 1482,
+      "sha256": "fcf035660e28e9776f97aeb254b096daabf51e953a2f4ba5979dcdb1da801704"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/base_bottom_cover.log": {
+      "bytes": 365,
+      "sha256": "e76a55e26e2aed6ed6ec4610dbb1e713939c91850861de63a49749c60b59b284"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/base_bottom_cover.stl": {
+      "bytes": 847184,
+      "sha256": "9c26b18ba7741bd3620de241a23889a9d7fbc712a314891c52f2027d152c2c0d"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/base_shell.log": {
+      "bytes": 365,
+      "sha256": "5b9262ec79de88dcbc678316bc491a0afc39e929596b4bd78b143b02d8660463"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/base_shell.stl": {
+      "bytes": 419784,
+      "sha256": "ae1f03c3de1963d393605ffd270550815d6d757020778dfa81088d861a4b445c"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/button_actuator.log": {
+      "bytes": 358,
+      "sha256": "67cd74bc3831ec53d465e261961ec41e23b89490da3c7ae8d9d4165842b7b94a"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/button_actuator.stl": {
+      "bytes": 38284,
+      "sha256": "0d04874672e59d84b143c2d968e6bdf87703922b735474a062de0c3242451683"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/camera_blank_insert.log": {
+      "bytes": 361,
+      "sha256": "9e9e2693673ca1fd805627b0ddbb76b3aefc2275997fead0e2801571e2c02869"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/camera_blank_insert.stl": {
+      "bytes": 89884,
+      "sha256": "c53f3eeac89806ec5e7b644258070a94798215cf8e532496ffb95d70b58a6b61"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/camera_carrier.log": {
+      "bytes": 361,
+      "sha256": "c6afdcd32361c3ee76ee63858123afd5e2b0cd2497708e120fa019b3192a1bb6"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/camera_carrier.stl": {
+      "bytes": 101084,
+      "sha256": "4a339925bd6630646c45d591faa1e022cfae92cdcdbd2654ba7087452309b4cc"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/camera_lens_insert.log": {
+      "bytes": 361,
+      "sha256": "2c30a97835737401d05327cb46ced63de162c8a115a8ac54a786cbb2e5d2d6aa"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/camera_lens_insert.stl": {
+      "bytes": 102884,
+      "sha256": "c37acd3612b7495ad8d4799aaed4e9b3f4f460d3f922e2a9c2e42fb0a9b9ad3f"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/clearance_acoustic_path.log": {
+      "bytes": 201,
+      "sha256": "c62e606ba201c2865fee52edc85a4dd78deaad7285ce7769ddee5854f55b55ba"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/clearance_base_components.log": {
+      "bytes": 201,
+      "sha256": "d298f627060e67e6ac82c039f218c446ae9905fcca75669b137f3331b2dbe9d3"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/clearance_base_mates.log": {
+      "bytes": 195,
+      "sha256": "4f83fc5fb66a40684d6a934d61a830f7efebc69900d44c962daec349e2351132"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/clearance_camera_carrier.log": {
+      "bytes": 202,
+      "sha256": "2c27e9a5d3f9e2228885642c5a6b3f32971ae49bb12cd588ecebb0351cea8488"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/clearance_camera_removal.log": {
+      "bytes": 201,
+      "sha256": "c58705ef757baececad70a42559515a305a68f6d2111155e5fb4336aa0a668c7"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/clearance_cooler_air.log": {
+      "bytes": 201,
+      "sha256": "314aa2e6b69a342e03da77e7e8242de33f486198f9e7f93d872fa49ddade064b"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/clearance_feet.log": {
+      "bytes": 200,
+      "sha256": "589cd90b3731f7cd7b19411b9426d3f648cd69f29b16dfac58f93f96b66d7fba"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/clearance_head_adapters.log": {
+      "bytes": 203,
+      "sha256": "3eb7665f41e7170d403c8a6924b10f619c68d6a3aff62969906d145fe9c718a2"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/clearance_head_components.log": {
+      "bytes": 201,
+      "sha256": "4f543511414dd83409cec55bb1a42c5e49f3601cb92f2359139152a6aba8a445"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/clearance_head_mates.log": {
+      "bytes": 194,
+      "sha256": "12da633bd47293f25840c2d28dc0a8cb6f21671a0e8ed0b8b0040c45b141a2cc"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/clearance_neck_bend.log": {
+      "bytes": 202,
+      "sha256": "6fd3c6acedfe0fd1d6fb95059be376192d54ea20296d896e04f5cae1d400d46f"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/clearance_pi_driver.log": {
+      "bytes": 201,
+      "sha256": "42d82994482235c065fa9311e025d03bba4073ec635a2b51a890a02b0fa291d7"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/clearance_plugs.log": {
+      "bytes": 201,
+      "sha256": "db4723c75540eb41ee4a664e0b754a44738c0ef07f74e86af15eeaeee7aab662"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/clearance_service_volume.log": {
+      "bytes": 202,
+      "sha256": "fa2ef480a5c330e9469249c30b23023616b1bc7ecd2715ce1ef77d1946c19290"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/clearance_speaker_removal.log": {
+      "bytes": 202,
+      "sha256": "cae21ca7445185be132e5f411becc94da81f760d063f450daf2f722008f8c282"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/clearance_speaker_separation.log": {
+      "bytes": 202,
+      "sha256": "195778df4290e624dd0b5bbd407f59a551746c5c78c4d930eb33a1cf28d8380c"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/clearance_tft_drivers.log": {
+      "bytes": 200,
+      "sha256": "b72a837bf10d9f0c39b5e57d62d1e05987fd7eb53b4e6eb76ff2a32c89e56e6f"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/clearance_tft_removal.log": {
+      "bytes": 202,
+      "sha256": "f3fb400921340fc07a801932fd898c0d2d925bedf9b015caa4f511412b2644a3"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/clearance_tray_removal.log": {
+      "bytes": 202,
+      "sha256": "fe2b112b6b34d94bc04e3a1e22bb2649b813027fee3b780ff6dc7c57c1ef89e4"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/clearance_validation.json": {
+      "bytes": 531,
+      "sha256": "aff2e07de61ac44a71d27bb2c298f3960fc2e4215f9e69179b6865c6633c4f6a"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/comparison_66mm_vs_optimized.log": {
+      "bytes": 253,
+      "sha256": "62bdaff326f5fe9229416e3e4d471fe6b1c7d11e9da976afa3d9a233ba8666b5"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/comparison_66mm_vs_optimized.png": {
+      "bytes": 60102,
+      "sha256": "a972f2d59203c4e6c36385b2af3e34139cd1cf3c678f17882404ffe2e25371a0"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/cost_and_validation.json": {
+      "bytes": 7330,
+      "sha256": "e5b2aaffbca15e6aadb0ccf12b0443c2317d7befba5b40204acd0814e87e7f69"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/dimensions.echo": {
+      "bytes": 354,
+      "sha256": "f534a4885f4327b9dc23473342f4f67c97498292985e4866ac1d8903ec6b5048"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/final_base_internal.log": {
+      "bytes": 245,
+      "sha256": "71bfde6c88afc386d015efa54a1a7655fcecaf1209f3ecc1c824b4b181cb8f52"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/final_base_internal.png": {
+      "bytes": 133512,
+      "sha256": "1038d326429bec408c5165b92046185b9a0eada9811beacd4f23403a5e2a7d39"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/final_bottom.log": {
+      "bytes": 254,
+      "sha256": "88c92fcb9152528b48f7fa6c080c95e1ccf1ed53b3b5317eb2e58f45e31b9cf8"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/final_bottom.png": {
+      "bytes": 68353,
+      "sha256": "88459de0354af32b5511a43087c149d96822d2076c3cdf567a20c133f6b80733"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/final_cutaway.log": {
+      "bytes": 253,
+      "sha256": "d4a9843154b0a40b6c1fe5f24f226c34dbb2709159262450808639773321ee8c"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/final_cutaway.png": {
+      "bytes": 86183,
+      "sha256": "d37afe9a8d48a682ba3e77bbaf4e9762320c478636049b73890e96ce591a9e25"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/final_exploded.log": {
+      "bytes": 245,
+      "sha256": "a9ccc8d247aa0f7df20e0d95825ce632a541cbf6bb31defa5a809ad91ee2a1ad"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/final_exploded.png": {
+      "bytes": 70364,
+      "sha256": "4cee0d30e322c8257a509edc1c408c585676a99ca6cae23d9cda90615e1b2354"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/final_front_left.log": {
+      "bytes": 254,
+      "sha256": "4693fc90847a79fcc5fc237ea352b0c4c1ccbe073ba6a92d29cb6c1986ea26f8"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/final_front_left.png": {
+      "bytes": 45449,
+      "sha256": "f738901c9ca6e6625732bcf5afe0165498b9742d3b918879fdbd9abd92f62e9c"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/final_front_right.log": {
+      "bytes": 254,
+      "sha256": "5ba04c1c698ef75f9d54d2d512fc226f6ad3438c85c8ad44dce3b40efe16da49"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/final_front_right.png": {
+      "bytes": 53874,
+      "sha256": "b3350b830612926fc596dbf2b63fd3fe1584652d98c6ec65266807ff4b077b61"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/final_rear.log": {
+      "bytes": 254,
+      "sha256": "c773a21bead496bf6319811f6efbb1d61535135e79ac88caedc9fc56099179d3"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/final_rear.png": {
+      "bytes": 67142,
+      "sha256": "f9ef1c4e33bb875023856b0aee47cac7317fbfe7522bba8d5670aed8bca0bd5c"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/final_side.log": {
+      "bytes": 254,
+      "sha256": "9f4b415dba87845e4f5809d401db793603150289626ca4e54e1f7aed69f2c8c7"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/final_side.png": {
+      "bytes": 31207,
+      "sha256": "397130f402218b99580796585d4b3a3f22061c841a10750273611812a781567a"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/front_bezel.log": {
+      "bytes": 361,
+      "sha256": "b01101e14a42da06f338f5dfcae86864f82daa1bb044b3caeaff3a10b2af9bfe"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/front_bezel.stl": {
+      "bytes": 129684,
+      "sha256": "dff6e31e9c462711af991670e80dd1eea93f69b14f9fe420b5698f599b2d685b"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/git_final.txt": {
+      "bytes": 201,
+      "sha256": "018bc62abed458a519f51b1c2cb2d4e85c1e24fc83867fd04909620af075301b"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/head_rear_cover.log": {
+      "bytes": 362,
+      "sha256": "f55d0b766f5c9aff880d6bca672a87443ee237345bb5148ed6957cb0d9b92f9f"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/head_rear_cover.stl": {
+      "bytes": 228684,
+      "sha256": "2fb6c1e225db211468fbe1f5d4b19ddc7ea30c8558e317236ddc8ca6c1bf01f6"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/head_shell.log": {
+      "bytes": 365,
+      "sha256": "9d29ab3c316cec271146c93721dcc7b00057e9cb81e3efaf653b1170a726bc7a"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/head_shell.stl": {
+      "bytes": 834884,
+      "sha256": "529313b4d0c8f1ce3b1458d135c86e6cbaf55ced48d515f9c11868be8c0bf682"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/mesh_validation.json": {
+      "bytes": 5447,
+      "sha256": "bbea6270a9da826787221adb039206c86703a42624b388c5086b9cd8eadafd34"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/original_sha256.json": {
+      "bytes": 1147,
+      "sha256": "bc0b4fd649221f4498c6169671596790a41deb66a0079cbf25e958483f52f7b9"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/preview_validation.json": {
+      "bytes": 2392,
+      "sha256": "59c636ce0db734f8d51cff3d1db50f918a56f17079f5f7d30d8c86a0783ba181"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/requirements_validation.json": {
+      "bytes": 6924,
+      "sha256": "d387020aac08b2ccce1adb2206571b84a28d079856b7ace7c2d2775393ae2ad0"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/round_microphone_holder.log": {
+      "bytes": 361,
+      "sha256": "7db0cf8c4ba8d022cc68d3a870b4efda7fda62cb47eaf154739a892c0407ee55"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/round_microphone_holder.stl": {
+      "bytes": 90084,
+      "sha256": "cb0e11f3cdaeaf8a4d3c7a281a69f80d5ceabcb544828793467519260e327dc4"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/slicer_availability.json": {
+      "bytes": 537,
+      "sha256": "715fee2afe999b79cf27afc29544fe95446f15c449bd79d093b69862af1b01b2"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/source_changes.json": {
+      "bytes": 7220,
+      "sha256": "71711e3efec45018f2f6e85937a6feed37eaee7e263bde8b11c239f90afa89ec"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/tactile_button_holder.log": {
+      "bytes": 361,
+      "sha256": "28e0907f5fc5f6069c8c2cb333242a7d4dd98cd587498aebae5a0dcadb42b163"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/tactile_button_holder.stl": {
+      "bytes": 57884,
+      "sha256": "720473b71f555676965c8dbc0ed677e88dcc648d9ebf49c19c1253c5d6520bc8"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/universal_speaker_mount.log": {
+      "bytes": 363,
+      "sha256": "0686f3c66e5661c36c6460c393050bb98feb779d13b8e2e7be574c119c673c04"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/universal_speaker_mount.stl": {
+      "bytes": 311284,
+      "sha256": "9814fb1912753716e1df17c5a24930b0236c1230ebd9651d4b0c11b46922db88"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/ventilation_current.json": {
+      "bytes": 320,
+      "sha256": "ae7ee55106961aa4e63f61cf7b66ecd4eff6d8ce8335465d652414a8eb02ddc3"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/ventilation_current_exhaust.log": {
+      "bytes": 224,
+      "sha256": "162266ede8a922101986a70f4202cdb3eccefb03d4cc2228e02ca95a39dccda7"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/ventilation_current_exhaust.svg": {
+      "bytes": 11178,
+      "sha256": "496cf8679b73333fbddb78477f691564cbd206800d3f181f7f3d2ac5d7b167b1"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/ventilation_current_intake.log": {
+      "bytes": 218,
+      "sha256": "6742d7f8dd4be7d2447b864643e1cbfbf96d2545fc9535e6149ea96f4be84d04"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/ventilation_current_intake.svg": {
+      "bytes": 7070,
+      "sha256": "964b08eb7f71014202d909983de7591e8ade856a0e9a4e1ddd5b9b072cc425a0"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/output/version.log": {
+      "bytes": 26,
+      "sha256": "0747392d301c670924d021e1ff0ed7319d7e785011ffae3a423656281c52105f"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/package_optimized.py": {
+      "bytes": 7003,
+      "sha256": "6b31c5de39b3c99ef01e75ea62982f83107c49ee7dc5ed0142d0004e4d8b7548"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/presentation.scad": {
+      "bytes": 5120,
+      "sha256": "6690628794a3e4a5ee25e1c0318644c63066a8ab97fef0a74c0a6a59d833e461"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/projections.scad": {
+      "bytes": 1058,
+      "sha256": "5545cbb99ebbe2e61a1cc7a15c904e4cb0388d2716f079027d8917c2ad9bc769"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/render_comparison.py": {
+      "bytes": 365,
+      "sha256": "5107d8b5545eef2686c29a523ead4827462f78376f837c0a556daf606974ce67"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/render_final.py": {
+      "bytes": 970,
+      "sha256": "abf7b5ca8cd3c5e0994fd0a1c43fa8ae35af340749fd1a8e5d8650794b7815e7"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/speaker_mount.scad": {
+      "bytes": 1571,
+      "sha256": "8ef2ddb48b3109ea996c17cbe25db950fb1666a15b867d6bed4d807f475d27ca"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/utilities.scad": {
+      "bytes": 2189,
+      "sha256": "e0fc6b50c616d5152753c01ab6cb840515459d819967504bf42233abf7bd550e"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/optimized/ventilation_area.scad": {
+      "bytes": 1120,
+      "sha256": "74afb410c4dd5356ded7c80ea2b801c2e21c2b4124b0f1e4a6de2f219ddf2582"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/output/archive/Smart_Companion_66mm_Original_Backup.zip": {
+      "bytes": 4358204,
+      "sha256": "effc3e45ed29dc1db87abfd1983b3ca947a5382e9e8434bd5438384d30ea4170"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/output/archive/Smart_Companion_66mm_Original_SHA256.txt": {
+      "bytes": 1144,
+      "sha256": "c8b8759841d8b8fbdecb943f5c98a06b7b6dcf3a38174d29a0c0d414a4155403"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/output/base_bottom_cover.stl": {
+      "bytes": 652084,
+      "sha256": "e23febe6da60e04ee69ff8a53b874566ca2f3f051b18204523d5607a4258bed2"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/output/base_shell.stl": {
+      "bytes": 378884,
+      "sha256": "b89f402b1c6e12a2a8c77287760f1ecfa38d50b1523d085dc2d22dcbd11f9a35"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/output/button_actuator.stl": {
+      "bytes": 38284,
+      "sha256": "0d04874672e59d84b143c2d968e6bdf87703922b735474a062de0c3242451683"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/output/camera_blank_insert.stl": {
+      "bytes": 89884,
+      "sha256": "c53f3eeac89806ec5e7b644258070a94798215cf8e532496ffb95d70b58a6b61"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/output/camera_carrier.stl": {
+      "bytes": 101084,
+      "sha256": "4a339925bd6630646c45d591faa1e022cfae92cdcdbd2654ba7087452309b4cc"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/output/camera_lens_insert.stl": {
+      "bytes": 102884,
+      "sha256": "c37acd3612b7495ad8d4799aaed4e9b3f4f460d3f922e2a9c2e42fb0a9b9ad3f"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/output/final_dimensions_and_stability.json": {
+      "bytes": 6927,
+      "sha256": "e54218c7983cd300d7fc90e55eb1ac53b4abaf339a60a40550b6db141cf13f5b"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/output/front_bezel.stl": {
+      "bytes": 129684,
+      "sha256": "dff6e31e9c462711af991670e80dd1eea93f69b14f9fe420b5698f599b2d685b"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/output/head_rear_cover.stl": {
+      "bytes": 228684,
+      "sha256": "2fb6c1e225db211468fbe1f5d4b19ddc7ea30c8558e317236ddc8ca6c1bf01f6"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/output/head_shell.stl": {
+      "bytes": 834884,
+      "sha256": "529313b4d0c8f1ce3b1458d135c86e6cbaf55ced48d515f9c11868be8c0bf682"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/output/requirements_validation.json": {
+      "bytes": 5932,
+      "sha256": "0da9d0f8eb88ca57394d3891a1ac26a8ef4b07f2df9a6a5987e9e307281aed43"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/output/round_microphone_holder.stl": {
+      "bytes": 90084,
+      "sha256": "cb0e11f3cdaeaf8a4d3c7a281a69f80d5ceabcb544828793467519260e327dc4"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/output/tactile_button_holder.stl": {
+      "bytes": 57884,
+      "sha256": "720473b71f555676965c8dbc0ed677e88dcc648d9ebf49c19c1253c5d6520bc8"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/output/universal_speaker_mount.stl": {
+      "bytes": 237684,
+      "sha256": "a04a2cc96f0d3842b57dbd1efdd3cb7e4f6ffa2b6de854c7218c0ab0eff4a7dc"
+    },
+    "Smart_Companion_Cost_Optimized_Full_Project/output/ventilation_current.json": {
+      "bytes": 320,
+      "sha256": "ae7ee55106961aa4e63f61cf7b66ecd4eff6d8ce8335465d652414a8eb02ddc3"
+    }
+  },
+  "verification": "PASS: exact inventory, nonzero size, CRC and SHA256"
+}
