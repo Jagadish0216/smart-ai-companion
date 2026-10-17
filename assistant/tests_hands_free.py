@@ -309,6 +309,11 @@ class NativeRequestReaderTests(SimpleTestCase):
 
 class HandsFreeVoiceCycleTests(SimpleTestCase):
     def setUp(self):
+        # Voice/TFT lifecycle tests do not inspect indexed knowledge. Keep the
+        # real response policy while isolating its database-backed RAG probe.
+        rag_patch = patch("knowledge_base.services.is_rag_available", return_value=False)
+        rag_patch.start()
+        self.addCleanup(rag_patch.stop)
         self.config = voice_loop.VoiceLoopConfig("", audio_backend="alsa", capture_vad_enabled=False)
         self.capture = HandsFreeCaptureConfig(0.04, 0.04, 0.2, 0.1)
         self.display = MagicMock()
