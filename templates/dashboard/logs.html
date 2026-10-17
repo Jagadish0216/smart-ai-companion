@@ -11,7 +11,7 @@
 <div class="card">
     <!-- Toolbar -->
     <div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
-        <div class="flex gap-2">
+        <div class="flex gap-2 flex-wrap">
             <button class="mode-btn active" data-filter="ALL" onclick="filterLogs('ALL', this)">All</button>
             <button class="mode-btn" data-filter="INFO" onclick="filterLogs('INFO', this)">
                 <span class="log-level info" style="padding:0 4px;">INFO</span>
@@ -29,7 +29,7 @@
     </div>
 
     <!-- Log Entries -->
-    <div style="max-height:600px;overflow-y:auto;" id="log-container">
+    <div id="log-container">
         {% for log in logs %}
         <div class="log-entry" data-level="{{ log.level }}" data-text="{{ log.component|lower }} {{ log.message|lower }}">
             <span class="log-timestamp">{{ log.timestamp|date:"Y-m-d H:i:s" }}</span>
@@ -58,7 +58,7 @@
             const text = entry.getAttribute('data-text') || '';
             const matchLevel = currentFilter === 'ALL' || level === currentFilter;
             const matchSearch = !currentSearch || text.includes(currentSearch.toLowerCase());
-            entry.style.display = (matchLevel && matchSearch) ? 'flex' : 'none';
+            entry.hidden = !(matchLevel && matchSearch);
         });
     }
 

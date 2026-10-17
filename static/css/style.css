@@ -8,9 +8,9 @@
 
 
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+400;500;600;700&display=swap');
 
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
+500;600;700&display=swap');
 
 
 
@@ -258,9 +258,11 @@ body {
 
     display: flex;
 
-    height: 100vh;
+    min-height: 100vh;
 
-    overflow: hidden;
+    height: auto;
+
+    overflow: visible;
 
     transition: background var(--transition), color var(--transition);
 
@@ -2335,7 +2337,7 @@ input[type="range"]::-webkit-slider-thumb {
 
 
 
-    .topbar-right .status-pill span:not(.status-dot) { display: none; }
+    /* Status labels wrap in the shared shell instead of disappearing on mobile. */
 
     .topbar-right .status-pill { padding: 4px 6px; }
 

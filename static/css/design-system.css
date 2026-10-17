@@ -1,0 +1,33 @@
+/* Approved Stillpoint tokens. All typography resolves locally. */
+:root, [data-theme="dark"], [data-theme="light"] {
+ --bg-base:#101315; --bg-surface:#191e21; --bg-surface-elevated:#1e2427; --bg-inset:#0c1012;
+ --text-primary:#edf1ef; --text-secondary:#a5afb4; --text-muted:#a5afb4;
+ --accent:#76e2d1; --accent-hover:#92ebdd; --accent-subtle:#76e2d10d; --accent-border:#76e2d144;
+ --border:#30383c; --border-strong:#465155; --success:#89cba4; --warning:#e6bd76; --error:#f08c8c;
+ --font-sans:Inter,"Segoe UI",system-ui,-apple-system,sans-serif; --font-display:"Space Grotesk","Segoe UI",system-ui,sans-serif;
+ --sidebar-width:88px; --radius-sm:8px; --radius-md:12px; --radius-lg:20px; --radius-xl:24px;
+ --space-1:8px; --space-2:16px; --space-3:24px; --space-4:32px; --space-5:48px; --space-6:64px;
+ --type-label:12px; --type-body:16px; --type-title:44px; --transition:180ms ease; --focus:2px solid var(--accent);
+ --shadow-sm:none; --shadow-md:none; --shadow-lg:0 12px 40px #0004; color-scheme:dark;
+}
+body {font-family:var(--font-sans); background:var(--bg-base); color:var(--text-primary);line-height:1.45}
+[hidden] {display:none!important}
+:focus-visible {outline:var(--focus);outline-offset:3px}
+a {color:inherit} button,input,textarea,select {font:inherit} button,a,input,textarea {touch-action:manipulation}
+button {cursor:pointer} button:disabled {cursor:not-allowed;opacity:.45}
+.btn {min-height:44px;border-radius:24px;padding:12px 22px;font-weight:400;box-shadow:none;transition:background var(--transition)}
+.btn-primary {background:var(--accent);color:var(--bg-inset);border-color:transparent}
+.btn-primary:hover {background:var(--accent-hover);box-shadow:none;transform:none}
+.btn-icon {min-width:44px;min-height:44px;padding:10px}
+.card {background:var(--bg-surface);border-color:var(--border);box-shadow:none;border-radius:20px}
+.card:hover {box-shadow:none;transform:none}
+.card-title {font-weight:400}.page-header-title {font:400 clamp(30px,3.1vw,44px)/1.45 var(--font-display);margin:0 0 8px}
+.page-header-desc {font-size:16px;max-width:760px;color:var(--text-secondary)}
+.page-header {margin-bottom:48px}.metric-value {font-weight:400}
+.eyebrow {font-size:11px;letter-spacing:.045em;text-transform:uppercase;font-weight:400;color:var(--text-secondary)}
+.status-pill {border:0;background:transparent;font-weight:400}.status-dot {animation:none}
+.status-pill.offline {color:var(--accent);background:transparent}.status-pill.offline .status-dot {background:var(--accent)}
+input,textarea,select {max-width:100%;color:var(--text-primary);background:var(--bg-inset);border:1px solid var(--border);border-radius:12px;padding:12px}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+
+[data-theme="light"] {--bg-base:#edf1ef;--bg-surface:#ffffff;--bg-surface-elevated:#e3e9e6;--bg-inset:#e0e6e3;--text-primary:#182420;--text-secondary:#4a5d55;--text-muted:#4a5d55;--border:#bac8c0;--accent:#176f62;--accent-hover:#258575;color-scheme:light}

@@ -11,24 +11,24 @@
 <div class="card">
     <div class="card-header">
         <span class="card-title">All Conversations</span>
-        <a href="{% url 'assistant' %}" class="btn btn-primary btn-sm">
+        <a href="{% url 'assistant' %}?new=1" class="btn btn-primary btn-sm">
             <i data-lucide="plus" style="width:14px;height:14px;"></i> New
         </a>
     </div>
 
     <div class="flex flex-col gap-2">
         {% for conv in conversations %}
-        <div class="conv-card" onclick="openConversation({{ conv.id }})">
+        <a class="conv-card" href="{% url 'assistant' %}?conversation={{ conv.id }}">
             <div class="conv-icon"><i data-lucide="message-circle"></i></div>
             <div class="conv-info">
                 <div class="conv-title">{{ conv.title|default:"Unnamed Session" }}</div>
                 <div class="conv-meta">
-                    <span>{{ conv.created_at|date:"M d, Y · H:i" }}</span>
+                    <span>{{ conv.created_at|date:"M d, Y Â· H:i" }}</span>
                     {% if conv.message_count %}<span>{{ conv.message_count }} message{{ conv.message_count|pluralize }}</span>{% endif %}
                 </div>
             </div>
             <i data-lucide="chevron-right" style="width:16px;height:16px;color:var(--text-muted);flex-shrink:0;"></i>
-        </div>
+        </a>
         {% empty %}
         <div class="empty-state">
             <i data-lucide="message-circle"></i>

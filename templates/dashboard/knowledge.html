@@ -1,32 +1,13 @@
 {% extends 'base.html' %}
 {% load static %}
-{% block page_title %}Knowledge{% endblock %}
-{% block page_heading %}Knowledge{% endblock %}
+{% block page_title %}Memory{% endblock %}
+{% block page_heading %}Memory{% endblock %}
 {% block content %}
-<div class="page-header">
-    <div class="page-header-title">Knowledge Base</div>
-    <div class="page-header-desc">Manage uploaded documents and saved online sources. Fresh sources support offline answers; expired online sources stay visible but are excluded from retrieval.</div>
-</div>
-<div class="grid grid-3 mb-5">
-    <div class="card"><div class="label mb-2">Total Documents</div><div class="metric-value" id="knowledge-total">{{ documents|length }}</div></div>
-    <div class="card"><div class="label mb-2">Indexed</div><div class="metric-value text-success" id="knowledge-indexed">{{ indexed_count|default:"0" }}</div></div>
-    <div class="card"><div class="label mb-2">Pending</div><div class="metric-value text-warning" id="knowledge-pending">{{ pending_count|default:"0" }}</div></div>
-</div>
-<div class="card mb-5">
-    <div class="card-title mb-3">RAG Pipeline</div>
-    <div class="flex items-center gap-2" style="flex-wrap:wrap">
-        <span class="badge">Document Upload</span><span aria-hidden="true">→</span>
-        <span class="badge">Text Extraction</span><span aria-hidden="true">→</span>
-        <span class="badge">Chunking</span><span aria-hidden="true">→</span>
-        <span class="badge">Lexical Retrieval</span><span aria-hidden="true">→</span>
-        <span class="badge">Local AI Grounding</span>
-    </div>
-    <p class="text-sm text-muted mt-3">PDFs need an existing text layer. Scanned PDFs and OCR are not supported.</p>
-</div>
-<div class="card mb-5" id="knowledge-drop-zone" data-can-manage="{{ request.user.is_staff|yesno:'true,false' }}">
+<div class="memory-toolbar"><div class="page-header"><h2 class="page-header-title">Memory Library</h2><p class="page-header-desc">Files your companion can use when answering.</p></div>
+<div class="memory-upload" id="knowledge-drop-zone" data-can-manage="{{ request.user.is_staff|yesno:'true,false' }}">
     {% if request.user.is_staff %}
     <div class="flex items-center gap-2">
-        <button class="btn btn-primary btn-sm" id="btn-upload-doc">Upload Document</button>
+        <button class="btn btn-primary btn-sm" id="btn-upload-doc">＋ Add files</button>
         <button class="btn btn-sm" id="knowledge-sync-stale">Sync Stale Online Knowledge</button>
         <input id="knowledge-file-picker" type="file" accept=".txt,.md,.markdown,.pdf" multiple hidden>
         <span class="text-sm text-muted">Choose files or drop them here · up to 10 MB each</span>
@@ -39,24 +20,13 @@
     {% endif %}
     <div id="knowledge-operation-status" role="status" aria-live="polite" class="text-sm text-muted mt-3"></div>
 </div>
-<div class="card">
-    <div class="card-header"><span class="card-title">Documents</span><button class="btn btn-sm" id="knowledge-refresh">Refresh</button></div>
-    <div style="overflow-x:auto">
-        <table class="data-table">
-            <thead><tr><th>Source / Filename</th><th>Origin / Freshness</th><th>Type / Size</th><th>Status</th><th>Chunks</th><th>Retrieved / Uploaded</th><th>Last Sync / Indexed</th><th>Actions</th></tr></thead>
-            <tbody id="knowledge-documents">
-            {% for doc in documents %}
-            <tr>
-                <td>{% if doc.source_type == 'ONLINE' %}{{ doc.source_title }}<div class="text-sm text-muted">{{ doc.source_url }}</div>{% else %}{{ doc.filename }}{% endif %}</td>
-                <td>{{ doc.source_type }}{% if doc.source_type == 'ONLINE' %}<div>{{ doc.provider }}</div><span class="badge {% if doc.freshness == 'FRESH' %}badge-success{% else %}badge-warning{% endif %}">{{ doc.freshness }}</span><div class="text-sm text-muted">Expires: {{ doc.expires_at|date:"M d, Y H:i"|default:"—" }}</div>{% endif %}</td>
-                <td>{{ doc.file_type }}</td><td>{{ doc.status }}{% if doc.sync_error_message %}<div class="text-sm text-muted">{{ doc.sync_error_message }}</div>{% endif %}</td><td>{{ doc.chunks.count }}</td>
-                <td>{% if doc.source_type == 'ONLINE' %}{{ doc.retrieved_at|date:"M d, Y H:i"|default:"—" }}{% else %}{{ doc.uploaded_at|date:"M d, Y H:i" }}{% endif %}</td>
-                <td>{% if doc.source_type == 'ONLINE' %}{{ doc.last_synced_at|date:"M d, Y H:i"|default:"—" }}{% else %}{{ doc.indexed_at|date:"M d, Y H:i"|default:"—" }}{% endif %}</td><td>Loading controls…</td>
-            </tr>
-            {% empty %}<tr><td colspan="8"><div class="empty-state">No documents yet. Upload a document to build local knowledge.</div></td></tr>{% endfor %}
-            </tbody>
-        </table>
-    </div>
 </div>
+<div class="memory-summary"><span><b id="knowledge-total">{{ documents|length }}</b> files</span><span><b id="knowledge-indexed">{{ indexed_count }}</b> ready</span><span><b id="knowledge-pending">{{ pending_count }}</b> queued</span></div>
+<div class="memory-layout"><section class="memory-list" aria-label="Documents">
+<input id="memory-search" class="memory-search" type="search" placeholder="Search your library" aria-label="Search your library">
+<div class="memory-filters"><button data-filter="ALL" aria-pressed="true">All files</button><button data-filter="INDEXED" aria-pressed="false">Ready</button><button data-filter="ERROR" aria-pressed="false">Needs attention</button><button id="knowledge-refresh">Refresh</button></div>
+<div id="knowledge-documents">{% for doc in documents %}<div class="document-row"><span class="doc-name">{% if doc.source_type == 'ONLINE' %}{{ doc.source_title }}{% else %}{{ doc.filename }}{% endif %}<small>{{ doc.file_type }} · {{ doc.uploaded_at|date:"M d, Y" }}{% if doc.source_type == 'ONLINE' %} · ONLINE · {{ doc.provider }} · {{ doc.freshness }} · Expires: {{ doc.expires_at|date:"M d, Y H:i" }}{% endif %}</small></span><span class="doc-status">{{ doc.status }}</span></div>{% empty %}<p class="quiet-empty">No documents yet. Upload a document to build local knowledge.</p>{% endfor %}</div>
+</section><aside id="memory-detail" class="memory-detail" aria-label="Selected file"><p class="eyebrow">Selected file</p><h3>Your local library.</h3><p>Select a file to see its status, indexing details and available actions.</p><p>PDFs need an existing text layer. Scanned PDFs and OCR are not supported.</p></aside></div>
+<details class="home-system"><summary>How files become memory</summary><p>Text Extraction → Chunking → Lexical Retrieval → Local AI Grounding</p><p>Only supported text files and PDFs with a text layer can be indexed.</p></details>
 <script src="{% static 'js/knowledge.js' %}"></script>
 {% endblock %}

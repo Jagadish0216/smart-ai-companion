@@ -1,0 +1,120 @@
+/* Assistant owns one bounded conversation scrollport. Header/composer remain in flow. */
+body[data-page="assistant"] { height: 100vh; height: var(--visual-height, 100dvh); min-height: 0; overflow: hidden; }
+body[data-page="assistant"] .main-wrapper { height: 100%; min-height: 0; padding-bottom: var(--mobile-nav-height); overflow: hidden; }
+body[data-page="assistant"] .content-area { display: flex; flex: 1 1 0; min-height: 0; max-width: none; padding: 0; overflow: hidden; }
+.chat-app-wrapper, .chat-main { display: flex; flex: 1 1 0; flex-direction: column; min-height: 0; min-width: 0; width: 100%; position: relative; background: var(--bg-base); }
+.chat-main-header { flex: none; margin: 0 56px; }
+.assistant-product-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; min-height: 102px; padding: 28px 0 18px; border-bottom: 1px solid var(--border); }
+.assistant-identity { min-width: 0; flex: 1 1 auto; }
+.assistant-identity .font-display { display: block; font-size: 16px; font-weight: 400; overflow-wrap: anywhere; }
+.assistant-section { display: block; margin-top: 16px; font-size: 12px; color: var(--text-secondary); text-transform: uppercase; }
+.model-info { display: flex; flex: 0 1 58%; align-items: center; justify-content: flex-end; flex-wrap: wrap; min-width: 0; gap: 8px 12px; }
+.model-info .status-pill { font-size: 11px; min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; transform: none !important; background: transparent !important; border: 0 !important; padding: 4px 0; }
+.model-info .status-pill:has(#global-ai-model) { display: none; }
+.assistant-tools { display: flex; align-items: center; justify-content: space-between; min-height: 64px; gap: 16px; padding: 10px 0; }
+.compact-companion { display: flex; align-items: center; gap: 14px !important; min-width: 0; }
+.compact-companion #voice-status { font-size: 12px !important; font-weight: 400 !important; text-transform: none !important; letter-spacing: 0 !important; overflow-wrap: anywhere; }
+.chat-app-wrapper:not(.has-messages) .compact-companion:has([data-state="IDLE"]) { visibility: hidden; }
+#history-trigger { flex: none; width: auto; min-width: 90px; font-size: 13px; color: var(--text-secondary); background: transparent; border: 0; }
+.chat-sidebar { display: flex; flex-direction: column; position: absolute; inset: 16px 24px 16px auto; width: 320px; max-width: calc(100% - 32px); min-height: 0; background: var(--bg-inset); border: 1px solid var(--border); border-radius: 16px; transform: translateX(calc(100% + 30px)); visibility: hidden; transition: transform 340ms, visibility 340ms; z-index: 120; overflow: hidden; }
+.chat-sidebar.open { transform: translateX(0); visibility: visible; }
+.chat-sidebar-header { flex: none; display: flex; align-items: center; gap: 8px; padding: 20px; border-bottom: 1px solid var(--border); }
+.new-chat-btn { flex: 1; min-width: 0; font-size: 13px; }
+.chat-history-list { flex: 1 1 0; min-height: 0; padding: 20px; overflow-y: auto; }
+.list-group-title { color: var(--text-secondary); font-size: 12px; margin-bottom: 16px; }
+#conversation-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 2px; }
+.conv-link { display: flex; align-items: center; gap: 12px; padding: 12px 8px; min-height: 44px; border-radius: 8px; color: var(--text-secondary); text-decoration: none; font-size: 13px; overflow-wrap: anywhere; }
+.conv-link:hover, .conv-link.active { color: var(--text-primary); background: var(--bg-surface-elevated); }
+.conv-link svg { width: 16px; height: 16px; flex: none; }
+.conv-link .conv-title { white-space: normal; overflow-wrap: anywhere; }
+.conv-date { display: block; font-size: 11px; color: var(--text-secondary); margin-top: 4px; }
+.assistant-empty { display: flex; flex: 1 1 0; min-height: 0; flex-direction: column; align-items: center; justify-content: safe center; padding: 24px 20px 40px; overflow-y: auto; text-align: center; }
+.assistant-empty .presence { margin: 20px 0 0; }
+.assistant-empty h1 { flex: none; font: 400 44px/1.45 var(--font-display); margin: 72px 0 10px; max-width: 100%; overflow-wrap: anywhere; }
+.assistant-empty p { flex: none; font-size: 16px; color: var(--text-secondary); max-width: 100%; }
+.chat-viewport { display: block; flex: 1 1 0; min-height: 0; min-width: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; padding: 20px 24px; scroll-behavior: auto; }
+.chat-app-wrapper:not(.has-messages) .chat-viewport { display: none; }
+.chat-messages-container { display: flex; flex-direction: column; width: 100%; min-width: 0; max-width: 760px; margin: 0 auto; gap: 36px; }
+.chat-msg { display: flex; flex-direction: column; width: 100%; min-width: 0; max-width: 100%; gap: 4px; }
+.chat-msg.user { align-self: flex-end; max-width: 67%; }
+.msg-author { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-secondary); margin-bottom: 12px; }
+.chat-msg.user .msg-author { display: none; }
+.msg-bubble { width: 100%; min-width: 0; max-width: 100%; font-size: 16px; line-height: 1.6; color: var(--text-primary); overflow-wrap: anywhere; white-space: pre-wrap; }
+.chat-msg.user .msg-bubble { background: var(--bg-surface); border-radius: 16px; padding: 20px; font-size: 15px; }
+.msg-bubble p { margin: 0 0 16px; }
+.msg-bubble p:last-child { margin-bottom: 0; }
+.msg-bubble ul, .msg-bubble ol { padding-left: 24px; margin: 16px 0; }
+.msg-bubble li { margin: 8px 0; }
+.msg-bubble h3 { font: 400 28px/1.45 var(--font-display); margin: 12px 0 24px; }
+.msg-bubble code { font: 13px/1.6 var(--font-mono); background: var(--bg-inset); padding: 2px 5px; }
+.msg-bubble pre { width: 100%; max-width: 100%; overflow-x: auto; padding: 16px; background: var(--bg-inset); white-space: pre; }
+.msg-bubble pre code { padding: 0; overflow-wrap: normal; }
+.msg-bubble a, .message-sources a { color: var(--accent); }
+.message-sources { border-top: 1px solid var(--border); margin-top: 24px; padding-top: 18px; display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--accent); overflow-wrap: anywhere; }
+.voice-transcription-mark { display: flex; align-items: center; gap: 4px; color: var(--text-secondary); font-size: 12px; }
+.voice-transcription-mark svg { width: 12px; height: 12px; }
+.chat-input-wrapper { position: relative; flex: none; min-width: 0; padding: 20px 24px 40px; background: var(--bg-base); }
+.chat-composer-box { display: flex; flex-direction: column; align-items: stretch; width: 100%; max-width: 760px; min-width: 0; min-height: 116px; margin: 0 auto; padding: 16px; gap: 6px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 20px; }
+.chat-composer-box:focus-within { border-color: var(--accent); }
+#chat-input { width: 100%; min-width: 0; resize: none; height: 40px; min-height: 36px; max-height: 140px; line-height: 1.45; background: transparent; border: 0; padding: 0 3px; outline: none; font-size: 14px; color: var(--text-primary); }
+.composer-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; width: 100%; align-items: center; }
+.composer-engine { min-width: 0; margin-right: auto; font-size: 11px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.action-btn { display: flex; align-items: center; justify-content: center; flex: none; position: relative; width: 44px; height: 44px; min-width: 44px; padding: 0; border-radius: 50%; border: 0; }
+.action-btn svg { width: 20px; height: 20px; }
+.mic-btn { background: var(--bg-inset); color: var(--text-primary); }
+.mic-btn.recording { background: var(--error); color: #fff; }
+.mic-btn.processing { background: var(--accent-subtle); color: var(--accent); }
+.mic-btn.speaking { background: var(--accent); color: #fff; }
+.send-btn { background: var(--accent); color: var(--bg-inset); }
+.send-btn.active { background: var(--text-primary); color: var(--bg-surface); }
+.disclaimer { max-width: 760px; margin: 18px auto 0; font-size: 11px; color: var(--text-secondary); }
+.jump-latest { flex: none; background: var(--bg-surface); font-size: 12px; padding: 8px 12px; min-height: 44px; }
+.jump-short { display: none; }
+.voice-spinner { position: absolute; width: 20px; height: 20px; }
+#interrupt-response { font-size: 12px; min-height: 44px; padding: 8px 12px; }
+@media (max-width: 1000px) { .chat-main-header { margin: 0 28px; } .assistant-empty h1 { font-size: 36px; } }
+@media (max-height: 800px) {
+    .assistant-empty { padding: 12px 20px 20px; }
+    .assistant-empty .presence { width: 180px; margin-top: 10px; }
+    .assistant-empty h1 { margin-top: 32px; }
+    .chat-input-wrapper { padding-bottom: 16px; }
+    .disclaimer { margin-top: 10px; }
+}
+@media (max-width: 600px) {
+    .chat-main-header { margin: 0 20px; }
+    .assistant-product-row { gap: 12px; flex-wrap: wrap; min-height: 0; padding: 20px 0 12px; }
+    .assistant-identity { flex: 1 1 150px; }
+    .assistant-identity .font-display { font-size: 17px; }
+    .assistant-section { display: none; }
+    .model-info { flex: 1 1 100px; gap: 4px 8px; }
+    .model-info .status-pill { font-size: 10px; }
+    .assistant-tools { min-height: 56px; padding: 6px 0; gap: 8px; }
+    .jump-label { display: none; }
+    .jump-short { display: inline; }
+    .presence-mini { width: 44.8px; }
+    .chat-viewport { padding: 16px 20px; }
+    .chat-messages-container { gap: 36px; }
+    .chat-msg.user { max-width: 84%; }
+    .chat-msg.user .msg-bubble { font-size: 14px; padding: 20px 16px; }
+    .msg-bubble { font-size: 15px; }
+    .chat-input-wrapper { padding: 12px 20px 10px; }
+    .chat-composer-box { padding: 14px; }
+    .disclaimer { display: none; }
+    .assistant-empty { padding: 12px 20px 16px; }
+    .assistant-empty .presence { width: 180px; }
+    .assistant-empty h1 { font-size: 28px; margin: 40px 0 8px; }
+    .assistant-empty p { font-size: 13px; }
+    .chat-sidebar { inset: 12px 16px 12px auto; }
+    .composer-engine { flex: 1 1 60px; }
+}
+@media (max-height: 580px) {
+    .assistant-empty .presence { display: none; }
+    .assistant-empty h1 { margin-top: 8px; font-size: 28px; }
+    .assistant-empty p { font-size: 13px; }
+    .assistant-product-row { min-height: 0; padding: 10px 0; }
+    .assistant-section { display: none; }
+    .assistant-tools { min-height: 44px; padding: 0; }
+    .chat-input-wrapper { padding-top: 6px; padding-bottom: 6px; }
+    .disclaimer { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .chat-sidebar { transition: none; } }

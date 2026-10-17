@@ -29,7 +29,7 @@
         status.textContent = message || '';
         if (uploadButton) uploadButton.disabled = value;
         if (syncButton) syncButton.disabled = value;
-        rows.querySelectorAll('button').forEach(button => { button.disabled = value; });
+        detail.querySelectorAll('button').forEach(button => { button.disabled = value; });
     }
 
     function cell(row, text) {
@@ -43,74 +43,57 @@
         return value ? new Date(value).toLocaleString() : '—';
     }
 
-    async function refresh() {
-        const response = await fetch(endpoint, { cache: 'no-store' });
-        if (!response.ok) throw new Error('Documents could not be loaded.');
-        const data = await response.json();
+    let documents = [];
+    let selectedId = null;
+    let filter = 'ALL';
+    const search = document.getElementById('memory-search');
+    const detail = document.getElementById('memory-detail');
+    const stateLabel = value => ({INDEXED:'Ready',PROCESSING:'Processing',PENDING:'Queued',ERROR:'Needs attention'})[value] || value || 'Status unavailable';
+    function selectDocument(doc) {
+        selectedId = doc.id;
+        const online = doc.source_type === 'ONLINE';
+        detail.replaceChildren();
+        const label = document.createElement('p'); label.className='eyebrow'; label.textContent='Selected file';
+        const title = document.createElement('h3'); title.textContent=doc.source_title || doc.filename;
+        const state = document.createElement('p'); state.textContent=stateLabel(doc.status);
+        const description = document.createElement('p'); description.textContent=doc.status==='INDEXED'?'Indexed for retrieval. Online source freshness also applies.':'This file is not currently indexed for answers.';
+        const list = document.createElement('dl');
+        const info = {Type:doc.file_type,Origin:doc.source_type,Chunks:doc.chunk_count,Uploaded:timestamp(doc.uploaded_at),Indexed:timestamp(doc.indexed_at)};
+        if(doc.source_type==='ONLINE') Object.assign(info,{Source:doc.source_url,Provider:doc.provider,Freshness:doc.freshness,Expires:timestamp(doc.expires_at),'Last sync':timestamp(doc.last_synced_at)});
+        for(const [key,value] of Object.entries(info)) { const dt=document.createElement('dt');dt.textContent=key;const dd=document.createElement('dd');dd.textContent=value ?? 'Unavailable';list.append(dt,dd); }
+        detail.append(label,title,state,description,list);
+        if(doc.error_message || doc.sync_error_message) { const error=document.createElement('p');error.textContent='This source needs attention. Try reindexing or synchronizing it.';detail.append(error); }
+        if(canManage) [online ? 'Sync' : 'Reindex','Delete'].forEach(action=>{const button=document.createElement('button');button.className='btn';button.textContent=action==='Delete'?'Remove from memory':action;button.disabled=busy;button.addEventListener('click',()=>performAction(doc,action));detail.append(button);});
+        rows.querySelectorAll('[data-document-id]').forEach(row=>row.setAttribute('aria-current',String(row.dataset.documentId===String(doc.id))));
+    }
+    function renderDocuments() {
         rows.replaceChildren();
-        document.getElementById('knowledge-total').textContent = data.documents.length;
-        document.getElementById('knowledge-indexed').textContent = data.documents.filter(doc => doc.status === 'INDEXED').length;
-        document.getElementById('knowledge-pending').textContent = data.documents.filter(doc => doc.status === 'PENDING').length;
-        if (!data.documents.length) {
-            const row = document.createElement('tr');
-            const empty = cell(row, 'No documents yet. Upload a document to build local knowledge.');
-            empty.colSpan = 8;
-            empty.className = 'empty-state';
-            rows.appendChild(row);
-        }
-        data.documents.forEach(doc => {
-            const row = document.createElement('tr');
-            const online = doc.source_type === 'ONLINE';
-            const source = cell(row, online ? (doc.source_title || doc.filename) : doc.filename);
-            if (online && doc.source_url) {
-                const url = document.createElement('div');
-                url.className = 'text-sm text-muted';
-                url.textContent = doc.source_url;
-                source.appendChild(url);
-            }
-            const origin = cell(row, doc.source_type);
-            if (online) {
-                const provider = document.createElement('div');
-                provider.textContent = doc.provider;
-                origin.appendChild(provider);
-                const fresh = document.createElement('span');
-                fresh.className = 'badge ' + (doc.freshness === 'FRESH' ? 'badge-success' : 'badge-warning');
-                fresh.textContent = doc.freshness;
-                origin.appendChild(fresh);
-                const expiry = document.createElement('div');
-                expiry.className = 'text-sm text-muted';
-                expiry.textContent = 'Expires: ' + timestamp(doc.expires_at);
-                origin.appendChild(expiry);
-            }
-            cell(row, doc.file_type + (doc.file_size === null ? '' : ' · ' + (doc.file_size / 1024).toFixed(1) + ' KB'));
-            const state = cell(row, '');
-            const badge = document.createElement('span');
-            badge.className = 'badge ' + (doc.status === 'INDEXED' ? 'badge-success' : doc.status === 'ERROR' ? 'badge-error' : 'badge-warning');
-            badge.textContent = doc.status;
-            state.appendChild(badge);
-            if (doc.error_message || doc.sync_error_message) {
-                const error = document.createElement('div');
-                error.className = 'text-sm text-muted';
-                error.textContent = doc.sync_error_message || doc.error_message;
-                state.appendChild(error);
-            }
-            cell(row, doc.chunk_count);
-            cell(row, timestamp(online ? doc.retrieved_at : doc.uploaded_at));
-            cell(row, timestamp(online ? doc.last_synced_at : doc.indexed_at));
-            const actions = cell(row, canManage ? '' : 'Administrator only');
-            if (canManage) {
-                [online ? 'Sync' : 'Reindex', 'Delete'].forEach(label => {
-                    const button = document.createElement('button');
-                    button.className = 'btn btn-sm';
-                    button.textContent = label;
-                    button.disabled = busy;
-                    button.addEventListener('click', () => performAction(doc, label));
-                    actions.appendChild(button);
-                });
-            }
-            rows.appendChild(row);
+        const query=search.value.trim().toLowerCase();
+        const visible=documents.filter(doc=>(filter==='ALL'||doc.status===filter)&&[doc.filename,doc.source_title,doc.source_url].some(value=>String(value||'').toLowerCase().includes(query)));
+        if(!visible.length) {const empty=document.createElement('p');empty.className='quiet-empty';empty.textContent=documents.length?'No files match this search.':'No documents yet. Upload a document to build local knowledge.';rows.append(empty);}
+        visible.forEach(doc=>{
+            const row=document.createElement('button');row.className='document-row';row.dataset.status=doc.status;row.dataset.documentId=doc.id;row.setAttribute('aria-current',String(doc.id===selectedId));
+            const icon=document.createElement('span');icon.textContent='▤';icon.setAttribute('aria-hidden','true');
+            const name=document.createElement('span');name.className='doc-name';name.textContent=doc.source_title || doc.filename;
+            const meta=document.createElement('small');meta.textContent=(doc.file_type || 'Document')+' · '+timestamp(doc.uploaded_at || doc.retrieved_at);name.append(meta);
+            const state=document.createElement('span');state.className='doc-status';state.textContent=stateLabel(doc.status);
+            const arrow=document.createElement('span');arrow.textContent='›';row.append(icon,name,state,arrow);row.addEventListener('click',()=>selectDocument(doc));rows.append(row);
         });
     }
+    async function refresh() {
+        const response=await fetch(endpoint,{cache:'no-store'});
+        if(!response.ok) throw new Error('Documents could not be loaded.');
+        const data=await response.json();documents=data.documents;
+        document.getElementById('knowledge-total').textContent=documents.length;
+        document.getElementById('knowledge-indexed').textContent=documents.filter(d=>d.status==='INDEXED').length;
+        document.getElementById('knowledge-pending').textContent=documents.filter(d=>d.status==='PENDING').length;
+        renderDocuments();
+        const selected=documents.find(d=>d.id===selectedId);
+        if(selected) selectDocument(selected);
+        else if(selectedId!==null) {selectedId=null;detail.replaceChildren();const note=document.createElement('p');note.textContent='Select a file to view details.';detail.append(note);}
+    }
+    search.addEventListener('input',renderDocuments);
+    document.querySelectorAll('[data-filter]').forEach(button=>button.addEventListener('click',()=>{filter=button.dataset.filter;document.querySelectorAll('[data-filter]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));renderDocuments();}));
 
     async function performAction(doc, action) {
         if (busy) return;

@@ -19,7 +19,7 @@
                         <div class="setting-label">Dark Mode</div>
                         <div class="setting-desc">Switch between dark and light interface themes.</div>
                     </div>
-                    <button class="theme-switch" id="settings-theme-toggle" onclick="toggleThemeSwitch()">
+                    <button class="theme-switch" aria-label="Dark mode" role="switch" id="settings-theme-toggle" onclick="toggleThemeSwitch()">
                     </button>
                 </div>
             </div>
@@ -31,19 +31,19 @@
             <div class="card">
                 <div class="info-row">
                     <span class="info-row-label">Current Provider</span>
-                    <span class="badge badge-info">Simulated (Mock Pipeline)</span>
+                    <span class="badge badge-info">{{ global_ai_engine }} · {{ global_ai_model }}</span>
                 </div>
                 <div class="info-row">
                     <span class="info-row-label">Inference Mode</span>
-                    <span class="info-row-value">Local Offline</span>
+                    <span class="info-row-value">{{ global_internet_label }}</span>
                 </div>
                 <div class="info-row">
                     <span class="info-row-label">RAG Status</span>
-                    <span class="badge badge-warning">Coming Soon</span>
+                    <span class="text-secondary">Status available in Memory / Device</span>
                 </div>
                 <div class="info-row">
                     <span class="info-row-label">STT / TTS</span>
-                    <span class="badge badge-warning">Coming Soon</span>
+                    <span class="text-secondary">Status available in Memory / Device</span>
                 </div>
             </div>
         </div>
@@ -53,7 +53,7 @@
             <div class="settings-section-title">Configuration</div>
             <div class="card">
                 {% if settings %}
-                <table class="data-table">
+                <div class="table-scroll" role="region" aria-label="Configuration entries" tabindex="0"><table class="data-table">
                     <thead>
                         <tr>
                             <th>Key</th>
@@ -66,18 +66,14 @@
                         <tr>
                             <td><code style="font-family:var(--font-mono);color:var(--accent);font-size:0.8125rem;">{{ setting.key }}</code></td>
                             <td>
-                                <input type="text" class="input" value="{{ setting.value }}" style="max-width:240px;">
+                                <span>{{ setting.value }}</span>
                             </td>
                             <td class="text-secondary text-sm">{{ setting.description }}</td>
                         </tr>
                         {% endfor %}
                     </tbody>
-                </table>
-                <div class="mt-4">
-                    <button class="btn btn-primary btn-sm" id="btn-save-settings">
-                        <i data-lucide="save" style="width:14px;height:14px;"></i> Save Changes
-                    </button>
-                </div>
+                </table></div>
+                <p class="text-sm text-secondary mt-4">Configuration is read-only here.</p>
                 {% else %}
                 <div class="empty-state">
                     <i data-lucide="settings"></i>
@@ -127,11 +123,11 @@
             </div>
             <div class="info-row">
                 <span class="info-row-label">Display</span>
-                <span class="info-row-value">OLED / LED</span>
+                <span class="info-row-value">3.5-inch TFT</span>
             </div>
             <div class="info-row">
                 <span class="info-row-label">Audio</span>
-                <span class="info-row-value">USB / BT</span>
+                <span class="info-row-value">Microphone / speaker</span>
             </div>
         </div>
     </div>
@@ -147,6 +143,7 @@
         const toggle = document.getElementById('settings-theme-toggle');
         const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
         toggle.classList.toggle('active', isDark);
+        toggle.setAttribute('aria-checked', String(isDark));
     }
 
     function toggleThemeSwitch() {
@@ -154,11 +151,5 @@
         syncThemeSwitch();
     }
     
-    const btnSaveSettings = document.getElementById('btn-save-settings');
-    if (btnSaveSettings) {
-        btnSaveSettings.addEventListener('click', () => {
-            showToast('Settings saved successfully (simulated).', 'success');
-        });
-    }
 </script>
 {% endblock %}
