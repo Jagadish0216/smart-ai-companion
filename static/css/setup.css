@@ -1,13 +1,13 @@
 :root {
     color-scheme: dark;
     font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    --background: #07111f;
-    --surface: #101d2e;
-    --surface-raised: #17263a;
-    --border: #2b3d54;
-    --text: #f4f8fc;
-    --muted: #9fb0c4;
-    --accent: #5ce1c3;
+    --background: #101315;
+    --surface: #191e21;
+    --surface-raised: #1e2427;
+    --border: #30383c;
+    --text: #edf1ef;
+    --muted: #a5afb4;
+    --accent: #76e2d1;
     --accent-dark: #103f39;
     --danger: #ff9d9d;
 }
@@ -17,7 +17,7 @@
 body {
     margin: 0;
     min-height: 100vh;
-    background: radial-gradient(circle at top, #153150 0, var(--background) 48%);
+    background: var(--background);
     color: var(--text);
 }
 
@@ -31,7 +31,7 @@ body {
     padding: clamp(1.4rem, 5vw, 2.5rem);
     border: 1px solid var(--border);
     border-radius: 22px;
-    background: rgba(16, 29, 46, .96);
+    background: var(--surface);
     box-shadow: 0 28px 70px rgba(0, 0, 0, .32);
 }
 
@@ -217,3 +217,5 @@ footer a { color: var(--accent); }
     .setup-card { border-radius: 16px; }
     .setup-toolbar { align-items: flex-end; }
 }
+
+:focus-visible {outline:2px solid var(--accent);outline-offset:3px} button{min-height:44px} @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}

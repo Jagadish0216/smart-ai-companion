@@ -1,0 +1,5 @@
+{% load static %}
+<div class="presence {{ presence_class }}" data-presence data-state="IDLE" role="img" aria-label="Companion presence, idle">
+{% if contour %}<img class="presence-contour" src="{% static contour %}" alt="">{% endif %}
+<div class="presence-face"><span class="presence-eye left"></span><span class="presence-eye right"></span><span class="presence-mouth"></span></div>
+</div>

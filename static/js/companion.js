@@ -13,6 +13,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!chassis || !eyeLeft || !eyeRight) return;
 
     // ── State ──
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
     let currentState = 'IDLE';
     let currentExpression = 'NEUTRAL';
     let currentEyeStyle = 'ROUND';
@@ -70,7 +71,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ── Mouse tracking ──
     document.addEventListener('mousemove', (e) => {
-        if (!container || currentState === 'OFFLINE' || currentState === 'SLEEP') return;
+        if (reducedMotion.matches || !container || currentState === 'OFFLINE' || currentState === 'SLEEP') return;
         const rect = container.getBoundingClientRect();
         const cx = rect.left + rect.width / 2;
         const cy = rect.top + rect.height / 2;
@@ -109,6 +110,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function startBlinking() {
+        if (reducedMotion.matches) return;
         blinkInterval = setInterval(blink, 3500 + Math.random() * 2500);
     }
 
@@ -142,6 +144,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (state !== 'OFFLINE') startBlinking();
 
         // State-specific animations
+        if (reducedMotion.matches) return;
         if (state === 'THINKING') {
             pulseInterval = setInterval(() => {
                 const g = chassis.querySelector('.companion-svg g');
@@ -161,6 +164,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function applyAnimation(anim) {
         currentAnimation = anim;
+        if (reducedMotion.matches) { resetAnimations(); return; }
         resetAnimations();
         if (anim === 'IDLE') {
             startBlinking();
@@ -206,6 +210,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (data.brightness !== undefined) applyBrightness(data.brightness);
         if (data.display_text !== undefined) applyDisplayText(data.display_text);
     }
+
+    reducedMotion.addEventListener('change', () => { resetAnimations(); if (!reducedMotion.matches) applyState(currentState); });
 
     // ── Public API (backward compatible) ──
     window.CompanionController = {

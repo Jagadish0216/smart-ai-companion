@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 
+{% load static %}
 {% block page_title %}Device{% endblock %}
 
 {% block page_heading %}Device{% endblock %}
@@ -8,16 +9,17 @@
 
 {% block content %}
 
-<div class="page-header">
-
-    <div class="page-header-title">Edge Device Monitor</div>
-
-    <div class="page-header-desc">Hardware telemetry from the Raspberry Pi 5 companion unit. {% if global_ai_engine|upper != 'LOCAL' %}All data is currently simulated.{% endif %}</div>
-
-</div>
-
-
-
+<section class="page-header"><h2 class="page-header-title">Your companion.</h2><p class="page-header-desc">Readiness to listen, think and respond locally.</p></section>
+<section class="device-overview"><div class="device-presence">{% include 'components/presence.html' with presence_class='presence-device' contour='img/figma/2-383-QuietSignalContour.svg' %}<p>3.5-inch TFT companion display</p><small>Simplified display view · enclosure not specified</small></div>
+<div class="readiness"><h3 class="eyebrow">Companion readiness</h3><dl>
+<div><dt>Local inference</dt><dd data-ai-readiness>Checking…</dd></div>
+<div><dt>Audio input</dt><dd id="readiness-input">Status unavailable</dd></div>
+<div><dt>Speaker output</dt><dd id="readiness-output">Status unavailable</dd></div>
+<div><dt>Display</dt><dd id="readiness-display">Checking…</dd></div>
+<div><dt>Browser / device</dt><dd id="readiness-connection">Checking…</dd></div>
+</dl></div></section>
+<div class="system-summary"><p class="eyebrow">System details</p><p>Raspberry Pi 5 &nbsp; / &nbsp; ESP32 &nbsp; / &nbsp; Local AI</p><a href="{% url 'resource-manager' %}">CPU · Memory · Temperature · Storage ↗</a><p class="text-muted text-sm">Optional camera provision · status unavailable</p></div>
+<details class="device-telemetry"><summary>Hardware telemetry</summary>
 <!-- Device Identity -->
 
 <div class="card mb-5">
@@ -38,7 +40,7 @@
 
         </div>
 
-        <span class="badge badge-success" id="dev-status-badge"><span class="status-dot"></span> Online</span>
+        <span class="badge badge-success" id="dev-status-badge"><span class="status-dot"></span> Checking…</span>
 
         {% if global_ai_engine|upper != 'LOCAL' %}
 
@@ -176,7 +178,7 @@
 
             <span class="info-row-label">Co-processor</span>
 
-            <span class="info-row-value text-muted">ESP32 (not connected)</span>
+            <span class="info-row-value text-muted">ESP32 · status unavailable</span>
 
         </div>
 
@@ -194,98 +196,8 @@
 
 
 
-<script>
-
-    function fetchDeviceMetrics() {
-
-        fetch('/api/system/metrics/')
-
-            .then(r => r.json())
-
-            .then(d => {
-
-                // CPU
-
-                document.getElementById('dev-cpu').textContent = d.cpu_percent + '%';
-
-                document.getElementById('dev-cpu-bar').style.width = d.cpu_percent + '%';
-
-                document.getElementById('dev-cpu-bar').className = 'metric-bar-fill' + (d.cpu_percent > 80 ? ' danger' : d.cpu_percent > 60 ? ' warn' : '');
 
 
-
-                // RAM
-
-                document.getElementById('dev-ram').textContent = d.ram_used_gb + ' / ' + d.ram_total_gb + ' GB';
-
-                document.getElementById('dev-ram-bar').style.width = d.ram_percent + '%';
-
-                document.getElementById('dev-ram-bar').className = 'metric-bar-fill' + (d.ram_percent > 80 ? ' danger' : d.ram_percent > 60 ? ' warn' : '');
-
-
-
-                // Storage
-
-                document.getElementById('dev-storage').textContent = d.storage_percent + '%';
-
-                document.getElementById('dev-storage-bar').style.width = d.storage_percent + '%';
-
-
-
-                // Temperature
-
-                document.getElementById('dev-temp').textContent = d.temperature_c + '°C';
-
-                const tempPct = Math.min(100, (d.temperature_c / 85) * 100);
-
-                document.getElementById('dev-temp-bar').style.width = tempPct + '%';
-
-                document.getElementById('dev-temp-bar').className = 'metric-bar-fill' + (d.temperature_c > 70 ? ' danger' : d.temperature_c > 55 ? ' warn' : '');
-
-
-
-                // Subsystems
-
-                document.getElementById('dev-network').textContent = d.network;
-
-                document.getElementById('dev-audio').textContent = d.audio_status;
-
-                document.getElementById('dev-display').textContent = d.display_status;
-
-                document.getElementById('dev-total-ram').textContent = d.ram_total_gb + ' GB';
-
-                document.getElementById('dev-device-name').textContent = d.device_name;
-
-
-
-                // Status badge
-
-                const statusBadge = document.getElementById('dev-status-badge');
-
-                if (d.status === 'ONLINE') {
-
-                    statusBadge.className = 'badge badge-success';
-
-                    statusBadge.innerHTML = '<span class="status-dot"></span> Online';
-
-                } else {
-
-                    statusBadge.className = 'badge badge-error';
-
-                    statusBadge.innerHTML = '<span class="status-dot"></span> Offline';
-
-                }
-
-            })
-
-            .catch(() => {});
-
-    }
-
-    fetchDeviceMetrics();
-
-    setInterval(fetchDeviceMetrics, 5000);
-
-</script>
-
+</details>
+<script src="{% static 'js/dashboard-ui.js' %}"></script>
 {% endblock %}

@@ -1,0 +1,7 @@
+{% load static %}
+<div class="rail-links">
+<a href="{% url 'dashboard' %}" class="rail-link {% if request.path == '/' %}active{% endif %}" {% if request.path == '/' %}aria-current="page"{% endif %}><img src="{% static 'img/figma/home-HomeIcon.svg' %}" data-nav-icon="Home" width="24" height="24" alt=""><span>Home</span></a>
+<a href="{% url 'assistant' %}" class="rail-link {% if request.path == '/assistant/' %}active{% endif %}" {% if request.path == '/assistant/' %}aria-current="page"{% endif %}><img src="{% static 'img/figma/home-AssistantIcon.svg' %}" data-nav-icon="Assistant" width="24" height="24" alt=""><span>Assistant</span></a>
+<a href="{% url 'knowledge' %}" class="rail-link {% if request.path == '/knowledge/' %}active{% endif %}" {% if request.path == '/knowledge/' %}aria-current="page"{% endif %}><img src="{% static 'img/figma/home-MemoryIcon.svg' %}" data-nav-icon="Memory" width="24" height="24" alt=""><span>Memory</span></a>
+<a href="{% url 'device' %}" class="rail-link {% if request.path == '/device/' %}active{% endif %}" {% if request.path == '/device/' %}aria-current="page"{% endif %}><img src="{% static 'img/figma/home-DeviceIcon.svg' %}" data-nav-icon="Device" width="24" height="24" alt=""><span>Device</span></a>
+<button class="rail-link" onclick="openSidebar()" aria-haspopup="dialog" aria-controls="more-menu"><img src="{% static 'img/figma/home-MoreIcon.svg' %}" data-nav-icon="More" width="24" height="24" alt=""><span>More</span></button></div>

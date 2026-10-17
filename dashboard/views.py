@@ -26,6 +26,11 @@ class DashboardView(TemplateView):
         context = super().get_context_data(**kwargs)
 
         context['doc_count'] = Document.objects.count()
+        context['indexed_count'] = Document.objects.filter(status='INDEXED').count()
+        context['home_metrics'] = [
+            {'key': key, 'label': label} for key, label in
+            [('cpu', 'CPU'), ('ram', 'Memory'), ('temp', 'Temperature'), ('storage', 'Storage')]
+        ]
 
         context['recent_conversations'] = Conversation.objects.order_by('-created_at')[:5]
 

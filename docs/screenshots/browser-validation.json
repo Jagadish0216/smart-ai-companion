@@ -1,0 +1,64 @@
+{
+  "results": [
+    "home desktop: 200, no overflow",
+    "assistant-empty desktop: 200, no overflow",
+    "memory desktop: 200, no overflow",
+    "device desktop: 200, no overflow",
+    "/conversations/ 200",
+    "/resource-manager/ 200",
+    "/network/ 200",
+    "/logs/ 200",
+    "/settings/ 200",
+    "/studio/ 200",
+    "390px: no overflow; 44px composer controls",
+    "430px: no overflow; 44px composer controls",
+    "Controlled stream fixture: reading position, jump to latest, interrupt and input recovery pass",
+    "Voice fixture: recording, transcription, existing response, sources, playback state and interrupt pass",
+    "No JavaScript exceptions or HTTP asset errors; images loaded; history focus and multiline input pass"
+  ],
+  "errors": [],
+  "assetChecks": [
+    {
+      "src": "/static/img/figma/2-194-HomeIcon.svg",
+      "loaded": true,
+      "width": 24,
+      "height": 24
+    },
+    {
+      "src": "/static/img/figma/2-194-AssistantIcon.svg",
+      "loaded": true,
+      "width": 24,
+      "height": 24
+    },
+    {
+      "src": "/static/img/figma/2-194-MemoryIcon.svg",
+      "loaded": true,
+      "width": 24,
+      "height": 24
+    },
+    {
+      "src": "/static/img/figma/2-194-DeviceIcon.svg",
+      "loaded": true,
+      "width": 24,
+      "height": 24
+    },
+    {
+      "src": "/static/img/figma/2-194-MoreIcon.svg",
+      "loaded": true,
+      "width": 24,
+      "height": 24
+    },
+    {
+      "src": "/static/img/figma/2-194-QuietSignalContour.svg",
+      "loaded": true,
+      "width": 0,
+      "height": 0
+    },
+    {
+      "src": "/static/img/figma/2-194-MicIcon.svg",
+      "loaded": true,
+      "width": 20,
+      "height": 20
+    }
+  ]
+}
