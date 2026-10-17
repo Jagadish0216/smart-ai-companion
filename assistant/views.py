@@ -260,6 +260,7 @@ import tempfile
 import subprocess
 import base64
 import logging
+import time
 from .voice.factory import get_stt_provider, get_tts_provider
 
 logger = logging.getLogger(__name__)
@@ -286,19 +287,174 @@ def _extension_for_mime(content_type: str) -> str:
     return _MIME_TO_EXT.get(base, '.webm')
 
 
-class VoiceAPIView(APIView):
+def _transcribe_browser_audio(audio_file, timings=None):
+    """Shared browser upload conversion/STT; never performs inference or TTS."""
+    started = time.monotonic()
+    # Determine file extension from the uploaded MIME type so FFmpeg can
+    # correctly detect the container format (WebM/Opus, OGG, etc.)
+    upload_mime = audio_file.content_type or ''
+    upload_ext = _extension_for_mime(upload_mime)
+
+    logger.info(
+        "Voice upload: name=%s content_type=%s size=%d ext=%s",
+        "browser-recording", upload_mime, audio_file.size, upload_ext,
+    )
+
+    # Create temporary files for processing
+    fd_in, temp_in_path = tempfile.mkstemp(suffix=upload_ext)
+    fd_out, temp_out_path = tempfile.mkstemp(suffix=".wav")
+    os.close(fd_out)  # Close output fd so ffmpeg can write to it
+
+    try:
+        with os.fdopen(fd_in, 'wb') as f:
+            for chunk in audio_file.chunks():
+                f.write(chunk)
+
+        in_size = os.path.getsize(temp_in_path)
+        logger.info("Saved upload to %s (%d bytes)", temp_in_path, in_size)
+
+        # Convert to 16 kHz mono PCM s16le WAV for whisper.cpp
+        ffmpeg_cmd = [
+            'ffmpeg', '-y',
+            '-i', temp_in_path,
+            '-ar', '16000',
+            '-ac', '1',
+            '-c:a', 'pcm_s16le',
+            temp_out_path,
+        ]
+
+        try:
+            result = subprocess.run(
+                ffmpeg_cmd,
+                capture_output=True,
+                timeout=15,
+            )
+            if result.returncode != 0:
+                stderr_text = result.stderr.decode('utf-8', errors='replace')
+                logger.error(
+                    "FFmpeg conversion failed (rc=%d). Command: %s\nstderr:\n%s",
+                    result.returncode, ' '.join(ffmpeg_cmd), stderr_text,
+                )
+                return Response(
+                    {"error": "The recorded audio format could not be processed."},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+            out_size = os.path.getsize(temp_out_path)
+            logger.info(
+                "FFmpeg conversion OK: %s (%d bytes) -> %s (%d bytes)",
+                temp_in_path, in_size, temp_out_path, out_size,
+            )
+        except FileNotFoundError:
+            logger.error("FFmpeg binary not found on PATH.")
+            return Response(
+                {"error": "Audio conversion tool (ffmpeg) is not installed on the server."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        except subprocess.TimeoutExpired:
+            logger.error("FFmpeg conversion timed out after 15 s.")
+            return Response(
+                {"error": "Audio conversion timed out."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        conversion_ms = (time.monotonic() - started) * 1000
+        stt_started = time.monotonic()
+        # 1. STT
+        stt_provider = get_stt_provider()
+        try:
+            transcribed_text = stt_provider.transcribe(temp_out_path)
+        except Exception:
+            logger.error("Browser STT failed")
+            return Response(
+                {"error": "I couldn't understand the recording. Please try again."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        if not isinstance(transcribed_text, str) or not transcribed_text.strip():
+            return Response(
+                {"error": "I couldn't understand the recording. Please try again."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        whisper_ms = (time.monotonic() - stt_started) * 1000
+        if timings is not None:
+            timings.update(conversion_ms=conversion_ms, whisper_ms=whisper_ms)
+        logger.info("Browser voice timing: save_conversion_ms=%.1f whisper_ms=%.1f",
+                    conversion_ms, whisper_ms)
+        return transcribed_text
+    finally:
+        for temp_path in (temp_in_path, temp_out_path):
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+
+def _validate_browser_audio(request):
+    """Return an upload or a compatible validation error."""
+    if 'audio' not in request.FILES:
+        return Response({"error": "No audio file provided."}, status=status.HTTP_400_BAD_REQUEST)
+
+    audio_file = request.FILES['audio']
+    if audio_file.size == 0:
+        return Response({"error": "Empty audio file."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Max size 5 MB
+    if audio_file.size > 5 * 1024 * 1024:
+        return Response({"error": "Audio file too large."}, status=status.HTTP_400_BAD_REQUEST)
+
+    return audio_file
+
+
+@method_decorator(csrf_protect, name="dispatch")
+class VoiceTranscribeOnlyAPIView(APIView):
     def post(self, request):
-        if 'audio' not in request.FILES:
-            return Response({"error": "No audio file provided."}, status=status.HTTP_400_BAD_REQUEST)
+        audio_file = _validate_browser_audio(request)
+        if isinstance(audio_file, Response):
+            return audio_file
+        timings = {}
+        transcription = _transcribe_browser_audio(audio_file, timings)
+        if isinstance(transcription, Response):
+            return transcription
+        return Response({"transcription": transcription}, headers={
+            "Cache-Control": "no-store",
+            "Server-Timing": (f"conversion;dur={timings['conversion_ms']:.1f}, "
+                              f"whisper;dur={timings['whisper_ms']:.1f}"),
+        })
 
-        audio_file = request.FILES['audio']
-        if audio_file.size == 0:
-            return Response({"error": "Empty audio file."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Max size 5 MB
-        if audio_file.size > 5 * 1024 * 1024:
-            return Response({"error": "Audio file too large."}, status=status.HTTP_400_BAD_REQUEST)
+@method_decorator(csrf_protect, name="dispatch")
+class VoiceSynthesizeAPIView(APIView):
+    # Bound Piper work independently of chat generation limits.
+    MAX_TEXT_CHARS = 12000
 
+    def post(self, request):
+        text = request.data.get("text")
+        if not isinstance(text, str) or not text.strip() or len(text) > self.MAX_TEXT_CHARS:
+            return Response({"error": "Text must contain 1 to 12000 characters."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        started = time.monotonic()
+        try:
+            audio_bytes = get_tts_provider().synthesize(text)
+            if not audio_bytes:
+                raise ValueError("Empty speech output")
+        except Exception:
+            logger.warning("Browser speech synthesis failed")
+            return Response({"error": "The response is ready, but audio is unavailable."},
+                            status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        finally:
+            logger.info("Browser voice timing: tts_ms=%.1f", (time.monotonic() - started) * 1000)
+        return Response({"audio_base64": base64.b64encode(audio_bytes).decode("ascii")}, headers={
+            "Cache-Control": "no-store",
+            "Server-Timing": f"tts;dur={(time.monotonic() - started) * 1000:.1f}",
+        })
+
+
+class VoiceAPIView(APIView):
+    """Compatibility endpoint: retains the original complete voice response."""
+    def post(self, request):
+        audio_file = _validate_browser_audio(request)
+        if isinstance(audio_file, Response):
+            return audio_file
         conversation_id = request.data.get('conversation_id')
         if conversation_id:
             try:
@@ -306,128 +462,39 @@ class VoiceAPIView(APIView):
             except ValueError:
                 return Response({"error": "Invalid conversation_id."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Determine file extension from the uploaded MIME type so FFmpeg can
-        # correctly detect the container format (WebM/Opus, OGG, etc.)
-        upload_mime = audio_file.content_type or ''
-        upload_ext = _extension_for_mime(upload_mime)
+        transcribed_text = _transcribe_browser_audio(audio_file)
+        if isinstance(transcribed_text, Response):
+            return transcribed_text
+        # 2. Assistant inference
+        conversation, ai_text, metadata, error = AssistantService.process_message(transcribed_text, conversation_id)
+        if error:
+            return _assistant_error_response(error)
 
-        logger.info(
-            "Voice upload: name=%s content_type=%s size=%d ext=%s",
-            audio_file.name, upload_mime, audio_file.size, upload_ext,
-        )
-
-        # Create temporary files for processing
-        fd_in, temp_in_path = tempfile.mkstemp(suffix=upload_ext)
-        fd_out, temp_out_path = tempfile.mkstemp(suffix=".wav")
-        os.close(fd_out)  # Close output fd so ffmpeg can write to it
-
+        # 3. TTS
+        tts_provider = get_tts_provider()
         try:
-            with os.fdopen(fd_in, 'wb') as f:
-                for chunk in audio_file.chunks():
-                    f.write(chunk)
-
-            in_size = os.path.getsize(temp_in_path)
-            logger.info("Saved upload to %s (%d bytes)", temp_in_path, in_size)
-
-            # Convert to 16 kHz mono PCM s16le WAV for whisper.cpp
-            ffmpeg_cmd = [
-                'ffmpeg', '-y',
-                '-i', temp_in_path,
-                '-ar', '16000',
-                '-ac', '1',
-                '-c:a', 'pcm_s16le',
-                temp_out_path,
-            ]
-
-            try:
-                result = subprocess.run(
-                    ffmpeg_cmd,
-                    capture_output=True,
-                    timeout=15,
-                )
-                if result.returncode != 0:
-                    stderr_text = result.stderr.decode('utf-8', errors='replace')
-                    logger.error(
-                        "FFmpeg conversion failed (rc=%d). Command: %s\nstderr:\n%s",
-                        result.returncode, ' '.join(ffmpeg_cmd), stderr_text,
-                    )
-                    return Response(
-                        {"error": "The recorded audio format could not be processed."},
-                        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    )
-
-                out_size = os.path.getsize(temp_out_path)
-                logger.info(
-                    "FFmpeg conversion OK: %s (%d bytes) -> %s (%d bytes)",
-                    temp_in_path, in_size, temp_out_path, out_size,
-                )
-            except FileNotFoundError:
-                logger.error("FFmpeg binary not found on PATH.")
-                return Response(
-                    {"error": "Audio conversion tool (ffmpeg) is not installed on the server."},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                )
-            except subprocess.TimeoutExpired:
-                logger.error("FFmpeg conversion timed out after 15 s.")
-                return Response(
-                    {"error": "Audio conversion timed out."},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                )
-
-            # 1. STT
-            stt_provider = get_stt_provider()
-            try:
-                transcribed_text = stt_provider.transcribe(temp_out_path)
-            except Exception as e:
-                logger.error("STT failed: %s", e)
-                return Response(
-                    {"error": "I couldn't understand the recording. Please try again."},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                )
-
-            if not transcribed_text:
-                return Response(
-                    {"error": "I couldn't understand the recording. Please try again."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            # 2. Assistant inference
-            conversation, ai_text, metadata, error = AssistantService.process_message(transcribed_text, conversation_id)
-            if error:
-                return _assistant_error_response(error)
-
-            # 3. TTS
-            tts_provider = get_tts_provider()
-            try:
-                audio_bytes = tts_provider.synthesize(ai_text)
-            except Exception as e:
-                logger.error("TTS failed: %s", e)
-                # Return text response even though TTS failed
-                return Response({
-                    "transcription": transcribed_text,
-                    "response": ai_text,
-                    "conversation_id": conversation.id,
-                    "audio_base64": None,
-                    "tts_error": "The response was generated, but speech playback failed.",
-                    **_public_assistant_metadata(metadata),
-                }, status=status.HTTP_200_OK)
-
-            # Base64 encode audio
-            audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
-
-            response_data = {
+            audio_bytes = tts_provider.synthesize(ai_text)
+        except Exception as e:
+            logger.error("TTS failed: %s", e)
+            # Return text response even though TTS failed
+            return Response({
                 "transcription": transcribed_text,
                 "response": ai_text,
                 "conversation_id": conversation.id,
-                "audio_base64": audio_b64,
-            }
-            response_data.update(_public_assistant_metadata(metadata))
+                "audio_base64": None,
+                "tts_error": "The response was generated, but speech playback failed.",
+                **_public_assistant_metadata(metadata),
+            }, status=status.HTTP_200_OK)
 
-            return Response(response_data, status=status.HTTP_200_OK)
+        # Base64 encode audio
+        audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
 
-        finally:
-            # Clean up temp files
-            if os.path.exists(temp_in_path):
-                os.remove(temp_in_path)
-            if os.path.exists(temp_out_path):
-                os.remove(temp_out_path)
+        response_data = {
+            "transcription": transcribed_text,
+            "response": ai_text,
+            "conversation_id": conversation.id,
+            "audio_base64": audio_b64,
+        }
+        response_data.update(_public_assistant_metadata(metadata))
+
+        return Response(response_data, status=status.HTTP_200_OK)
