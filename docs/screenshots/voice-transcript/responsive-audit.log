@@ -1,0 +1,121 @@
+home-1440x960: PASS
+assistant-empty-1440x960: PASS
+assistant-active-1440x960: PASS
+conversations-1440x960: PASS
+memory-1440x960: PASS
+device-1440x960: PASS
+resources-1440x960: PASS
+network-1440x960: PASS
+logs-1440x960: PASS
+settings-1440x960: PASS
+studio-1440x960: PASS
+setup-1440x960: access rule PASS
+home-1366x768: PASS
+assistant-empty-1366x768: PASS
+assistant-active-1366x768: PASS
+conversations-1366x768: PASS
+memory-1366x768: PASS
+device-1366x768: PASS
+resources-1366x768: PASS
+network-1366x768: PASS
+logs-1366x768: PASS
+settings-1366x768: PASS
+studio-1366x768: PASS
+setup-1366x768: access rule PASS
+home-1280x720: PASS
+assistant-empty-1280x720: PASS
+assistant-active-1280x720: PASS
+conversations-1280x720: PASS
+memory-1280x720: PASS
+device-1280x720: PASS
+resources-1280x720: PASS
+network-1280x720: PASS
+logs-1280x720: PASS
+settings-1280x720: PASS
+studio-1280x720: PASS
+setup-1280x720: access rule PASS
+home-1024x768: PASS
+assistant-empty-1024x768: PASS
+assistant-active-1024x768: PASS
+conversations-1024x768: PASS
+memory-1024x768: PASS
+device-1024x768: PASS
+resources-1024x768: PASS
+network-1024x768: PASS
+logs-1024x768: PASS
+settings-1024x768: PASS
+studio-1024x768: PASS
+setup-1024x768: access rule PASS
+home-768x1024: PASS
+assistant-empty-768x1024: PASS
+assistant-active-768x1024: PASS
+conversations-768x1024: PASS
+memory-768x1024: PASS
+device-768x1024: PASS
+resources-768x1024: PASS
+network-768x1024: PASS
+logs-768x1024: PASS
+settings-768x1024: PASS
+studio-768x1024: PASS
+setup-768x1024: access rule PASS
+home-430x932: PASS
+assistant-empty-430x932: PASS
+assistant-active-430x932: PASS
+conversations-430x932: PASS
+memory-430x932: PASS
+device-430x932: PASS
+resources-430x932: PASS
+network-430x932: PASS
+logs-430x932: PASS
+settings-430x932: PASS
+studio-430x932: PASS
+setup-430x932: access rule PASS
+home-430x844: PASS
+assistant-empty-430x844: PASS
+assistant-active-430x844: PASS
+conversations-430x844: PASS
+memory-430x844: PASS
+device-430x844: PASS
+resources-430x844: PASS
+network-430x844: PASS
+logs-430x844: PASS
+settings-430x844: PASS
+studio-430x844: PASS
+setup-430x844: access rule PASS
+home-390x844: PASS
+assistant-empty-390x844: PASS
+assistant-active-390x844: PASS
+conversations-390x844: PASS
+memory-390x844: PASS
+device-390x844: PASS
+resources-390x844: PASS
+network-390x844: PASS
+logs-390x844: PASS
+settings-390x844: PASS
+studio-390x844: PASS
+setup-390x844: access rule PASS
+home-375x667: PASS
+assistant-empty-375x667: PASS
+assistant-active-375x667: PASS
+conversations-375x667: PASS
+memory-375x667: PASS
+device-375x667: PASS
+resources-375x667: PASS
+network-375x667: PASS
+logs-375x667: PASS
+settings-375x667: PASS
+studio-375x667: PASS
+setup-375x667: access rule PASS
+home-360x800: PASS
+assistant-empty-360x800: PASS
+assistant-active-360x800: PASS
+conversations-360x800: PASS
+memory-360x800: PASS
+device-360x800: PASS
+resources-360x800: PASS
+network-360x800: PASS
+logs-360x800: PASS
+settings-360x800: PASS
+studio-360x800: PASS
+setup-360x800: access rule PASS
+{"cases":120,"passed":120,"failed":0,"supplementaryCases":40,"supplementaryFailed":0}

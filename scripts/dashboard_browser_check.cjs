@@ -136,7 +136,8 @@ async function functionality(page) {
                 let i=0;const enc=new TextEncoder();const stream=new ReadableStream({start(controller){function emit(){if(options.signal.aborted){controller.error(new DOMException('Aborted','AbortError'));return;}if(i++<45){controller.enqueue(enc.encode(JSON.stringify({type:'delta',text:'Streaming explanation '+i+' '+('content '.repeat(20))+'\n\n'})+'\n'));setTimeout(emit,60);}else{controller.enqueue(enc.encode(JSON.stringify({type:'done'})+'\n'));controller.close();}}emit();}});
                 return Promise.resolve(new Response(stream));
             }
-            if(String(url).includes('/voice/transcribe/'))return Promise.resolve(new Response(JSON.stringify({transcription:'Voice fixture question',response:'Voice fixture answer',audio_base64:'fixture',rag_sources:[{title:'Fixture source'}]}),{headers:{'Content-Type':'application/json'}}));
+            if(String(url).includes('/voice/synthesize/'))return Promise.resolve(new Response(JSON.stringify({audio_base64:'fixture'})));
+            if(String(url).includes('/voice/transcribe-only/'))return Promise.resolve(new Response(JSON.stringify({transcription:'Voice fixture question'}),{headers:{'Content-Type':'application/json'}}));
             return original(url,options);
         };
     });
@@ -149,13 +150,18 @@ async function functionality(page) {
     await page.locator('#history-trigger').click();await page.getByRole('button',{name:'New Chat'}).click();
     await page.locator('#chat-input').fill('line one');await page.locator('#chat-input').press('Shift+Enter');expect(await page.locator('#chat-input').inputValue()==='line one\n','Shift+Enter keeps multiline input');
     await page.evaluate(()=>{
+        if (!navigator.mediaDevices) Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{}});
         navigator.mediaDevices.getUserMedia=async()=>({getTracks:()=>[{stop(){}}]});
         window.MediaRecorder=class extends EventTarget{static isTypeSupported(){return true;}constructor(){super();this.mimeType='audio/webm';this.state='inactive';}start(){this.state='recording';}stop(){this.state='inactive';const e=new Event('dataavailable');Object.defineProperty(e,'data',{value:new Blob(['fixture'])});this.dispatchEvent(e);this.dispatchEvent(new Event('stop'));}};
         window.Audio=class{play(){return Promise.resolve();}pause(){}};
     });
+    await page.locator('#chat-input').fill('');
     await page.locator('#btn-voice').click();await page.waitForFunction(()=>document.getElementById('voice-status').textContent==='Listening');expect(await page.locator('#voice-status').innerText()==='Listening','Microphone fixture enters Listening');
-    await page.locator('#btn-voice').click();await page.waitForFunction(()=>document.getElementById('voice-status').textContent==='Speaking');
-    expect((await page.locator('.chat-messages-container').innerText()).includes('Voice fixture answer'),'Voice response is rendered');
+    await page.locator('#btn-voice').click();await page.waitForFunction(()=>document.getElementById('chat-input').value==='Voice fixture question');
+    expect(await page.locator('#btn-submit').isEnabled(),'Voice transcript is an editable draft with Send enabled');
+    expect(await page.locator('.chat-msg').count()===0,'Voice transcript is not automatically submitted');
+    await page.locator('#btn-submit').click();await page.waitForFunction(()=>document.getElementById('voice-status').textContent==='Speaking');
+    expect((await page.locator('.chat-messages-container').innerText()).includes('Streaming explanation'),'Voice response is streamed before playback');
     await page.locator('#interrupt-response').click();expect(await page.locator('#voice-status').innerText()==='IDLE','Playback interrupt returns to Idle');
     return checks;
 }

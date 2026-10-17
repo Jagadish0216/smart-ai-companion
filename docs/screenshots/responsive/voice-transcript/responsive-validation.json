@@ -1,0 +1,2591 @@
+{
+  "baseURL": "http://127.0.0.1:8004",
+  "baseline": false,
+  "matrix": [
+    [
+      1440,
+      960
+    ],
+    [
+      1366,
+      768
+    ],
+    [
+      1280,
+      720
+    ],
+    [
+      1024,
+      768
+    ],
+    [
+      768,
+      1024
+    ],
+    [
+      430,
+      932
+    ],
+    [
+      430,
+      844
+    ],
+    [
+      390,
+      844
+    ],
+    [
+      375,
+      667
+    ],
+    [
+      360,
+      800
+    ]
+  ],
+  "results": [
+    {
+      "route": "/",
+      "state": "home",
+      "width": 1440,
+      "height": 960,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1440,
+        "height": 960,
+        "scale": 1
+      },
+      "usableBottom": 960,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/assistant/?new=1",
+      "state": "assistant-empty",
+      "width": 1440,
+      "height": 960,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1440,
+        "height": 960,
+        "scale": 1
+      },
+      "usableBottom": 960,
+      "scrollOwner": "#chat-history (active) / #assistant-empty (new)"
+    },
+    {
+      "route": "/assistant/",
+      "state": "assistant-active",
+      "width": 1440,
+      "height": 960,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1440,
+        "height": 960,
+        "scale": 1
+      },
+      "usableBottom": 960,
+      "scrollOwner": "#chat-history (active) / #assistant-empty (new)",
+      "scroll": {
+        "topVisible": true,
+        "endVisible": true,
+        "height": 574,
+        "scrollHeight": 4934,
+        "scrollTop": 4360,
+        "firstText": " YouFIRST_MESSAGE_MARKER — Begin the controlled conversation.",
+        "lastText": " Smart AI CompanionFINAL_MESSAGE_MARKER — The final response must be reachable above the composer."
+      }
+    },
+    {
+      "route": "/conversations/",
+      "state": "conversations",
+      "width": 1440,
+      "height": 960,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1440,
+        "height": 960,
+        "scale": 1
+      },
+      "usableBottom": 960,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/knowledge/",
+      "state": "memory",
+      "width": 1440,
+      "height": 960,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1440,
+        "height": 960,
+        "scale": 1
+      },
+      "usableBottom": 960,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/device/",
+      "state": "device",
+      "width": 1440,
+      "height": 960,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1440,
+        "height": 960,
+        "scale": 1
+      },
+      "usableBottom": 960,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/resource-manager/",
+      "state": "resources",
+      "width": 1440,
+      "height": 960,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1440,
+        "height": 960,
+        "scale": 1
+      },
+      "usableBottom": 960,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/network/",
+      "state": "network",
+      "width": 1440,
+      "height": 960,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1440,
+        "height": 960,
+        "scale": 1
+      },
+      "usableBottom": 960,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/logs/",
+      "state": "logs",
+      "width": 1440,
+      "height": 960,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1440,
+        "height": 960,
+        "scale": 1
+      },
+      "usableBottom": 960,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/settings/",
+      "state": "settings",
+      "width": 1440,
+      "height": 960,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1440,
+        "height": 960,
+        "scale": 1
+      },
+      "usableBottom": 960,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/studio/",
+      "state": "studio",
+      "width": 1440,
+      "height": 960,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1440,
+        "height": 960,
+        "scale": 1
+      },
+      "usableBottom": 960,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/setup/",
+      "state": "setup",
+      "width": 1440,
+      "height": 960,
+      "issues": [],
+      "status": 404,
+      "access": "correctly unavailable outside setup mode"
+    },
+    {
+      "route": "/",
+      "state": "home",
+      "width": 1366,
+      "height": 768,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1366,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/assistant/?new=1",
+      "state": "assistant-empty",
+      "width": 1366,
+      "height": 768,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1366,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "#chat-history (active) / #assistant-empty (new)"
+    },
+    {
+      "route": "/assistant/",
+      "state": "assistant-active",
+      "width": 1366,
+      "height": 768,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1366,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "#chat-history (active) / #assistant-empty (new)",
+      "scroll": {
+        "topVisible": true,
+        "endVisible": true,
+        "height": 414,
+        "scrollHeight": 4934,
+        "scrollTop": 4520,
+        "firstText": " YouFIRST_MESSAGE_MARKER — Begin the controlled conversation.",
+        "lastText": " Smart AI CompanionFINAL_MESSAGE_MARKER — The final response must be reachable above the composer."
+      }
+    },
+    {
+      "route": "/conversations/",
+      "state": "conversations",
+      "width": 1366,
+      "height": 768,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1366,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/knowledge/",
+      "state": "memory",
+      "width": 1366,
+      "height": 768,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1366,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/device/",
+      "state": "device",
+      "width": 1366,
+      "height": 768,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1366,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/resource-manager/",
+      "state": "resources",
+      "width": 1366,
+      "height": 768,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1366,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/network/",
+      "state": "network",
+      "width": 1366,
+      "height": 768,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1366,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/logs/",
+      "state": "logs",
+      "width": 1366,
+      "height": 768,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1366,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/settings/",
+      "state": "settings",
+      "width": 1366,
+      "height": 768,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1366,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/studio/",
+      "state": "studio",
+      "width": 1366,
+      "height": 768,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1366,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/setup/",
+      "state": "setup",
+      "width": 1366,
+      "height": 768,
+      "issues": [],
+      "status": 404,
+      "access": "correctly unavailable outside setup mode"
+    },
+    {
+      "route": "/",
+      "state": "home",
+      "width": 1280,
+      "height": 720,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1280,
+        "height": 720,
+        "scale": 1
+      },
+      "usableBottom": 720,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/assistant/?new=1",
+      "state": "assistant-empty",
+      "width": 1280,
+      "height": 720,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1280,
+        "height": 720,
+        "scale": 1
+      },
+      "usableBottom": 720,
+      "scrollOwner": "#chat-history (active) / #assistant-empty (new)"
+    },
+    {
+      "route": "/assistant/",
+      "state": "assistant-active",
+      "width": 1280,
+      "height": 720,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1280,
+        "height": 720,
+        "scale": 1
+      },
+      "usableBottom": 720,
+      "scrollOwner": "#chat-history (active) / #assistant-empty (new)",
+      "scroll": {
+        "topVisible": true,
+        "endVisible": true,
+        "height": 366,
+        "scrollHeight": 4934,
+        "scrollTop": 4568,
+        "firstText": " YouFIRST_MESSAGE_MARKER — Begin the controlled conversation.",
+        "lastText": " Smart AI CompanionFINAL_MESSAGE_MARKER — The final response must be reachable above the composer."
+      }
+    },
+    {
+      "route": "/conversations/",
+      "state": "conversations",
+      "width": 1280,
+      "height": 720,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1280,
+        "height": 720,
+        "scale": 1
+      },
+      "usableBottom": 720,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/knowledge/",
+      "state": "memory",
+      "width": 1280,
+      "height": 720,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1280,
+        "height": 720,
+        "scale": 1
+      },
+      "usableBottom": 720,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/device/",
+      "state": "device",
+      "width": 1280,
+      "height": 720,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1280,
+        "height": 720,
+        "scale": 1
+      },
+      "usableBottom": 720,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/resource-manager/",
+      "state": "resources",
+      "width": 1280,
+      "height": 720,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1280,
+        "height": 720,
+        "scale": 1
+      },
+      "usableBottom": 720,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/network/",
+      "state": "network",
+      "width": 1280,
+      "height": 720,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1280,
+        "height": 720,
+        "scale": 1
+      },
+      "usableBottom": 720,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/logs/",
+      "state": "logs",
+      "width": 1280,
+      "height": 720,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1280,
+        "height": 720,
+        "scale": 1
+      },
+      "usableBottom": 720,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/settings/",
+      "state": "settings",
+      "width": 1280,
+      "height": 720,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1280,
+        "height": 720,
+        "scale": 1
+      },
+      "usableBottom": 720,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/studio/",
+      "state": "studio",
+      "width": 1280,
+      "height": 720,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1280,
+        "height": 720,
+        "scale": 1
+      },
+      "usableBottom": 720,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/setup/",
+      "state": "setup",
+      "width": 1280,
+      "height": 720,
+      "issues": [],
+      "status": 404,
+      "access": "correctly unavailable outside setup mode"
+    },
+    {
+      "route": "/",
+      "state": "home",
+      "width": 1024,
+      "height": 768,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1024,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/assistant/?new=1",
+      "state": "assistant-empty",
+      "width": 1024,
+      "height": 768,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1024,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "#chat-history (active) / #assistant-empty (new)"
+    },
+    {
+      "route": "/assistant/",
+      "state": "assistant-active",
+      "width": 1024,
+      "height": 768,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1024,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "#chat-history (active) / #assistant-empty (new)",
+      "scroll": {
+        "topVisible": true,
+        "endVisible": true,
+        "height": 414,
+        "scrollHeight": 4934,
+        "scrollTop": 4520,
+        "firstText": " YouFIRST_MESSAGE_MARKER — Begin the controlled conversation.",
+        "lastText": " Smart AI CompanionFINAL_MESSAGE_MARKER — The final response must be reachable above the composer."
+      }
+    },
+    {
+      "route": "/conversations/",
+      "state": "conversations",
+      "width": 1024,
+      "height": 768,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1024,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/knowledge/",
+      "state": "memory",
+      "width": 1024,
+      "height": 768,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1024,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/device/",
+      "state": "device",
+      "width": 1024,
+      "height": 768,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1024,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/resource-manager/",
+      "state": "resources",
+      "width": 1024,
+      "height": 768,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1024,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/network/",
+      "state": "network",
+      "width": 1024,
+      "height": 768,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1024,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/logs/",
+      "state": "logs",
+      "width": 1024,
+      "height": 768,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1024,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/settings/",
+      "state": "settings",
+      "width": 1024,
+      "height": 768,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1024,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/studio/",
+      "state": "studio",
+      "width": 1024,
+      "height": 768,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 1024,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/setup/",
+      "state": "setup",
+      "width": 1024,
+      "height": 768,
+      "issues": [],
+      "status": 404,
+      "access": "correctly unavailable outside setup mode"
+    },
+    {
+      "route": "/",
+      "state": "home",
+      "width": 768,
+      "height": 1024,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 768,
+        "height": 1024,
+        "scale": 1
+      },
+      "usableBottom": 1024,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/assistant/?new=1",
+      "state": "assistant-empty",
+      "width": 768,
+      "height": 1024,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 768,
+        "height": 1024,
+        "scale": 1
+      },
+      "usableBottom": 1024,
+      "scrollOwner": "#chat-history (active) / #assistant-empty (new)"
+    },
+    {
+      "route": "/assistant/",
+      "state": "assistant-active",
+      "width": 768,
+      "height": 1024,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 768,
+        "height": 1024,
+        "scale": 1
+      },
+      "usableBottom": 1024,
+      "scrollOwner": "#chat-history (active) / #assistant-empty (new)",
+      "scroll": {
+        "topVisible": true,
+        "endVisible": true,
+        "height": 638,
+        "scrollHeight": 5006,
+        "scrollTop": 4368,
+        "firstText": " YouFIRST_MESSAGE_MARKER — Begin the controlled conversation.",
+        "lastText": " Smart AI CompanionFINAL_MESSAGE_MARKER — The final response must be reachable above the composer."
+      }
+    },
+    {
+      "route": "/conversations/",
+      "state": "conversations",
+      "width": 768,
+      "height": 1024,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 768,
+        "height": 1024,
+        "scale": 1
+      },
+      "usableBottom": 1024,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/knowledge/",
+      "state": "memory",
+      "width": 768,
+      "height": 1024,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 768,
+        "height": 1024,
+        "scale": 1
+      },
+      "usableBottom": 1024,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/device/",
+      "state": "device",
+      "width": 768,
+      "height": 1024,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 768,
+        "height": 1024,
+        "scale": 1
+      },
+      "usableBottom": 1024,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/resource-manager/",
+      "state": "resources",
+      "width": 768,
+      "height": 1024,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 768,
+        "height": 1024,
+        "scale": 1
+      },
+      "usableBottom": 1024,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/network/",
+      "state": "network",
+      "width": 768,
+      "height": 1024,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 768,
+        "height": 1024,
+        "scale": 1
+      },
+      "usableBottom": 1024,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/logs/",
+      "state": "logs",
+      "width": 768,
+      "height": 1024,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 768,
+        "height": 1024,
+        "scale": 1
+      },
+      "usableBottom": 1024,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/settings/",
+      "state": "settings",
+      "width": 768,
+      "height": 1024,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 768,
+        "height": 1024,
+        "scale": 1
+      },
+      "usableBottom": 1024,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/studio/",
+      "state": "studio",
+      "width": 768,
+      "height": 1024,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 768,
+        "height": 1024,
+        "scale": 1
+      },
+      "usableBottom": 1024,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/setup/",
+      "state": "setup",
+      "width": 768,
+      "height": 1024,
+      "issues": [],
+      "status": 404,
+      "access": "correctly unavailable outside setup mode"
+    },
+    {
+      "route": "/",
+      "state": "home",
+      "width": 430,
+      "height": 932,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 430,
+        "height": 932,
+        "scale": 1
+      },
+      "usableBottom": 856,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/assistant/?new=1",
+      "state": "assistant-empty",
+      "width": 430,
+      "height": 932,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 430,
+        "height": 932,
+        "scale": 1
+      },
+      "usableBottom": 856,
+      "scrollOwner": "#chat-history (active) / #assistant-empty (new)",
+      "keyboard": {
+        "simulated": true,
+        "issues": [],
+        "viewport": {
+          "width": 430,
+          "height": 420,
+          "scale": 1
+        },
+        "usableBottom": 344,
+        "scrollOwner": "#chat-history (active) / #assistant-empty (new)"
+      }
+    },
+    {
+      "route": "/assistant/",
+      "state": "assistant-active",
+      "width": 430,
+      "height": 932,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 430,
+        "height": 932,
+        "scale": 1
+      },
+      "usableBottom": 856,
+      "scrollOwner": "#chat-history (active) / #assistant-empty (new)",
+      "scroll": {
+        "topVisible": true,
+        "endVisible": true,
+        "height": 600,
+        "scrollHeight": 6310,
+        "scrollTop": 5710,
+        "firstText": " YouFIRST_MESSAGE_MARKER — Begin the controlled conversation.",
+        "lastText": " Smart AI CompanionFINAL_MESSAGE_MARKER — The final response must be reachable above the composer."
+      },
+      "keyboard": {
+        "simulated": true,
+        "issues": [],
+        "viewport": {
+          "width": 430,
+          "height": 420,
+          "scale": 1
+        },
+        "usableBottom": 344,
+        "scrollOwner": "#chat-history (active) / #assistant-empty (new)"
+      }
+    },
+    {
+      "route": "/conversations/",
+      "state": "conversations",
+      "width": 430,
+      "height": 932,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 430,
+        "height": 932,
+        "scale": 1
+      },
+      "usableBottom": 856,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/knowledge/",
+      "state": "memory",
+      "width": 430,
+      "height": 932,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 430,
+        "height": 932,
+        "scale": 1
+      },
+      "usableBottom": 856,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/device/",
+      "state": "device",
+      "width": 430,
+      "height": 932,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 430,
+        "height": 932,
+        "scale": 1
+      },
+      "usableBottom": 856,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/resource-manager/",
+      "state": "resources",
+      "width": 430,
+      "height": 932,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 430,
+        "height": 932,
+        "scale": 1
+      },
+      "usableBottom": 856,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/network/",
+      "state": "network",
+      "width": 430,
+      "height": 932,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 430,
+        "height": 932,
+        "scale": 1
+      },
+      "usableBottom": 856,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/logs/",
+      "state": "logs",
+      "width": 430,
+      "height": 932,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 430,
+        "height": 932,
+        "scale": 1
+      },
+      "usableBottom": 856,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/settings/",
+      "state": "settings",
+      "width": 430,
+      "height": 932,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 430,
+        "height": 932,
+        "scale": 1
+      },
+      "usableBottom": 856,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/studio/",
+      "state": "studio",
+      "width": 430,
+      "height": 932,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 430,
+        "height": 932,
+        "scale": 1
+      },
+      "usableBottom": 856,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/setup/",
+      "state": "setup",
+      "width": 430,
+      "height": 932,
+      "issues": [],
+      "status": 404,
+      "access": "correctly unavailable outside setup mode"
+    },
+    {
+      "route": "/",
+      "state": "home",
+      "width": 430,
+      "height": 844,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 430,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/assistant/?new=1",
+      "state": "assistant-empty",
+      "width": 430,
+      "height": 844,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 430,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "#chat-history (active) / #assistant-empty (new)",
+      "keyboard": {
+        "simulated": true,
+        "issues": [],
+        "viewport": {
+          "width": 430,
+          "height": 420,
+          "scale": 1
+        },
+        "usableBottom": 344,
+        "scrollOwner": "#chat-history (active) / #assistant-empty (new)"
+      }
+    },
+    {
+      "route": "/assistant/",
+      "state": "assistant-active",
+      "width": 430,
+      "height": 844,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 430,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "#chat-history (active) / #assistant-empty (new)",
+      "scroll": {
+        "topVisible": true,
+        "endVisible": true,
+        "height": 512,
+        "scrollHeight": 6310,
+        "scrollTop": 5798,
+        "firstText": " YouFIRST_MESSAGE_MARKER — Begin the controlled conversation.",
+        "lastText": " Smart AI CompanionFINAL_MESSAGE_MARKER — The final response must be reachable above the composer."
+      },
+      "keyboard": {
+        "simulated": true,
+        "issues": [],
+        "viewport": {
+          "width": 430,
+          "height": 420,
+          "scale": 1
+        },
+        "usableBottom": 344,
+        "scrollOwner": "#chat-history (active) / #assistant-empty (new)"
+      }
+    },
+    {
+      "route": "/conversations/",
+      "state": "conversations",
+      "width": 430,
+      "height": 844,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 430,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/knowledge/",
+      "state": "memory",
+      "width": 430,
+      "height": 844,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 430,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/device/",
+      "state": "device",
+      "width": 430,
+      "height": 844,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 430,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/resource-manager/",
+      "state": "resources",
+      "width": 430,
+      "height": 844,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 430,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/network/",
+      "state": "network",
+      "width": 430,
+      "height": 844,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 430,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/logs/",
+      "state": "logs",
+      "width": 430,
+      "height": 844,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 430,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/settings/",
+      "state": "settings",
+      "width": 430,
+      "height": 844,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 430,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/studio/",
+      "state": "studio",
+      "width": 430,
+      "height": 844,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 430,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/setup/",
+      "state": "setup",
+      "width": 430,
+      "height": 844,
+      "issues": [],
+      "status": 404,
+      "access": "correctly unavailable outside setup mode"
+    },
+    {
+      "route": "/",
+      "state": "home",
+      "width": 390,
+      "height": 844,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 390,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/assistant/?new=1",
+      "state": "assistant-empty",
+      "width": 390,
+      "height": 844,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 390,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "#chat-history (active) / #assistant-empty (new)",
+      "keyboard": {
+        "simulated": true,
+        "issues": [],
+        "viewport": {
+          "width": 390,
+          "height": 420,
+          "scale": 1
+        },
+        "usableBottom": 344,
+        "scrollOwner": "#chat-history (active) / #assistant-empty (new)"
+      }
+    },
+    {
+      "route": "/assistant/",
+      "state": "assistant-active",
+      "width": 390,
+      "height": 844,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 390,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "#chat-history (active) / #assistant-empty (new)",
+      "scroll": {
+        "topVisible": true,
+        "endVisible": true,
+        "height": 512,
+        "scrollHeight": 6379,
+        "scrollTop": 5867,
+        "firstText": " YouFIRST_MESSAGE_MARKER — Begin the controlled conversation.",
+        "lastText": " Smart AI CompanionFINAL_MESSAGE_MARKER — The final response must be reachable above the composer."
+      },
+      "keyboard": {
+        "simulated": true,
+        "issues": [],
+        "viewport": {
+          "width": 390,
+          "height": 420,
+          "scale": 1
+        },
+        "usableBottom": 344,
+        "scrollOwner": "#chat-history (active) / #assistant-empty (new)"
+      }
+    },
+    {
+      "route": "/conversations/",
+      "state": "conversations",
+      "width": 390,
+      "height": 844,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 390,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/knowledge/",
+      "state": "memory",
+      "width": 390,
+      "height": 844,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 390,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/device/",
+      "state": "device",
+      "width": 390,
+      "height": 844,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 390,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/resource-manager/",
+      "state": "resources",
+      "width": 390,
+      "height": 844,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 390,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/network/",
+      "state": "network",
+      "width": 390,
+      "height": 844,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 390,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/logs/",
+      "state": "logs",
+      "width": 390,
+      "height": 844,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 390,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/settings/",
+      "state": "settings",
+      "width": 390,
+      "height": 844,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 390,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/studio/",
+      "state": "studio",
+      "width": 390,
+      "height": 844,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 390,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/setup/",
+      "state": "setup",
+      "width": 390,
+      "height": 844,
+      "issues": [],
+      "status": 404,
+      "access": "correctly unavailable outside setup mode"
+    },
+    {
+      "route": "/",
+      "state": "home",
+      "width": 375,
+      "height": 667,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 375,
+        "height": 667,
+        "scale": 1
+      },
+      "usableBottom": 591,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/assistant/?new=1",
+      "state": "assistant-empty",
+      "width": 375,
+      "height": 667,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 375,
+        "height": 667,
+        "scale": 1
+      },
+      "usableBottom": 591,
+      "scrollOwner": "#chat-history (active) / #assistant-empty (new)",
+      "keyboard": {
+        "simulated": true,
+        "issues": [],
+        "viewport": {
+          "width": 375,
+          "height": 420,
+          "scale": 1
+        },
+        "usableBottom": 344,
+        "scrollOwner": "#chat-history (active) / #assistant-empty (new)"
+      }
+    },
+    {
+      "route": "/assistant/",
+      "state": "assistant-active",
+      "width": 375,
+      "height": 667,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 375,
+        "height": 667,
+        "scale": 1
+      },
+      "usableBottom": 591,
+      "scrollOwner": "#chat-history (active) / #assistant-empty (new)",
+      "scroll": {
+        "topVisible": true,
+        "endVisible": true,
+        "height": 335,
+        "scrollHeight": 6379,
+        "scrollTop": 6044,
+        "firstText": " YouFIRST_MESSAGE_MARKER — Begin the controlled conversation.",
+        "lastText": " Smart AI CompanionFINAL_MESSAGE_MARKER — The final response must be reachable above the composer."
+      },
+      "keyboard": {
+        "simulated": true,
+        "issues": [],
+        "viewport": {
+          "width": 375,
+          "height": 420,
+          "scale": 1
+        },
+        "usableBottom": 344,
+        "scrollOwner": "#chat-history (active) / #assistant-empty (new)"
+      }
+    },
+    {
+      "route": "/conversations/",
+      "state": "conversations",
+      "width": 375,
+      "height": 667,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 375,
+        "height": 667,
+        "scale": 1
+      },
+      "usableBottom": 591,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/knowledge/",
+      "state": "memory",
+      "width": 375,
+      "height": 667,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 375,
+        "height": 667,
+        "scale": 1
+      },
+      "usableBottom": 591,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/device/",
+      "state": "device",
+      "width": 375,
+      "height": 667,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 375,
+        "height": 667,
+        "scale": 1
+      },
+      "usableBottom": 591,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/resource-manager/",
+      "state": "resources",
+      "width": 375,
+      "height": 667,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 375,
+        "height": 667,
+        "scale": 1
+      },
+      "usableBottom": 591,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/network/",
+      "state": "network",
+      "width": 375,
+      "height": 667,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 375,
+        "height": 667,
+        "scale": 1
+      },
+      "usableBottom": 591,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/logs/",
+      "state": "logs",
+      "width": 375,
+      "height": 667,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 375,
+        "height": 667,
+        "scale": 1
+      },
+      "usableBottom": 591,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/settings/",
+      "state": "settings",
+      "width": 375,
+      "height": 667,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 375,
+        "height": 667,
+        "scale": 1
+      },
+      "usableBottom": 591,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/studio/",
+      "state": "studio",
+      "width": 375,
+      "height": 667,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 375,
+        "height": 667,
+        "scale": 1
+      },
+      "usableBottom": 591,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/setup/",
+      "state": "setup",
+      "width": 375,
+      "height": 667,
+      "issues": [],
+      "status": 404,
+      "access": "correctly unavailable outside setup mode"
+    },
+    {
+      "route": "/",
+      "state": "home",
+      "width": 360,
+      "height": 800,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 360,
+        "height": 800,
+        "scale": 1
+      },
+      "usableBottom": 724,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/assistant/?new=1",
+      "state": "assistant-empty",
+      "width": 360,
+      "height": 800,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 360,
+        "height": 800,
+        "scale": 1
+      },
+      "usableBottom": 724,
+      "scrollOwner": "#chat-history (active) / #assistant-empty (new)",
+      "keyboard": {
+        "simulated": true,
+        "issues": [],
+        "viewport": {
+          "width": 360,
+          "height": 420,
+          "scale": 1
+        },
+        "usableBottom": 344,
+        "scrollOwner": "#chat-history (active) / #assistant-empty (new)"
+      }
+    },
+    {
+      "route": "/assistant/",
+      "state": "assistant-active",
+      "width": 360,
+      "height": 800,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 360,
+        "height": 800,
+        "scale": 1
+      },
+      "usableBottom": 724,
+      "scrollOwner": "#chat-history (active) / #assistant-empty (new)",
+      "scroll": {
+        "topVisible": true,
+        "endVisible": true,
+        "height": 468,
+        "scrollHeight": 6401,
+        "scrollTop": 5933,
+        "firstText": " YouFIRST_MESSAGE_MARKER — Begin the controlled conversation.",
+        "lastText": " Smart AI CompanionFINAL_MESSAGE_MARKER — The final response must be reachable above the composer."
+      },
+      "keyboard": {
+        "simulated": true,
+        "issues": [],
+        "viewport": {
+          "width": 360,
+          "height": 420,
+          "scale": 1
+        },
+        "usableBottom": 344,
+        "scrollOwner": "#chat-history (active) / #assistant-empty (new)"
+      }
+    },
+    {
+      "route": "/conversations/",
+      "state": "conversations",
+      "width": 360,
+      "height": 800,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 360,
+        "height": 800,
+        "scale": 1
+      },
+      "usableBottom": 724,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/knowledge/",
+      "state": "memory",
+      "width": 360,
+      "height": 800,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 360,
+        "height": 800,
+        "scale": 1
+      },
+      "usableBottom": 724,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/device/",
+      "state": "device",
+      "width": 360,
+      "height": 800,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 360,
+        "height": 800,
+        "scale": 1
+      },
+      "usableBottom": 724,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/resource-manager/",
+      "state": "resources",
+      "width": 360,
+      "height": 800,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 360,
+        "height": 800,
+        "scale": 1
+      },
+      "usableBottom": 724,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/network/",
+      "state": "network",
+      "width": 360,
+      "height": 800,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 360,
+        "height": 800,
+        "scale": 1
+      },
+      "usableBottom": 724,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/logs/",
+      "state": "logs",
+      "width": 360,
+      "height": 800,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 360,
+        "height": 800,
+        "scale": 1
+      },
+      "usableBottom": 724,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/settings/",
+      "state": "settings",
+      "width": 360,
+      "height": 800,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 360,
+        "height": 800,
+        "scale": 1
+      },
+      "usableBottom": 724,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/studio/",
+      "state": "studio",
+      "width": 360,
+      "height": 800,
+      "issues": [],
+      "status": 200,
+      "viewport": {
+        "width": 360,
+        "height": 800,
+        "scale": 1
+      },
+      "usableBottom": 724,
+      "scrollOwner": "document"
+    },
+    {
+      "route": "/setup/",
+      "state": "setup",
+      "width": 360,
+      "height": 800,
+      "issues": [],
+      "status": 404,
+      "access": "correctly unavailable outside setup mode"
+    }
+  ],
+  "supplementary": [
+    {
+      "kind": "long-text",
+      "route": "/",
+      "width": 1440,
+      "height": 960,
+      "issues": [],
+      "viewport": {
+        "width": 1440,
+        "height": 960,
+        "scale": 1
+      },
+      "usableBottom": 960,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/knowledge/",
+      "width": 1440,
+      "height": 960,
+      "issues": [],
+      "viewport": {
+        "width": 1440,
+        "height": 960,
+        "scale": 1
+      },
+      "usableBottom": 960,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/network/",
+      "width": 1440,
+      "height": 960,
+      "issues": [],
+      "viewport": {
+        "width": 1440,
+        "height": 960,
+        "scale": 1
+      },
+      "usableBottom": 960,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/resource-manager/",
+      "width": 1440,
+      "height": 960,
+      "issues": [],
+      "viewport": {
+        "width": 1440,
+        "height": 960,
+        "scale": 1
+      },
+      "usableBottom": 960,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/",
+      "width": 1366,
+      "height": 768,
+      "issues": [],
+      "viewport": {
+        "width": 1366,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/knowledge/",
+      "width": 1366,
+      "height": 768,
+      "issues": [],
+      "viewport": {
+        "width": 1366,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/network/",
+      "width": 1366,
+      "height": 768,
+      "issues": [],
+      "viewport": {
+        "width": 1366,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/resource-manager/",
+      "width": 1366,
+      "height": 768,
+      "issues": [],
+      "viewport": {
+        "width": 1366,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/",
+      "width": 1280,
+      "height": 720,
+      "issues": [],
+      "viewport": {
+        "width": 1280,
+        "height": 720,
+        "scale": 1
+      },
+      "usableBottom": 720,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/knowledge/",
+      "width": 1280,
+      "height": 720,
+      "issues": [],
+      "viewport": {
+        "width": 1280,
+        "height": 720,
+        "scale": 1
+      },
+      "usableBottom": 720,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/network/",
+      "width": 1280,
+      "height": 720,
+      "issues": [],
+      "viewport": {
+        "width": 1280,
+        "height": 720,
+        "scale": 1
+      },
+      "usableBottom": 720,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/resource-manager/",
+      "width": 1280,
+      "height": 720,
+      "issues": [],
+      "viewport": {
+        "width": 1280,
+        "height": 720,
+        "scale": 1
+      },
+      "usableBottom": 720,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/",
+      "width": 1024,
+      "height": 768,
+      "issues": [],
+      "viewport": {
+        "width": 1024,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/knowledge/",
+      "width": 1024,
+      "height": 768,
+      "issues": [],
+      "viewport": {
+        "width": 1024,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/network/",
+      "width": 1024,
+      "height": 768,
+      "issues": [],
+      "viewport": {
+        "width": 1024,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/resource-manager/",
+      "width": 1024,
+      "height": 768,
+      "issues": [],
+      "viewport": {
+        "width": 1024,
+        "height": 768,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/",
+      "width": 768,
+      "height": 1024,
+      "issues": [],
+      "viewport": {
+        "width": 768,
+        "height": 1024,
+        "scale": 1
+      },
+      "usableBottom": 1024,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/knowledge/",
+      "width": 768,
+      "height": 1024,
+      "issues": [],
+      "viewport": {
+        "width": 768,
+        "height": 1024,
+        "scale": 1
+      },
+      "usableBottom": 1024,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/network/",
+      "width": 768,
+      "height": 1024,
+      "issues": [],
+      "viewport": {
+        "width": 768,
+        "height": 1024,
+        "scale": 1
+      },
+      "usableBottom": 1024,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/resource-manager/",
+      "width": 768,
+      "height": 1024,
+      "issues": [],
+      "viewport": {
+        "width": 768,
+        "height": 1024,
+        "scale": 1
+      },
+      "usableBottom": 1024,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/",
+      "width": 430,
+      "height": 932,
+      "issues": [],
+      "viewport": {
+        "width": 430,
+        "height": 932,
+        "scale": 1
+      },
+      "usableBottom": 856,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/knowledge/",
+      "width": 430,
+      "height": 932,
+      "issues": [],
+      "viewport": {
+        "width": 430,
+        "height": 932,
+        "scale": 1
+      },
+      "usableBottom": 856,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/network/",
+      "width": 430,
+      "height": 932,
+      "issues": [],
+      "viewport": {
+        "width": 430,
+        "height": 932,
+        "scale": 1
+      },
+      "usableBottom": 856,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/resource-manager/",
+      "width": 430,
+      "height": 932,
+      "issues": [],
+      "viewport": {
+        "width": 430,
+        "height": 932,
+        "scale": 1
+      },
+      "usableBottom": 856,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/",
+      "width": 430,
+      "height": 844,
+      "issues": [],
+      "viewport": {
+        "width": 430,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/knowledge/",
+      "width": 430,
+      "height": 844,
+      "issues": [],
+      "viewport": {
+        "width": 430,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/network/",
+      "width": 430,
+      "height": 844,
+      "issues": [],
+      "viewport": {
+        "width": 430,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/resource-manager/",
+      "width": 430,
+      "height": 844,
+      "issues": [],
+      "viewport": {
+        "width": 430,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/",
+      "width": 390,
+      "height": 844,
+      "issues": [],
+      "viewport": {
+        "width": 390,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/knowledge/",
+      "width": 390,
+      "height": 844,
+      "issues": [],
+      "viewport": {
+        "width": 390,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/network/",
+      "width": 390,
+      "height": 844,
+      "issues": [],
+      "viewport": {
+        "width": 390,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/resource-manager/",
+      "width": 390,
+      "height": 844,
+      "issues": [],
+      "viewport": {
+        "width": 390,
+        "height": 844,
+        "scale": 1
+      },
+      "usableBottom": 768,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/",
+      "width": 375,
+      "height": 667,
+      "issues": [],
+      "viewport": {
+        "width": 375,
+        "height": 667,
+        "scale": 1
+      },
+      "usableBottom": 591,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/knowledge/",
+      "width": 375,
+      "height": 667,
+      "issues": [],
+      "viewport": {
+        "width": 375,
+        "height": 667,
+        "scale": 1
+      },
+      "usableBottom": 591,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/network/",
+      "width": 375,
+      "height": 667,
+      "issues": [],
+      "viewport": {
+        "width": 375,
+        "height": 667,
+        "scale": 1
+      },
+      "usableBottom": 591,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/resource-manager/",
+      "width": 375,
+      "height": 667,
+      "issues": [],
+      "viewport": {
+        "width": 375,
+        "height": 667,
+        "scale": 1
+      },
+      "usableBottom": 591,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/",
+      "width": 360,
+      "height": 800,
+      "issues": [],
+      "viewport": {
+        "width": 360,
+        "height": 800,
+        "scale": 1
+      },
+      "usableBottom": 724,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/knowledge/",
+      "width": 360,
+      "height": 800,
+      "issues": [],
+      "viewport": {
+        "width": 360,
+        "height": 800,
+        "scale": 1
+      },
+      "usableBottom": 724,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/network/",
+      "width": 360,
+      "height": 800,
+      "issues": [],
+      "viewport": {
+        "width": 360,
+        "height": 800,
+        "scale": 1
+      },
+      "usableBottom": 724,
+      "scrollOwner": "document"
+    },
+    {
+      "kind": "long-text",
+      "route": "/resource-manager/",
+      "width": 360,
+      "height": 800,
+      "issues": [],
+      "viewport": {
+        "width": 360,
+        "height": 800,
+        "scale": 1
+      },
+      "usableBottom": 724,
+      "scrollOwner": "document"
+    }
+  ],
+  "functionalChecks": [
+    "Streaming preserves the reading position",
+    "Jump to latest is visible",
+    "Jump to latest exposes current output",
+    "Interrupt restores the composer",
+    "Shift+Enter keeps multiline input",
+    "Microphone fixture enters Listening",
+    "Voice transcript is an editable draft with Send enabled",
+    "Voice transcript is not automatically submitted",
+    "Voice response is streamed before playback",
+    "Playback interrupt returns to Idle"
+  ],
+  "runtimeErrors": [],
+  "assetFailures": [],
+  "screenshots": [
+    "home-1440x960.png",
+    "assistant-empty-1440x960.png",
+    "assistant-active-1440x960.png",
+    "home-1366x768.png",
+    "assistant-empty-1366x768.png",
+    "assistant-active-1366x768.png",
+    "memory-1366x768.png",
+    "device-1366x768.png",
+    "home-390x844.png",
+    "assistant-empty-390x844.png",
+    "assistant-active-390x844.png",
+    "memory-390x844.png",
+    "device-390x844.png",
+    "logs-390x844.png",
+    "settings-390x844.png",
+    "studio-390x844.png",
+    "assistant-empty-375x667.png",
+    "assistant-active-375x667.png"
+  ],
+  "summary": {
+    "cases": 120,
+    "passed": 120,
+    "failed": 0,
+    "supplementaryCases": 40,
+    "supplementaryFailed": 0
+  }
+}

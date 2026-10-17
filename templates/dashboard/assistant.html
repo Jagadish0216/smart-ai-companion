@@ -130,6 +130,7 @@
     let activeController = null;
     let activeAudio = null;
     let interrupted = false;
+    let voiceDraft = false;
     const jumpLatest = document.getElementById('jump-latest');
     const interruptButton = document.getElementById('interrupt-response');
     function followLatest() { if (followStream) chatHistory.scrollTop = chatHistory.scrollHeight; else jumpLatest.hidden = false; }
@@ -164,7 +165,8 @@
         (open ? sidebar.querySelector('button') : document.getElementById('history-trigger')).focus();
     };
     window.startNewChat = function() {
-        if (activeController || activeAudio || voiceState === 'LISTENING' || voiceState === 'PROCESSING') return;
+        if (activeController || activeAudio || voiceState === 'LISTENING' || ['REQUESTING_MIC', 'TRANSCRIBING', 'THINKING', 'RESPONDING'].includes(voiceState)) return;
+        clearDraft();
         followStream = true;
         localStorage.removeItem('companion_conversation_id');
         messageContainer.innerHTML = '';
@@ -176,7 +178,8 @@
         document.getElementById('history-trigger').setAttribute('aria-expanded', 'false');
     };
     window.loadConversationId = async function(id, el) {
-        if (activeController || activeAudio || voiceState === 'LISTENING' || voiceState === 'PROCESSING') return;
+        if (activeController || activeAudio || voiceState === 'LISTENING' || ['REQUESTING_MIC', 'TRANSCRIBING', 'THINKING', 'RESPONDING'].includes(voiceState)) return;
+        clearDraft();
         followStream = true;
         localStorage.setItem('companion_conversation_id', id);
         document.querySelectorAll('.conv-link').forEach(l => l.classList.remove('active'));
@@ -245,7 +248,7 @@
         voiceSpinner.style.display = 'none';
         // Delegate SVG eye animation to the shared companion.js controller
         if (window.CompanionController) {
-            window.CompanionController.setState(state);
+            window.CompanionController.setState(state === 'TRANSCRIBING' || state === 'REQUESTING_MIC' ? 'LISTENING' : state);
         }
         switch (state) {
             case 'IDLE':
@@ -259,10 +262,13 @@
                 voiceStatus.textContent = 'Listening';
                 chatInput.disabled = true;
                 break;
-            case 'PROCESSING':
+            case 'REQUESTING_MIC':
+            case 'TRANSCRIBING':
+            case 'THINKING':
+            case 'RESPONDING':
                 btnVoice.classList.add('processing');
                 voiceSpinner.style.display = 'block';
-                voiceStatus.textContent = 'Thinking';
+                voiceStatus.textContent = {REQUESTING_MIC: 'Opening microphone…', TRANSCRIBING: 'Transcribing…', THINKING: 'Thinking', RESPONDING: 'Responding'}[state];
                 chatInput.disabled = true;
                 break;
             case 'SPEAKING':
@@ -271,23 +277,34 @@
                 voiceStatus.textContent = 'Speaking';
                 chatInput.disabled = true;
                 break;
-            case 'ALERT':
+            case 'ERROR':
                 voiceIconMic.style.display = 'block';
                 voiceStatus.textContent = 'Error';
                 chatInput.disabled = false;
-                setTimeout(() => { if (voiceState === 'ALERT') setVoiceState('IDLE'); }, 4000);
+                setTimeout(() => { if (voiceState === 'ERROR') setVoiceState('IDLE'); }, 4000);
                 break;
         }
+        updateSendButton();
         if (window.lucide) lucide.createIcons();
     }
+    function updateSendButton() {
+        document.querySelector('.chat-app-wrapper').classList.toggle('has-voice-draft', voiceDraft);
+        const enabled = !chatInput.disabled && chatInput.value.trim() !== '';
+        btnSubmit.disabled = !enabled;
+        btnSubmit.classList.toggle('active', enabled);
+    }
+    function clearDraft() {
+        voiceDraft = false;
+        chatInput.value = '';
+        voiceStatus.textContent = 'IDLE';
+        updateSendButton();
+    }
     chatInput.addEventListener('input', function() {
-        if (chatInput.value.trim() !== '') {
-            btnSubmit.disabled = false;
-            btnSubmit.classList.add('active');
-        } else {
-            btnSubmit.disabled = true;
-            btnSubmit.classList.remove('active');
+        if (!chatInput.value) {
+            voiceDraft = false;
+            if (voiceState === 'IDLE') voiceStatus.textContent = 'IDLE';
         }
+        updateSendButton();
     });
     function updateSidebar(data) {
         const id = Number(data.conversation_id);
@@ -340,14 +357,16 @@
     }
     async function sendMessage() {
         const text = chatInput.value.trim();
-        if (!text || activeController || activeAudio || voiceState === 'LISTENING' || voiceState === 'PROCESSING') return;
+        if (!text || activeController || activeAudio || voiceState === 'LISTENING' || ['REQUESTING_MIC', 'TRANSCRIBING', 'THINKING', 'RESPONDING'].includes(voiceState)) return;
+        const speakAfterSend = voiceDraft;
+        voiceDraft = false;
         followStream = true;
         chatInput.value = '';
         chatInput.dispatchEvent(new Event('input'));
         chatInput.disabled = true;
-        appendMessage(text, 'user', false);
+        appendMessage(text, 'user', speakAfterSend);
         const aiBubble = appendMessage('', 'ai', false);
-        setVoiceState('PROCESSING');
+        setVoiceState('THINKING');
         const payload = { query: text };
         const convId = localStorage.getItem('companion_conversation_id');
         if (convId) payload.conversation_id = parseInt(convId, 10);
@@ -356,6 +375,7 @@
         interrupted = false;
         interruptButton.hidden = false;
         let timeoutId = null;
+        const sendStarted = performance.now();
         let receivedOutput = false;
         let streamCompleted = false;
         let accumulated = '';
@@ -405,7 +425,8 @@
                         aiBubble.textContent = accumulated;
                         if (!receivedOutput) {
                             receivedOutput = true;
-                            voiceStatus.textContent = 'Responding';
+                            console.info('Browser chat timing', {ttft_ms: Math.round(performance.now() - sendStarted)});
+                            setVoiceState('RESPONDING');
                         }
                         followLatest();
                     } else if (event.type === 'done') {
@@ -418,7 +439,6 @@
                         window.AssistantUI.renderSources(aiBubble.parentElement, event);
                         followLatest();
                         updateSidebar(event);
-                        setVoiceState('IDLE');
                     } else if (event.type === 'error') {
                         const detail = event.detail || 'The AI response could not be completed.';
                         throw new Error(detail);
@@ -436,7 +456,12 @@
             if (!streamCompleted) {
                 throw new Error('The AI connection ended before completion.');
             }
-            setVoiceState('IDLE');
+            clearTimeout(timeoutId);
+            if (speakAfterSend && accumulated && !controller.signal.aborted) {
+                await speakResponse(accumulated, controller);
+            } else {
+                setVoiceState('IDLE');
+            }
         } catch (e) {
             console.error('Chat stream error:', e);
             const errorMessage = interrupted ? 'Response stopped.' : e.name === 'AbortError'
@@ -445,14 +470,15 @@
                     : 'The AI did not start responding in time. Please try again.')
                 : (e.message || 'Failed to connect to AI Service.');
             showToast(errorMessage, 'error');
-            setVoiceState(interrupted ? 'IDLE' : 'ALERT');
+            setVoiceState(interrupted ? 'IDLE' : 'ERROR');
             markStreamInterrupted(errorMessage);
         } finally {
             clearTimeout(timeoutId);
             activeController = null;
-            interruptButton.hidden = true;
-            chatInput.disabled = false;
-            chatInput.focus();
+            interruptButton.hidden = !activeAudio;
+            chatInput.disabled = !!activeAudio;
+            updateSendButton();
+            if (!activeAudio) chatInput.focus();
         }
     }
     btnSubmit.addEventListener('click', sendMessage);
@@ -473,8 +499,12 @@
         return 'recording.audio';
     }
     async function startRecording() {
-        if (activeController || activeAudio || voiceState === 'LISTENING' || voiceState === 'PROCESSING') return;
-        setVoiceState('PROCESSING');
+        if (activeController || activeAudio || voiceState === 'LISTENING' || ['REQUESTING_MIC', 'TRANSCRIBING', 'THINKING', 'RESPONDING'].includes(voiceState)) return;
+        if (chatInput.value.length) {
+            showToast('Your draft is preserved. Send or clear it before recording again.', 'info');
+            return;
+        }
+        setVoiceState('REQUESTING_MIC');
         let stream;
         try {
             stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -493,57 +523,78 @@
             if (stream) stream.getTracks().forEach(track => track.stop());
             console.error('Microphone error:', e);
             showToast('Unable to access microphone.', 'error');
-            setVoiceState('ALERT');
+            setVoiceState('ERROR');
         }
     }
     function stopRecording() {
         if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
     }
     async function sendAudio() {
-        var audioBlob = new Blob(audioChunks, recordedMimeType ? { type: recordedMimeType } : undefined);
+        const audioBlob = new Blob(audioChunks, recordedMimeType ? { type: recordedMimeType } : undefined);
         if (audioBlob.size === 0) { setVoiceState('IDLE'); return; }
-        setVoiceState('PROCESSING');
-        var formData = new FormData();
+        setVoiceState('TRANSCRIBING');
+        const formData = new FormData();
         formData.append('audio', audioBlob, fileExtForMime(recordedMimeType));
-        var convId = localStorage.getItem('companion_conversation_id');
-        if (convId) formData.append('conversation_id', convId);
         const controller = new AbortController();
         activeController = controller; interrupted = false; interruptButton.hidden = false;
+        const started = performance.now();
         const voiceTimeout = setTimeout(() => controller.abort(), CHAT_REQUEST_TIMEOUT_MS);
         try {
-            var response = await fetch('/api/assistant/voice/transcribe/', {
-                method: 'POST',
-                headers: { 'X-CSRFToken': csrftoken },
+            const response = await fetch('/api/assistant/voice/transcribe-only/', {
+                method: 'POST', headers: { 'X-CSRFToken': csrftoken },
                 body: formData, signal: controller.signal
             });
-            var data = await response.json();
-            if (!response.ok) {
+            const data = await response.json();
+            if (controller.signal.aborted) return;
+            if (!response.ok || typeof data.transcription !== 'string' || !data.transcription.trim()) {
                 throw new Error(data.error || 'Voice processing failed.');
             }
-            if (data.conversation_id) localStorage.setItem('companion_conversation_id',data.conversation_id);
-            appendMessage(data.transcription, 'user', true);
-            const answer = appendMessage(data.response || '', 'ai', false);
-            window.AssistantUI.renderSources(answer.parentElement, data);
-            updateSidebar(data);
+            console.info('Browser voice timing', {upload_conversion_stt_ms: Math.round(performance.now() - started)});
+            chatInput.value = data.transcription;
+            voiceDraft = true;
             setVoiceState('IDLE');
-            if (data.tts_error) showToast('The response is ready, but audio is unavailable.', 'error');
-            if (data.audio_base64) {
-                const audio = new Audio('data:audio/wav;base64,' + data.audio_base64);
-                activeAudio = audio;
-                audio.onended = () => { activeAudio=null; interruptButton.hidden=true; setVoiceState('IDLE'); };
-                audio.onerror = () => { activeAudio=null; interruptButton.hidden=true; setVoiceState('ALERT'); showToast('Audio playback failed.', 'error'); };
-                try { await audio.play(); setVoiceState('SPEAKING'); }
-                catch (_) { activeAudio=null; showToast('Audio playback is unavailable. Your response is shown above.', 'error'); }
-            }
+            chatInput.dispatchEvent(new Event('input'));
+            voiceStatus.textContent = 'Voice transcript — review or send';
+            chatInput.focus();
+            chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length);
         } catch (e) {
-            console.error('Voice pipeline error:', e);
             showToast(interrupted ? 'Voice request stopped.' : 'Voice processing failed or timed out. Please try again.', 'error');
-            setVoiceState(interrupted ? 'IDLE' : 'ALERT');
-        } finally { clearTimeout(voiceTimeout); activeController=null; interruptButton.hidden=!activeAudio; }
+            setVoiceState(interrupted ? 'IDLE' : 'ERROR');
+        } finally {
+            clearTimeout(voiceTimeout); activeController = null; interruptButton.hidden = true;
+            if (controller.signal.aborted) setVoiceState('IDLE');
+        }
+    }
+    async function speakResponse(text, controller) {
+        // Text is already rendered and persisted by the normal chat stream.
+        const timer = setTimeout(() => controller.abort(), CHAT_REQUEST_TIMEOUT_MS);
+        const started = performance.now();
+        try {
+            const response = await fetch('/api/assistant/voice/synthesize/', {
+                method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrftoken},
+                body: JSON.stringify({text}), signal: controller.signal
+            });
+            const data = await response.json();
+            if (controller.signal.aborted) { setVoiceState('IDLE'); return; }
+            if (!response.ok || !data.audio_base64) throw new Error('Audio unavailable');
+            console.info('Browser voice timing', {tts_request_ms: Math.round(performance.now() - started)});
+            const audio = new Audio('data:audio/wav;base64,' + data.audio_base64);
+            activeAudio = audio;
+            audio.onended = () => { if (activeAudio === audio) { activeAudio = null; interruptButton.hidden = true; setVoiceState('IDLE'); } };
+            audio.onerror = () => { if (activeAudio === audio) { activeAudio = null; interruptButton.hidden = true; setVoiceState('ERROR'); showToast('The response is ready, but audio is unavailable.', 'error'); } };
+            await audio.play();
+            if (controller.signal.aborted || activeAudio !== audio) { audio.pause(); return; }
+            setVoiceState('SPEAKING');
+        } catch (e) {
+            if (activeAudio) activeAudio.pause();
+            activeAudio = null;
+            setVoiceState('IDLE');
+            if (!interrupted) showToast('The response is ready, but audio is unavailable.', 'error');
+        } finally { clearTimeout(timer); }
     }
     btnVoice.addEventListener('click', () => {
         if (voiceState === 'LISTENING') stopRecording();
-        else if (voiceState === 'IDLE' || voiceState === 'ALERT') startRecording();
+        else if (voiceState === 'IDLE' || voiceState === 'ERROR') startRecording();
     });
     document.addEventListener('keydown', e => {
         const drawer = document.getElementById('chat-history-sidebar');
