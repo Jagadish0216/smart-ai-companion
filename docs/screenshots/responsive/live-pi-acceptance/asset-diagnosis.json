@@ -1,0 +1,123 @@
+{
+  "failures": [
+    {
+      "route": "/knowledge/",
+      "url": "http://smart-ai-companion.local:8000/static/img/figma/home-DeviceIcon.svg",
+      "error": {
+        "errorText": "net::ERR_ABORTED"
+      }
+    },
+    {
+      "route": "/device/",
+      "url": "http://smart-ai-companion.local:8000/static/img/figma/home-DeviceIcon.svg",
+      "error": {
+        "errorText": "net::ERR_ABORTED"
+      }
+    },
+    {
+      "route": "/resource-manager/",
+      "url": "http://smart-ai-companion.local:8000/static/img/figma/home-DeviceIcon.svg",
+      "error": {
+        "errorText": "net::ERR_ABORTED"
+      }
+    },
+    {
+      "route": "/network/",
+      "url": "http://smart-ai-companion.local:8000/static/img/figma/home-DeviceIcon.svg",
+      "error": {
+        "errorText": "net::ERR_ABORTED"
+      }
+    },
+    {
+      "route": "/logs/",
+      "url": "http://smart-ai-companion.local:8000/static/img/figma/home-DeviceIcon.svg",
+      "error": {
+        "errorText": "net::ERR_ABORTED"
+      }
+    },
+    {
+      "route": "/settings/",
+      "url": "http://smart-ai-companion.local:8000/static/img/figma/home-DeviceIcon.svg",
+      "error": {
+        "errorText": "net::ERR_ABORTED"
+      }
+    }
+  ],
+  "responses": [
+    {
+      "route": "/",
+      "status": 200,
+      "url": "http://smart-ai-companion.local:8000/static/img/figma/home-DeviceIcon.svg"
+    },
+    {
+      "route": "/",
+      "status": 200,
+      "url": "http://smart-ai-companion.local:8000/static/img/figma/home-DeviceIcon.svg"
+    },
+    {
+      "route": "/assistant/?new=1",
+      "status": 200,
+      "url": "http://smart-ai-companion.local:8000/static/img/figma/home-DeviceIcon.svg"
+    },
+    {
+      "route": "/assistant/?new=1",
+      "status": 200,
+      "url": "http://smart-ai-companion.local:8000/static/img/figma/home-DeviceIcon.svg"
+    },
+    {
+      "route": "/conversations/",
+      "status": 200,
+      "url": "http://smart-ai-companion.local:8000/static/img/figma/home-DeviceIcon.svg"
+    },
+    {
+      "route": "/conversations/",
+      "status": 200,
+      "url": "http://smart-ai-companion.local:8000/static/img/figma/home-DeviceIcon.svg"
+    },
+    {
+      "route": "/knowledge/",
+      "status": 200,
+      "url": "http://smart-ai-companion.local:8000/static/img/figma/home-DeviceIcon.svg"
+    },
+    {
+      "route": "/device/",
+      "status": 200,
+      "url": "http://smart-ai-companion.local:8000/static/img/figma/home-DeviceIcon.svg"
+    },
+    {
+      "route": "/resource-manager/",
+      "status": 200,
+      "url": "http://smart-ai-companion.local:8000/static/img/figma/home-DeviceIcon.svg"
+    },
+    {
+      "route": "/network/",
+      "status": 200,
+      "url": "http://smart-ai-companion.local:8000/static/img/figma/home-DeviceIcon.svg"
+    },
+    {
+      "route": "/logs/",
+      "status": 200,
+      "url": "http://smart-ai-companion.local:8000/static/img/figma/home-DeviceIcon.svg"
+    },
+    {
+      "route": "/settings/",
+      "status": 200,
+      "url": "http://smart-ai-companion.local:8000/static/img/figma/home-DeviceIcon.svg"
+    },
+    {
+      "route": "/studio/",
+      "status": 200,
+      "url": "http://smart-ai-companion.local:8000/static/img/figma/home-DeviceIcon.svg"
+    },
+    {
+      "route": "/studio/",
+      "status": 200,
+      "url": "http://smart-ai-companion.local:8000/static/img/figma/home-DeviceIcon.svg"
+    }
+  ],
+  "direct": {
+    "status": 200,
+    "type": "image/svg+xml",
+    "body": "<svg preserveAspectRatio=\"none\" overflow=\"visible\" style=\"display: block;\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n<g id=\"Device "
+  }
+}

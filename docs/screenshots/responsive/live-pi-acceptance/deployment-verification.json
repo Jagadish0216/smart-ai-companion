@@ -1,0 +1,44 @@
+{
+  "localCommit": "3732d94a61147b310472c20d4991bea563279bb5",
+  "remoteGitCommit": null,
+  "remoteGitVerification": "SSH denied (publickey,password)",
+  "assets": [
+    {
+      "file": "static/css/style.css",
+      "status": 200,
+      "matchesCommit": true,
+      "servedHash": "b0a0ce4d4b55b5c6b37505fbdb7f7fe570b219f9623f7e31def184e67cafb144",
+      "committedHash": "b0a0ce4d4b55b5c6b37505fbdb7f7fe570b219f9623f7e31def184e67cafb144"
+    },
+    {
+      "file": "static/css/app-shell.css",
+      "status": 200,
+      "matchesCommit": true,
+      "servedHash": "afb8f648f50684e6d3dc0b867698d9f68dcee73f1b617c951612953bcf70ef34",
+      "committedHash": "afb8f648f50684e6d3dc0b867698d9f68dcee73f1b617c951612953bcf70ef34"
+    },
+    {
+      "file": "static/css/assistant.css",
+      "status": 200,
+      "matchesCommit": true,
+      "servedHash": "47883add19597b9c7927fb1a2f4dce09908ce2bc8bd1ada547b869ebb19a0639",
+      "committedHash": "47883add19597b9c7927fb1a2f4dce09908ce2bc8bd1ada547b869ebb19a0639"
+    },
+    {
+      "file": "static/css/dashboard.css",
+      "status": 200,
+      "matchesCommit": true,
+      "servedHash": "8dcfab541811c57c3f16ce31ea980ea92814a764269bf6db616ee592e511098a",
+      "committedHash": "8dcfab541811c57c3f16ce31ea980ea92814a764269bf6db616ee592e511098a"
+    },
+    {
+      "file": "static/js/app-shell.js",
+      "status": 200,
+      "matchesCommit": true,
+      "servedHash": "31d4bb952ae5e4d0325737aee823a5bdfcb59e6d1bcf565e56d094bdb3d51e17",
+      "committedHash": "31d4bb952ae5e4d0325737aee823a5bdfcb59e6d1bcf565e56d094bdb3d51e17"
+    }
+  ],
+  "userConfirmedDeployedCommit": "3732d94a61147b310472c20d4991bea563279bb5",
+  "userConfirmedBranch": "dashboard-premium-v1"
+}

@@ -1,0 +1,29 @@
+{
+  "failedAssets": [
+    {
+      "url": "http://smart-ai-companion.local:8000/static/img/figma/home-DeviceIcon.svg",
+      "failure": {
+        "errorText": "net::ERR_ABORTED"
+      }
+    },
+    {
+      "url": "http://smart-ai-companion.local:8000/static/img/figma/home-DeviceIcon.svg",
+      "failure": {
+        "errorText": "net::ERR_ABORTED"
+      }
+    },
+    {
+      "url": "http://smart-ai-companion.local:8000/static/img/figma/home-DeviceIcon.svg",
+      "failure": {
+        "errorText": "net::ERR_ABORTED"
+      }
+    },
+    {
+      "url": "http://smart-ai-companion.local:8000/static/img/figma/home-DeviceIcon.svg",
+      "failure": {
+        "errorText": "net::ERR_ABORTED"
+      }
+    }
+  ],
+  "pageErrors": []
+}
