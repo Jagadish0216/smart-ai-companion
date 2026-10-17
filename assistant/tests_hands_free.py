@@ -334,10 +334,16 @@ class HandsFreeVoiceCycleTests(SimpleTestCase):
         self.mocks["record_audio_hands_free"].side_effect = record
         self.mocks["get_stt_provider"].return_value.transcribe.return_value = "What is an ESP32?"
 
-        def speak(*args, on_playback_start, on_caption):
+        def speak(*args, on_playback_start, on_caption,
+                  on_stream_start=None, on_stream_metadata=None):
             self.assertEqual(self.states[-1], "THINKING")
+            self.display.set_query.assert_called_once_with("What is an ESP32?")
+            if on_stream_start is not None:
+                on_stream_start({"type": "start", "route": "local"})
             on_playback_start("An ESP32 is a microcontroller.")
             on_caption("An ESP32 is a microcontroller.")
+            if on_stream_metadata is not None:
+                on_stream_metadata({"type": "done", "route": "local"})
             return 42, {"resource_profile": "BALANCED"}
 
         self.mocks["speak_stream_response"].side_effect = speak

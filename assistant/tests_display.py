@@ -12,7 +12,7 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import SimpleTestCase, override_settings
 
-from assistant.display import DisplayState, NoOpDisplay, get_companion_display
+from assistant.display import DisplayMode, DisplayState, NoOpDisplay, get_companion_display
 from assistant.display.serial_display import SerialCompanionDisplay, WRITE_TIMEOUT_SECONDS
 from assistant.tests_voice_stream import FIRST_SENTENCE, SECOND_SENTENCE, THIRD_SENTENCE
 from scripts import voice_loop
@@ -40,6 +40,46 @@ class SerialDisplayTests(SimpleTestCase):
         display = SerialCompanionDisplay(port="/dev/serial/by-id/example", startup_delay_seconds=delay)
         self.addCleanup(display.close)
         return display
+
+    def test_query_commands_sanitize_and_bound_ascii(self):
+        display = self.controller()
+        for text, expected in (
+            ("What is AI?", b"QUERY What is AI?\n"),
+            ("  hello\t world ", b"QUERY hello world\n"),
+            ("hello\r\nSTATE ERROR\x00\x1b\x7f", b"QUERY hello STATE ERROR\n"),
+            ("caf\u00e9 \u2603", b"QUERY caf? ?\n"),
+            ("x" * 81, b"QUERY " + b"x" * 80 + b"\n"),
+            ("\r\n\x00", b"CLEAR QUERY\n"),
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(display.set_query(text))
+                self.connection.write.assert_called_with(expected)
+        self.assertTrue(display.clear_query())
+        self.connection.write.assert_called_with(b"CLEAR QUERY\n")
+
+    def test_mode_validation_and_clear(self):
+        display = self.controller()
+        for mode in DisplayMode:
+            self.assertTrue(display.set_mode(mode))
+            self.connection.write.assert_called_with(("MODE " + mode.value + "\n").encode("ascii"))
+            self.assertTrue(display.set_mode(mode.value))
+        for invalid in ("local", "LOCAL_RAG", "LOCAL\nSTATE ERROR", "", None):
+            self.connection.write.reset_mock()
+            with self.assertRaises(ValueError):
+                display.set_mode(invalid)
+            self.connection.write.assert_not_called()
+        self.assertTrue(display.clear_mode())
+        self.connection.write.assert_called_with(b"CLEAR MODE\n")
+
+    def test_new_commands_are_noop_or_best_effort_when_disconnected(self):
+        display = self.controller()
+        self.connection.write.side_effect = OSError("disconnected")
+        noop = NoOpDisplay()
+        for provider in (display, noop):
+            self.assertFalse(provider.set_query("hello"))
+            self.assertFalse(provider.clear_query())
+            self.assertFalse(provider.set_mode(DisplayMode.WEB))
+            self.assertFalse(provider.clear_mode())
 
     @override_settings(COMPANION_DISPLAY_ENABLED=False)
     def test_disabled_factory_noop_never_opens_hardware(self):
@@ -508,6 +548,182 @@ class DisplayVoiceLifecycleTests(SimpleTestCase):
     def test_capture_vad_is_listening_before_recording(self):
         self.cycle(capture_vad_enabled=True)
         self.assertEqual(self.events[:2], ["LISTENING", "record_vad"])
+
+    def test_validated_query_follows_thinking(self):
+        self.display.set_query.side_effect = lambda text: self.events.append("QUERY:" + text)
+        self.cycle()
+        self.assertLess(self.events.index("stt"), self.events.index("QUERY:Explain local AI."))
+        self.assertLess(self.events.index("THINKING"), self.events.index("QUERY:Explain local AI."))
+        self.display.set_query.reset_mock()
+        self.stt.transcribe.side_effect = lambda *args: "[BLANK_AUDIO]"
+        with self.assertRaises(voice_loop.VoiceLoopError):
+            self.cycle()
+        self.display.set_query.assert_not_called()
+
+    def test_stream_routes_update_mode_before_speech(self):
+        for route, mode in (("local", DisplayMode.LOCAL), ("local_rag", DisplayMode.KNOWLEDGE),
+                            ("online", DisplayMode.WEB), ("action", None),
+                            ("clarification", None), (None, None), ("unknown", None)):
+            with self.subTest(route=route):
+                self.events.clear()
+                self.display.set_mode.reset_mock()
+                self.display.clear_mode.reset_mock()
+                self.display.set_mode.side_effect = lambda mode: self.events.append("MODE:" + mode.value)
+                def generate(*args, **kwargs):
+                    yield {"type": "start", "route": route}
+                    yield {"type": "delta", "text": FIRST_SENTENCE}
+                    yield {"type": "done", "response": FIRST_SENTENCE, "conversation_id": 42}
+                self.mocks["AssistantService.process_message_stream"].side_effect = generate
+                self.assertEqual(self.cycle(), 42)
+                if mode is None:
+                    self.display.clear_mode.assert_called_once()
+                else:
+                    self.display.set_mode.assert_called_once_with(mode)
+                    self.assertLess(self.events.index("MODE:" + mode.value), self.events.index("SPEAKING"))
+                self.assertEqual(self.events[-1], "READY")
+                self.display.set_text.assert_called()
+
+    def test_direct_uses_only_final_route_and_callback_failures(self):
+        def generate(*args, **kwargs):
+            yield {"type": "start", "direct": True}
+            yield {"type": "delta", "text": FIRST_SENTENCE}
+            yield {"type": "done", "response": FIRST_SENTENCE, "route": "online", "conversation_id": 42}
+        self.mocks["AssistantService.process_message_stream"].side_effect = generate
+        self.assertEqual(self.cycle(), 42)
+        self.assertEqual(self.display.set_mode.call_args_list, [call(DisplayMode.WEB)])
+        self.display.set_query.side_effect = RuntimeError("private query")
+        self.display.set_mode.side_effect = RuntimeError("private mode")
+        with self.assertLogs("scripts.voice_loop", level="WARNING") as logs:
+            self.assertEqual(self.cycle(), 42)
+        self.assertNotIn("private", str(logs.output))
+
+    def serial_interaction_probe(self):
+        """Observe real encoded writes with companion_face.cpp setState semantics.
+
+        Every STATE resets status text; states outside THINKING/SPEAKING also
+        clear query/mode. Snapshot after every write to check persistence.
+        """
+        commands, snapshots = [], []
+        state, query, mode, text = "READY", "", None, ""
+
+        def write(payload):
+            nonlocal state, query, mode, text
+            command = payload.decode("ascii").removesuffix("\n")
+            commands.append(command)
+            if command.startswith("STATE "):
+                state = command[6:]
+                text = ""
+                if state not in ("THINKING", "SPEAKING"):
+                    query, mode = "", None
+            elif command.startswith("QUERY "):
+                query = command[6:]
+            elif command == "CLEAR QUERY":
+                query = ""
+            elif command.startswith("MODE "):
+                mode = command[5:]
+            elif command == "CLEAR MODE":
+                mode = None
+            elif command.startswith("TEXT "):
+                text = command[5:]
+            snapshots.append((command, state, query, mode, text))
+            return len(payload)
+
+        serial_patch = patch("assistant.display.serial_display.serial")
+        serial = serial_patch.start()
+        self.addCleanup(serial_patch.stop)
+        serial.Serial.return_value.write.side_effect = write
+        display = SerialCompanionDisplay(port="test-uart", startup_delay_seconds=0)
+        self.addCleanup(display.close)
+        return display, commands, snapshots
+
+    def test_serial_query_lifecycle_for_normal_text_and_hands_free(self):
+        answer = "A useful answer."
+        for source in ("normal", "text", "hands_free"):
+            with self.subTest(source=source):
+                display, commands, snapshots = self.serial_interaction_probe()
+                self.mocks["AssistantService.process_message_stream"].side_effect = lambda *a, **k: [
+                    {"type": "start", "route": "local"},
+                    {"type": "delta", "text": answer},
+                    {"type": "done", "response": answer, "conversation_id": 42},
+                ]
+                def capture(*args, on_capture_ready, **kwargs):
+                    on_capture_ready()
+                with patch("scripts.voice_loop.record_audio_hands_free", side_effect=capture):
+                    kwargs = ({"text": "Explain local AI."} if source == "text" else
+                              {"hands_free_capture": voice_loop.HandsFreeCaptureConfig()} if source == "hands_free" else {})
+                    self.assertEqual(voice_loop.run_voice_cycle(
+                        voice_loop.VoiceLoopConfig("source"), display=display, **kwargs), 42)
+                expected = ([] if source == "text" else ["STATE LISTENING"]) + [
+                    "STATE THINKING", "QUERY Explain local AI.", "MODE LOCAL",
+                    "STATE SPEAKING", "TEXT " + answer, "STATE READY",
+                ]
+                self.assertEqual(commands, expected)
+                # Stored QUERY survives both the SPEAKING transition and captions.
+                for command, state, query, mode, text in snapshots:
+                    if command in ("MODE LOCAL", "STATE SPEAKING", "TEXT " + answer):
+                        self.assertEqual(query, "Explain local AI.")
+                        self.assertEqual(mode, "LOCAL")
+                self.assertEqual(snapshots[-1][2:4], ("", None))
+
+    def test_serial_route_labels_only_represent_supported_routes(self):
+        for route, mode in (("local", "LOCAL"), ("local_rag", "KNOWLEDGE"),
+                            ("online", "WEB"), ("action", None), ("clarification", None),
+                            ("ACTION", None), ("CLARIFICATION", None), (None, None), ("unknown", None)):
+            with self.subTest(route=route):
+                display, commands, snapshots = self.serial_interaction_probe()
+                def generate(*args, **kwargs):
+                    yield {"type": "start", "route": route}
+                    yield {"type": "delta", "text": "Answer."}
+                    yield {"type": "done", "response": "Answer.", "conversation_id": 42}
+                self.mocks["AssistantService.process_message_stream"].side_effect = generate
+                self.assertEqual(voice_loop.run_voice_cycle(
+                    voice_loop.VoiceLoopConfig("source"), text="Question?", display=display), 42)
+                expected = "MODE " + mode if mode else "CLEAR MODE"
+                self.assertEqual(commands[2], expected)
+                self.assertEqual([c for c in commands if c.startswith("MODE ")], [expected] if mode else [])
+                self.assertEqual(next(s[3] for s in snapshots if s[0] == "STATE SPEAKING"), mode)
+
+    def test_direct_serial_plays_without_speculative_mode_then_uses_completion_route(self):
+        answer = FIRST_SENTENCE + " " + SECOND_SENTENCE
+        for route, mode in (("online", "WEB"), ("local_rag", "KNOWLEDGE"),
+                            ("action", None), ("clarification", None), ("unknown", None), (None, None)):
+            with self.subTest(route=route):
+                display, commands, snapshots = self.serial_interaction_probe()
+                played = Event()
+                self.mocks["play_audio"].side_effect = lambda *a, **k: played.set()
+                def generate(*args, **kwargs):
+                    yield {"type": "start", "direct": True}
+                    yield {"type": "delta", "text": answer}
+                    self.assertTrue(played.wait(2), "Speech must not wait for route metadata")
+                    self.assertFalse(any(c.startswith("MODE ") for c in commands))
+                    event = {"type": "done", "response": answer, "conversation_id": 42}
+                    if route is not None:
+                        event["route"] = route
+                    yield event
+                self.mocks["AssistantService.process_message_stream"].side_effect = generate
+                self.assertEqual(voice_loop.run_voice_cycle(
+                    voice_loop.VoiceLoopConfig("source"), text="Question?", display=display), 42)
+                self.assertEqual([c for c in commands if c.startswith("MODE ")], ["MODE " + mode] if mode else [])
+                if mode:
+                    self.assertGreater(commands.index("MODE " + mode), commands.index("STATE SPEAKING"))
+
+    def test_clear_mode_failure_is_nonfatal(self):
+        self.display.clear_mode.side_effect = OSError("private mode details")
+        with self.assertLogs("scripts.voice_loop", level="WARNING") as logs:
+            self.assertEqual(self.cycle(), 42)
+        self.assertNotIn("private", str(logs.output))
+
+    def test_stream_callbacks_are_isolated_even_if_helper_raises(self):
+        def generate(*args, **kwargs):
+            yield {"type": "start", "route": "local"}
+            yield {"type": "delta", "text": FIRST_SENTENCE}
+            yield {"type": "done", "response": FIRST_SENTENCE, "route": "local", "conversation_id": 42}
+        self.mocks["AssistantService.process_message_stream"].side_effect = generate
+        with patch("scripts.voice_loop._set_display_route", side_effect=OSError("private")) as callback:
+            with self.assertLogs("scripts.voice_loop", level="WARNING"):
+                self.assertEqual(self.cycle(), 42)
+        self.assertEqual(callback.call_count, 2)
+        self.assertEqual(self.events[-1], "READY")
 
     def test_exact_resource_profile_mapping(self):
         for profile, expected in (("ECO", "ECO"), ("PROTECTIVE", "PROTECTIVE"),

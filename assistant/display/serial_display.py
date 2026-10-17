@@ -9,12 +9,13 @@ try:
 except ImportError:  # Disabled development environments need no serial package.
     serial = None
 
-from .base import CompanionDisplay, DisplayState
+from .base import CompanionDisplay, DisplayMode, DisplayState
 
 logger = logging.getLogger(__name__)
 WRITE_TIMEOUT_SECONDS = 0.05
 RECONNECT_INTERVAL_SECONDS = 5.0
 MAX_TEXT_CHARS = 40  # Existing firmware status-text limit.
+MAX_QUERY_CHARS = 80  # ASCII characters are one byte each.
 
 
 class SerialCompanionDisplay(CompanionDisplay):
@@ -103,6 +104,22 @@ class SerialCompanionDisplay(CompanionDisplay):
 
     def clear_text(self):
         return self._send("CLEAR TEXT")
+
+    def set_query(self, text):
+        # Keep recognized input on one protocol line, within the firmware buffer.
+        ascii_text = str(text).encode("ascii", errors="replace").decode("ascii")
+        clean = "".join(character if 32 <= ord(character) <= 126 else " " for character in ascii_text)
+        clean = " ".join(clean.split())[:MAX_QUERY_CHARS].strip()
+        return self._send("QUERY " + clean) if clean else self.clear_query()
+
+    def clear_query(self):
+        return self._send("CLEAR QUERY")
+
+    def set_mode(self, mode):
+        return self._send("MODE " + DisplayMode(mode).value)
+
+    def clear_mode(self):
+        return self._send("CLEAR MODE")
 
     def close(self):
         with self._lock:

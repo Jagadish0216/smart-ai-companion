@@ -5,6 +5,10 @@ subtitle/context band. Dark pupils and white highlights retain the visual
 identity. Eyelids, eased gaze, mouth, and restrained color give each state its
 personality.
 
+Raspberry Pi QUERY/MODE integration is implemented: validated transcripts supply
+QUERY, and service routes supply LOCAL, KNOWLEDGE, or WEB during streaming.
+Physical acceptance of this Pi integration remains pending.
+
 Existing Raspberry Pi STATE/TEXT captions and V2 LEVEL/QUERY/MODE command
 semantics remain supported. **Actual Pi microphone/playback LEVEL integration
 is not implemented here.** LEVEL remains manually testable over serial and

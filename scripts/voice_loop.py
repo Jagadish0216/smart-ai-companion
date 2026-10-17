@@ -37,7 +37,7 @@ django.setup()
 from django.conf import settings  # noqa: E402
 
 from assistant.services import AssistantService  # noqa: E402
-from assistant.display import DisplayState, get_companion_display  # noqa: E402
+from assistant.display import DisplayMode, DisplayState, get_companion_display  # noqa: E402
 from assistant.policy import AssistantResponsePolicy  # noqa: E402
 from assistant.execution_policy import CONSTRAINED_RESOURCE_STATUS, REDUCED_RESOURCE_STATUS  # noqa: E402
 from assistant.voice.factory import close_tts_provider, get_stt_provider, get_tts_provider  # noqa: E402
@@ -66,6 +66,32 @@ def _set_display_state(display, state):
             display.set_state(state)
         except Exception:
             logger.warning("Companion display update failed; voice interaction continues")
+
+
+def route_to_display_mode(route):
+    """Translate existing service metadata without routing again."""
+    return {"local": DisplayMode.LOCAL, "local_rag": DisplayMode.KNOWLEDGE,
+            "online": DisplayMode.WEB}.get(route) if isinstance(route, str) else None
+
+
+def _set_display_query(display, text):
+    if display is not None:
+        try:
+            display.set_query(text)
+        except Exception:
+            logger.warning("Companion display query update failed; voice interaction continues")
+
+
+def _set_display_route(display, event):
+    if display is not None:
+        try:
+            mode = route_to_display_mode(event.get("route"))
+            if mode is None:
+                display.clear_mode()
+            else:
+                display.set_mode(mode)
+        except Exception:
+            logger.warning("Companion display mode update failed; voice interaction continues")
 
 
 def _set_display_text(display, text):
@@ -979,7 +1005,9 @@ def split_caption_pages(text):
 
 def speak_stream_response(events, tts_provider, temp_path, config, timings, cycle_started,
                           on_playback_start: Callable[[str], None] | None = None,
-                          on_caption: Callable[[str], None] | None = None):
+                          on_caption: Callable[[str], None] | None = None,
+                          on_stream_start: Callable[[dict], None] | None = None,
+                          on_stream_metadata: Callable[[dict], None] | None = None):
     """Service producer -> bounded text -> one preparer -> bounded audio -> one player."""
     pending = Queue(maxsize=2)
     ready_audio = Queue(maxsize=2)
@@ -1222,6 +1250,11 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                 if start is not None:
                     raise VoiceLoopError("AI response failed: duplicate stream start.")
                 start = event
+                if on_stream_start is not None:
+                    try:
+                        on_stream_start(event)
+                    except Exception:
+                        logger.warning("Companion display stream update failed; audio continues")
             elif kind == "delta":
                 text = event.get("text", "")
                 if not isinstance(text, str):
@@ -1232,6 +1265,11 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                 present(text)
             elif kind == "done":
                 done = event
+                if on_stream_metadata is not None and "route" in event:
+                    try:
+                        on_stream_metadata(event)
+                    except Exception:
+                        logger.warning("Companion display metadata update failed; audio continues")
                 if event.get("response") != "".join(canonical_parts):
                     raise VoiceLoopError("AI response failed: stream text did not match its final response.")
                 timings["ai_total"] = time.perf_counter() - stream_started
@@ -1576,6 +1614,9 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
 
         if not hands_free_request:
             _set_display_state(display, DisplayState.THINKING)
+        # Hands-free already entered THINKING after capture. Supply validated
+        # input after the state transition, without resetting that state again.
+        _set_display_query(display, transcript)
 
         def on_playback_start(first_speech_text):
             _set_display_state(display, DisplayState.SPEAKING)
@@ -1588,6 +1629,8 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
                 events, get_tts_provider(), temp_path, config, timings, cycle_started,
                 on_playback_start=on_playback_start,
                 on_caption=lambda page: _set_display_text(display, page),
+                on_stream_start=lambda event: _set_display_route(display, event),
+                on_stream_metadata=lambda event: _set_display_route(display, event),
             )
         except VoiceLoopError:
             raise

@@ -16,6 +16,12 @@ class DisplayState(str, Enum):
     ERROR = "ERROR"
 
 
+class DisplayMode(str, Enum):
+    LOCAL = "LOCAL"
+    KNOWLEDGE = "KNOWLEDGE"
+    WEB = "WEB"
+
+
 class CompanionDisplay(ABC):
     enabled = True
 
@@ -30,6 +36,19 @@ class CompanionDisplay(ABC):
     @abstractmethod
     def clear_text(self) -> bool:
         """Clear the status label."""
+
+    def set_query(self, text: str) -> bool:
+        """Set recognized input, if supported by this display provider."""
+        return False
+
+    def clear_query(self) -> bool:
+        return False
+
+    def set_mode(self, mode: DisplayMode) -> bool:
+        return False
+
+    def clear_mode(self) -> bool:
+        return False
 
     @abstractmethod
     def close(self) -> None:
@@ -50,6 +69,18 @@ class NoOpDisplay(CompanionDisplay):
         return False
 
     def clear_text(self):
+        return False
+
+    def set_query(self, text):
+        return False
+
+    def clear_query(self):
+        return False
+
+    def set_mode(self, mode):
+        return False
+
+    def clear_mode(self):
         return False
 
     def close(self):
