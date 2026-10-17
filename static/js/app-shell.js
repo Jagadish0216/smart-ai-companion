@@ -12,9 +12,11 @@
  if (desktopPrefix==='more') document.querySelector('.rail-link:last-child').classList.add('active');
  const menu = document.getElementById('more-menu');
  menu.addEventListener('click', e => { if(e.target === menu && (e.clientX < menu.getBoundingClientRect().left || e.clientX > menu.getBoundingClientRect().right || e.clientY < menu.getBoundingClientRect().top || e.clientY > menu.getBoundingClientRect().bottom)) menu.close(); });
+ // CSS subtracts the navigation once. VisualViewport supplies only the available height.
  if (window.visualViewport && page === 'assistant') {
-   const update = () => { document.documentElement.style.setProperty('--visual-height', `${visualViewport.height}px`); document.body.classList.toggle('keyboard-open', visualViewport.height < window.innerHeight * .78); };
-   visualViewport.addEventListener('resize', update); update();
+   const updateHeight = () => document.documentElement.style.setProperty('--visual-height', `${window.visualViewport.height}px`);
+   window.visualViewport.addEventListener('resize', updateHeight);
+   updateHeight();
  }
  // Keep the backend's network state distinct from inference readiness.
  const net = document.getElementById('global-internet-status');

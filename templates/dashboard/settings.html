@@ -53,7 +53,7 @@
             <div class="settings-section-title">Configuration</div>
             <div class="card">
                 {% if settings %}
-                <table class="data-table">
+                <div class="table-scroll" role="region" aria-label="Configuration entries" tabindex="0"><table class="data-table">
                     <thead>
                         <tr>
                             <th>Key</th>
@@ -72,7 +72,7 @@
                         </tr>
                         {% endfor %}
                     </tbody>
-                </table>
+                </table></div>
                 <p class="text-sm text-secondary mt-4">Configuration is read-only here.</p>
                 {% else %}
                 <div class="empty-state">

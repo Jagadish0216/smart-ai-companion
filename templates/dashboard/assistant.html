@@ -37,18 +37,10 @@
     </div>
     <!-- Center: Main Conversation -->
     <div class="chat-main">
-        <!-- Top header of main chat -->
-        <div class="chat-main-header">
-            <div style="display:flex; align-items:center; gap:var(--sp-2);">
-                <button class="btn btn-icon" onclick="openSidebar()" title="App Menu" style="border:1px solid var(--border); background:var(--bg-surface-elevated);">
-                    <i data-lucide="menu"></i>
-                </button>
-                <button class="btn btn-icon" onclick="toggleChatHistory()" id="history-trigger" aria-label="Conversation history" aria-expanded="false" title="History" style="border:1px solid var(--border); background:var(--bg-surface-elevated);">
-                    <span>History ↗</span>
-                </button>
-            </div>
+        <header class="chat-main-header">
+            <div class="assistant-product-row">
+                <div class="assistant-identity"><span class="font-display">Smart AI Companion</span><span class="assistant-section">Assistant</span></div>
             <div class="model-info">
-                <span class="font-display" style="font-weight:600; font-size:1.1rem;">Smart AI Companion</span>
                 {% if global_ai_engine|upper != 'LOCAL' %}
                 <div class="status-pill simulated" style="transform: scale(0.85); transform-origin: left center;">
                     <span class="status-dot"></span>
@@ -71,18 +63,22 @@
                     <span id="global-internet-label">{{ global_internet_label }}</span>
                 </div>
             </div>
-            <!-- Compact Smart AI Companion -->
+            </div>
+            <div class="assistant-tools">
             <div class="compact-companion" id="companion-visual" style="border:none; background:transparent; gap:var(--sp-2); padding:0;">
                 {% include 'components/presence.html' with presence_class='presence-mini' %}
                 <span role="status" aria-live="polite" id="voice-status" style="font-size:0.75rem; font-weight:700; color:var(--text-secondary); letter-spacing:0.05em; text-transform:uppercase;">IDLE</span>
             </div>
-        </div>
+                <button id="jump-latest" class="btn jump-latest" aria-label="Jump to latest" hidden><span class="jump-label">Jump to latest</span><span class="jump-short">Latest</span> ↓</button>
+                <button class="btn btn-icon" onclick="toggleChatHistory()" id="history-trigger" aria-label="Conversation history" aria-expanded="false" aria-controls="chat-history-sidebar">History ↗</button>
+            </div>
+        </header>
         <div id="assistant-empty" class="assistant-empty">{% include 'components/presence.html' with presence_class='presence-assistant' contour='img/figma/2-194-QuietSignalContour.svg' %}<h1>What’s on your mind?</h1><p>A thought, a question, or somewhere to begin.</p></div>
 <div class="chat-viewport" id="chat-history" aria-label="Conversation">
             <!-- Messages injected here -->
         </div>
         <!-- Bottom: Message Composer -->
-        <button id="jump-latest" class="btn jump-latest" hidden>Jump to latest ↓</button><div class="chat-input-wrapper">
+        <div class="chat-input-wrapper">
             <div class="chat-composer-box">
                 <textarea id="chat-input" rows="2" placeholder="Message your companion…" aria-label="Message your companion" autocomplete="off"></textarea>
                 <div class="composer-actions"><span class="composer-engine">{{ global_ai_engine|upper }} AI</span><button id="interrupt-response" class="btn" hidden>Interrupt ■</button>
@@ -142,6 +138,13 @@
         jumpLatest.hidden = followStream;
     }, {passive: true});
     jumpLatest.addEventListener('click', () => { followStream = true; followLatest(); jumpLatest.hidden = true; });
+    // Keep the latest message reachable after viewport/keyboard changes and final text formatting.
+    if (window.ResizeObserver) {
+        const scrollLayout = new ResizeObserver(() => { if (followStream) requestAnimationFrame(followLatest); });
+        scrollLayout.observe(chatHistory);
+        scrollLayout.observe(document.querySelector('.chat-input-wrapper'));
+    }
+
     interruptButton.addEventListener('click', () => { interrupted = true; if (activeController) activeController.abort();
         if (activeAudio) { activeAudio.pause(); activeAudio = null; interruptButton.hidden = true; setVoiceState('IDLE'); } });
     // Initialization
@@ -413,6 +416,7 @@
                         }
                         window.AssistantUI.renderText(aiBubble, accumulated);
                         window.AssistantUI.renderSources(aiBubble.parentElement, event);
+                        followLatest();
                         updateSidebar(event);
                         setVoiceState('IDLE');
                     } else if (event.type === 'error') {
@@ -427,7 +431,7 @@
                 if (finalEvent.type === 'error') {
                     throw new Error(finalEvent.detail || 'Stream error.');
                 }
-                if (finalEvent.type === 'done') { streamCompleted = true; if (typeof finalEvent.response === 'string') { accumulated = finalEvent.response; window.AssistantUI.renderText(aiBubble, accumulated); } window.AssistantUI.renderSources(aiBubble.parentElement, finalEvent); updateSidebar(finalEvent); }
+                if (finalEvent.type === 'done') { streamCompleted = true; if (typeof finalEvent.response === 'string') { accumulated = finalEvent.response; window.AssistantUI.renderText(aiBubble, accumulated); } window.AssistantUI.renderSources(aiBubble.parentElement, finalEvent); followLatest(); updateSidebar(finalEvent); }
             }
             if (!streamCompleted) {
                 throw new Error('The AI connection ended before completion.');

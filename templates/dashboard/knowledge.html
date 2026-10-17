@@ -3,8 +3,7 @@
 {% block page_title %}Memory{% endblock %}
 {% block page_heading %}Memory{% endblock %}
 {% block content %}
-<div class="memory-toolbar"><div class="page-header"><h2 class="page-header-title">Memory Library</h2><p class="page-header-desc">Files your companion can use when answering.</p></div></div>
-<div class="memory-summary"><span><b id="knowledge-total">{{ documents|length }}</b> files</span><span><b id="knowledge-indexed">{{ indexed_count }}</b> ready</span><span><b id="knowledge-pending">{{ pending_count }}</b> queued</span></div>
+<div class="memory-toolbar"><div class="page-header"><h2 class="page-header-title">Memory Library</h2><p class="page-header-desc">Files your companion can use when answering.</p></div>
 <div class="memory-upload" id="knowledge-drop-zone" data-can-manage="{{ request.user.is_staff|yesno:'true,false' }}">
     {% if request.user.is_staff %}
     <div class="flex items-center gap-2">
@@ -21,6 +20,8 @@
     {% endif %}
     <div id="knowledge-operation-status" role="status" aria-live="polite" class="text-sm text-muted mt-3"></div>
 </div>
+</div>
+<div class="memory-summary"><span><b id="knowledge-total">{{ documents|length }}</b> files</span><span><b id="knowledge-indexed">{{ indexed_count }}</b> ready</span><span><b id="knowledge-pending">{{ pending_count }}</b> queued</span></div>
 <div class="memory-layout"><section class="memory-list" aria-label="Documents">
 <input id="memory-search" class="memory-search" type="search" placeholder="Search your library" aria-label="Search your library">
 <div class="memory-filters"><button data-filter="ALL" aria-pressed="true">All files</button><button data-filter="INDEXED" aria-pressed="false">Ready</button><button data-filter="ERROR" aria-pressed="false">Needs attention</button><button id="knowledge-refresh">Refresh</button></div>
