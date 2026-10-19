@@ -1,7 +1,9 @@
 # Offline model selection and short Pi validation
 
-The existing harness now also has an explicitly requested two-request
-[`--cold-warm` procedure](warm-llm-benchmark.md). Use that procedure to measure
+The existing harness also has explicit two-request
+[`--cold-warm` and `--warm-distinct` procedures](warm-llm-benchmark.md). Use the
+distinct mode for new questions with quantified prefix caching, and the original
+paired mode for strict identical-question diagnostics. Both measure
 resident Llama latency independently of cold initialization. The single-request
 workflow below remains available; neither workflow changes production defaults.
 

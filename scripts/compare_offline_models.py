@@ -61,6 +61,30 @@ FIXTURES = {
 }
 
 
+def distinct_fixture(fixture, phase):
+    """Exactly two controlled questions; context comes only from the actual cold turn."""
+    if phase == "cold":
+        return {
+            "followup": ("In at most 25 words, explain what an SSD stores.", "An SSD stores persistent files/data."),
+            "memory": ("Remember our project codename is Amber Finch. Briefly confirm.", "Acknowledge Amber Finch without inventing project details."),
+        }.get(fixture, FIXTURES["fact"])
+    return {
+        "fact": ("In at most 25 words, which planet is called the Red Planet?", "Mars; no invented explanation."),
+        "followup": ("What about its data when power is off?", "Resolve SSD from the real preceding turn; its data persists without power."),
+        "memory": ("Recall project codename.", "Retrieve Amber Finch from the actual cold user statement, with no fabricated extra history."),
+    }.get(fixture, FIXTURES[fixture])
+
+
+def prompt_accounting(metrics):
+    total, cached = metrics.get("prompt_eval_count"), metrics.get("prompt_eval_cached_count")
+    known = type(total) is int and total > 0 and type(cached) is int and 0 <= cached <= total
+    return {"total_tokens_reported": total, "cached_tokens_reported": cached,
+            "uncached_tokens_derived": total - cached if known else None,
+            "cache_fraction": round(cached / total, 6) if known else None,
+            "accounting_known": known,
+            "definition": "Uncached is total minus cached, assuming the installed backend reports prompt_eval_count as total prompt tokens; verify runtime counter semantics."}
+
+
 def sha(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
@@ -173,7 +197,7 @@ def verify_request_residency(resident, model, digest, phase=None):
             raise TrialRefused("warm_context_changed")
 
 
-def validate_cold_warm(samples):
+def validate_cold_warm(samples, *, distinct=False):
     if len(samples) != 2 or any(s.get("status") != "sample_complete_quality_pending" for s in samples):
         return "incomplete_cold_warm_pair"
     cold, warm = samples
@@ -182,9 +206,19 @@ def validate_cold_warm(samples):
     if cold.get("load", {}).get("label") != "cold" or warm.get("load", {}).get("label") != "warm":
         return "model_reloaded_or_load_unverified"
     a, b = cold.get("sample", {}), warm.get("sample", {})
-    if a.get("request") != b.get("request") or not a.get("request"):
+    if distinct:
+        if (not a.get("question") or not b.get("question") or a["question"] == b["question"]
+                or a.get("request", {}).get("message_sha256") == b.get("request", {}).get("message_sha256")):
+            return "warm_question_not_distinct"
+        if any(s.get("request", {}).get("user_sha256") != sha(s["question"]) for s in (a, b)):
+            return "question_payload_mismatch"
+        for key in ("options", "model", "think", "keep_alive"):
+            if key not in a.get("request", {}) or a["request"][key] != b.get("request", {}).get(key):
+                return "unequal_distinct_request_controls"
+    elif a.get("request") != b.get("request") or not a.get("request"):
         return "unequal_cold_warm_request"
-    for key in ("num_predict", "route", "resource_profile", "rag_used", "memory_used", "recent_history_used"):
+    policy_keys = ("num_predict", "resource_profile") if distinct else ("num_predict", "route", "resource_profile", "rag_used", "memory_used", "recent_history_used")
+    for key in policy_keys:
         if key not in a or key not in b or a[key] != b[key]:
             return "unequal_cold_warm_policy"
     for sample in (a, b):
@@ -205,9 +239,17 @@ def validate_cold_warm(samples):
         cached = metrics.get("prompt_eval_cached_count")
         if type(cached) is not int or cached < 0:
             return "prompt_cache_unverified"
-        if cached:
+        if distinct and not prompt_accounting(metrics)["accounting_known"]:
+            return "invalid_prompt_cache_accounting"
+        if cached and not distinct:
             return "prompt_cache_reuse"
-    if a["metrics"]["prompt_eval_count"] != b["metrics"]["prompt_eval_count"]:
+    if distinct:
+        if prompt_accounting(b["metrics"])["uncached_tokens_derived"] <= 0:
+            return "no_new_prompt_work"
+        app_first = b.get("application_first_meaningful_text_ms")
+        if type(app_first) not in (int, float) or not 0 <= app_first < float("inf"):
+            return "application_timing_missing"
+    elif a["metrics"]["prompt_eval_count"] != b["metrics"]["prompt_eval_count"]:
         return "evaluated_prompt_work_changed"
     return None
 
@@ -283,10 +325,18 @@ def child(args):
         KnowledgeChunk.objects.create(document=doc, chunk_index=0,
                                      content="The Lumen board uses 3.3 volts. Do not connect it directly to a 5 volt signal.")
         conversation = Conversation.objects.create(title="Synthetic offline comparison")
-        if args.fixture == "followup":
+        distinct = getattr(args, "warm_distinct", False)
+        previous_turn = getattr(args, "previous_turn", None)
+        if distinct and previous_turn:
+            turn = json.loads(Path(previous_turn).read_text(encoding="utf-8"))
+            if not all(isinstance(turn.get(k), str) and 0 < len(turn[k]) <= 8192 for k in ("question", "answer")):
+                raise TrialRefused("invalid_observed_history")
+            Message.objects.create(conversation=conversation, sender="USER", text=turn["question"])
+            Message.objects.create(conversation=conversation, sender="AI", text=turn["answer"])
+        if args.fixture == "followup" and not distinct:
             Message.objects.create(conversation=conversation, sender="USER", text="We are comparing RAM and an SSD.")
             Message.objects.create(conversation=conversation, sender="AI", text="RAM holds working data; an SSD stores files.")
-        if args.fixture == "memory":
+        if args.fixture == "memory" and not distinct:
             Message.objects.create(conversation=conversation, sender="USER", text="Our project codename is Amber Finch.")
             Message.objects.bulk_create([Message(conversation=conversation, sender="USER", text="Synthetic unrelated context.") for _ in range(6)])
         reset_engine()
@@ -297,10 +347,12 @@ def child(args):
 
         def build(*positional, **keyword):
             # Recheck immediately before inference, after migrations/policy work.
+            probe_started = time.perf_counter()
             installed = inventory(args.host)[args.model]
             digest = verify_identity(args.model, installed, args.verified_digest)
             verify_request_residency(metadata(args.host, "/api/ps").get("models", []), args.model, digest,
                                      getattr(args, "required_residency", None))
+            measured["identity_probe_ms"] = round((time.perf_counter() - probe_started) * 1000, 3)
             request = original(*positional, **keyword)
             payload = json.loads(request.data)
             # Retain the service's protective effective generation cap.
@@ -309,6 +361,8 @@ def child(args):
             payload["options"] = controls
             request.data = json.dumps(payload).encode()
             requests.append({"message_sha256": sha(payload["messages"]), "options": controls,
+                             "system_sha256": sha([m["content"] for m in payload["messages"] if m["role"] == "system"]),
+                             "user_sha256": sha(payload["messages"][-1]["content"]),
                              "model": payload["model"], "think": payload["think"], "keep_alive": payload["keep_alive"]})
             measured["request_started"] = time.perf_counter()
             return request
@@ -320,17 +374,19 @@ def child(args):
             for event in original_stream(*positional, **keyword):
                 if event.type == "delta" and any(char.isalnum() for char in event.text):
                     measured.setdefault("first_meaningful_text_ms", round((time.perf_counter() - measured["request_started"]) * 1000, 3))
+                    measured.setdefault("application_first_meaningful_text_ms", round((time.perf_counter() - measured["service_started"]) * 1000, 3))
                 yield event
 
         engine.generate_stream = stream
         # Disable HTTP proxies and redirects for inference, including localhost.
         urllib.request.install_opener(urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect()))
-        query = FIXTURES[args.fixture][0]
+        query, reference = distinct_fixture(args.fixture, args.required_residency) if distinct else FIXTURES[args.fixture]
         plan = replace(AssistantResponsePolicy.plan_voice_response(query), num_predict=48)
         plan = replace(plan, system_instruction=plan.system_instruction + " Answer in at most 25 words.")
-        if args.fixture == "followup":
+        if args.fixture == "followup" and not distinct:
             plan = replace(plan, recent_history_limit=2)
         started = time.perf_counter()
+        measured["service_started"] = started
         done = None
         for event in AssistantService.process_message_stream(query, conversation_id=conversation.pk, response_plan=plan):
             if event["type"] == "error":
@@ -340,21 +396,30 @@ def child(args):
         if (not done or done.get("engine") != "local" or len(requests) != 1
                 or done.get("model") != args.model or done.get("online_used")):
             raise RuntimeError("Not one local inference result")
-        if args.fixture == "rag" and not done.get("rag_used"):
+        warm_distinct = distinct and args.required_residency == "warm"
+        if args.fixture == "rag" and (not distinct or warm_distinct) and not done.get("rag_used"):
             raise RuntimeError("RAG fixture did not use retrieval")
-        if args.fixture == "memory" and not done.get("memory_used"):
+        if args.fixture == "memory" and (not distinct or warm_distinct) and not done.get("memory_used"):
             raise RuntimeError("Memory fixture did not use retrieval")
+        if warm_distinct and args.fixture == "followup" and not done.get("recent_history_used"):
+            raise TrialRefused("followup_history_not_used")
         metrics = done.get("ollama_metrics", {})
         if not metrics.get("eval_count") or not metrics.get("eval_duration_ms"):
             raise RuntimeError("Missing generated-token timing")
-        result = {"answer": done["response"][:8192], "request": requests[0],
+        total_s = time.perf_counter() - started
+        result = {"answer": done["response"] if distinct else done["response"][:8192], "question": query, "request": requests[0],
                   "first_meaningful_text_ms": measured.get("first_meaningful_text_ms"),
-                  "first_text_token_ms": done.get("ttft_ms"), "total_answer_s": time.perf_counter() - started,
+                  "application_first_meaningful_text_ms": measured.get("application_first_meaningful_text_ms"),
+                  "first_text_token_ms": done.get("ttft_ms"), "total_answer_s": total_s,
+                  "engine_stream_ms": done.get("generation_ms"),
+                  "benchmark_identity_probe_ms": measured.get("identity_probe_ms"),
+                  "application_outside_engine_ms": round(total_s * 1000 - done["generation_ms"], 3) if type(done.get("generation_ms")) in (int, float) else None,
+                  "prompt_cache": prompt_accounting(metrics),
                   "metrics": metrics, "num_predict": done.get("num_predict"),
                   "route": done.get("route"), "rag_used": done.get("rag_used"),
                   "memory_used": done.get("memory_used"), "recent_history_used": done.get("recent_history_used"),
                   "resource_profile": done.get("resource_profile"), "manual_quality": None,
-                  "correctness_review": {"reference": FIXTURES[args.fixture][1], "correct": None,
+                  "correctness_review": {"reference": reference, "correct": None, "complete": None,
                                          "note": "Human review required; no automatic factual-quality acceptance."}}
         Path(args.child_result).write_text(json.dumps(result, indent=2))
     finally:
@@ -396,6 +461,10 @@ def run_request(args, digest, report, phase=None):
             command += ["--verified-digest", digest]
             if phase:
                 command += ["--required-residency", phase]
+            if report.get("previous_turn"):
+                history_path = Path(temporary) / "observed-turn.json"
+                history_path.write_text(json.dumps(report["previous_turn"]), encoding="utf-8")
+                command += ["--previous-turn", str(history_path)]
             process = subprocess.Popen(command, cwd=ROOT, start_new_session=True,
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             try:
@@ -437,11 +506,20 @@ def run_request(args, digest, report, phase=None):
 
 
 def run_cold_warm(args, digest, report, save):
-    report.update(benchmark="cold_warm", valid=False, samples=[], status="incomplete_cold_warm",
+    distinct = getattr(args, "warm_distinct", False)
+    kind = "warm_distinct" if distinct else "cold_warm"
+    report.update(benchmark=kind, valid=False, samples=[], status="incomplete_" + kind,
                   uncached_warm_under_two_seconds=None, quality_accepted=False)
+    if distinct:
+        report["warm_distinct_under_two_seconds"] = None
+        report["unseen_scope"] = "Warm question differs from this invocation's cold question; no claim that the device has never encountered it before."
     for phase in ("cold", "warm"):
         phase_report = {"phase": phase, "status": "incomplete", "telemetry": [], "inventory": report["inventory"]}
         report["samples"].append(phase_report)
+        if distinct and phase == "warm" and args.fixture in ("followup", "memory"):
+            cold_sample = report["samples"][0]["sample"]
+            phase_report["previous_turn"] = {"question": cold_sample["question"], "answer": cold_sample["answer"]}
+            phase_report["history_provenance"] = "Only the actual cold question and generated answer; no invented user messages."
         save()  # A partial pair is never reported as a successful benchmark.
         try:
             resident = metadata(args.host, "/api/ps").get("models", [])
@@ -461,12 +539,19 @@ def run_cold_warm(args, digest, report, save):
             save()
             raise
         save()
-    reason = validate_cold_warm(report["samples"])
+    reason = validate_cold_warm(report["samples"], distinct=distinct)
     if reason:
         report["invalid_reason"] = reason
         report["cache_status"] = reason if reason.startswith("prompt_cache") else "not_accepted"
         raise TrialRefused(reason)
     warm = report["samples"][1]["sample"]
+    if distinct:
+        report.update(status="warm_distinct_complete_quality_pending", valid=True,
+                      cache_status="quantified_prefix_reuse_not_assumed_uncached",
+                      warm_distinct_under_two_seconds=warm["application_first_meaningful_text_ms"] < 2000,
+                      interpretation="One different question with quantified prefix caching; not proof of general conversation quality, zero-cache speed or physical speech latency.")
+        save()
+        return
     report.update(status="cold_warm_complete_quality_pending", valid=True,
                   cache_status="reported_zero_hits_and_equal_prompt_work",
                   uncached_warm_under_two_seconds=warm["first_meaningful_text_ms"] < 2000,
@@ -481,6 +566,7 @@ def main():
     mode.add_argument("--plan-only", action="store_true")
     mode.add_argument("--run", action="store_true")
     mode.add_argument("--cold-warm", action="store_true", help="Exactly two factual requests: empty-residency cold, then independently timed warm")
+    mode.add_argument("--warm-distinct", action="store_true", help="One cold initializer and one different warm question; quantify prefix-cache reuse")
     mode.add_argument("--compare", type=Path, nargs=2, metavar=("A_REPORT", "B_REPORT"))
     parser.add_argument("--host", default="http://127.0.0.1:11434")
     parser.add_argument("--model", choices=MODELS)
@@ -491,6 +577,7 @@ def main():
     parser.add_argument("--child-result", help=argparse.SUPPRESS)
     parser.add_argument("--verified-digest", help=argparse.SUPPRESS)
     parser.add_argument("--required-residency", choices=("cold", "warm"), help=argparse.SUPPRESS)
+    parser.add_argument("--previous-turn", help=argparse.SUPPRESS)
     args = parser.parse_args()
     args.host = local_host(args.host)
     if args.expected_digest and not re.fullmatch(r"(?:sha256:)?[a-f0-9]{12,64}", args.expected_digest):
@@ -498,7 +585,8 @@ def main():
     if args.child_dir:
         child(args)
         return
-    inference_mode = args.run or args.cold_warm
+    paired_mode = args.cold_warm or args.warm_distinct
+    inference_mode = args.run or paired_mode
     if args.cold_warm and args.fixture != "fact":
         parser.error("Cold/warm mode uses only the fixed factual question")
     if inference_mode and (not args.model or platform.system() != "Linux"):
@@ -514,8 +602,10 @@ def main():
               "tracked_diff_sha256": hashlib.sha256(subprocess.check_output(["git", "diff", "HEAD"], cwd=ROOT)).hexdigest(),
               "options": request_options(), "quality_accepted": False, "telemetry": []}
     output = args.output / "report.json"
-    if args.cold_warm:
-        report.update(benchmark="cold_warm", valid=False, samples=[], uncached_warm_under_two_seconds=None)
+    if paired_mode:
+        report.update(benchmark="warm_distinct" if args.warm_distinct else "cold_warm", valid=False, samples=[], uncached_warm_under_two_seconds=None)
+        if args.warm_distinct:
+            report["warm_distinct_under_two_seconds"] = None
     lock = None
     try:
         if inference_mode:
@@ -537,17 +627,21 @@ def main():
         report["expected_digest"] = args.expected_digest or CONFIRMED_PREFIXES.get(args.model)
         resident = metadata(args.host, "/api/ps").get("models", [])
         # No second resident LLM dependency. Do not evict another app's runner.
-        verify_request_residency(resident, args.model, digest, "cold" if args.cold_warm else None)
+        verify_request_residency(resident, args.model, digest, "cold" if paired_mode else None)
         report["resident_before"] = [{k: item.get(k) for k in ("name", "digest", "size", "size_vram", "context_length")} for item in resident]
-        if args.cold_warm:
+        if paired_mode:
             run_cold_warm(args, digest, report, lambda: output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8"))
         else:
             run_request(args, digest, report)
     except BaseException as error:
-        report["status"] = "invalid_cold_warm" if args.cold_warm else "aborted"
-        if args.cold_warm:
+        report["status"] = "incomplete_warm_distinct" if args.warm_distinct else ("invalid_cold_warm" if args.cold_warm else "aborted")
+        if paired_mode:
             report["valid"] = False
             report["uncached_warm_under_two_seconds"] = None
+            if args.warm_distinct:
+                report["warm_distinct_under_two_seconds"] = None
+                if report.get("invalid_reason"):
+                    report["status"] = "invalid_warm_distinct"
         report["error_type"] = type(error).__name__
         if isinstance(error, TrialRefused):
             report["abort_reason"] = error.reason
