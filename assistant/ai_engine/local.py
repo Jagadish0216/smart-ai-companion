@@ -169,6 +169,7 @@ class LocalLLMEngine(AIEngine):
 
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         metrics = self._log_performance_metrics(response_data)
+        metrics.update(self._prompt_metrics(messages))
 
         # Extract response text
         message = response_data.get("message", {})
@@ -275,6 +276,7 @@ class LocalLLMEngine(AIEngine):
         generation_ms = round((time.perf_counter() - request_started) * 1000)
         ttft_ms = round((first_content_at - request_started) * 1000)
         metrics = self._log_performance_metrics(final_payload)
+        metrics.update(self._prompt_metrics(messages))
         logger.info(
             "Ollama streaming request completed",
             extra={
@@ -343,9 +345,23 @@ class LocalLLMEngine(AIEngine):
 
         return messages
 
+    @staticmethod
+    def _prompt_metrics(messages: list[dict]) -> dict:
+        """Character counts are diagnostic sizes, never token estimates or text."""
+        return {
+            "input_messages": len(messages),
+            "input_chars": sum(len(message["content"]) for message in messages),
+            "system_chars": sum(len(message["content"]) for message in messages
+                                if message["role"] == "system"),
+        }
+
     def _log_performance_metrics(self, response_data: dict) -> dict:
         """Log Ollama token counts, timings, and throughput when available."""
         metrics = {}
+        # Do not pass arbitrary backend strings (which could contain text) to
+        # logs. Missing/unknown reasons remain absent rather than guessed.
+        if response_data.get("done_reason") in ("stop", "length", "load", "unload"):
+            metrics["done_reason"] = response_data["done_reason"]
 
         for count_field in ("prompt_eval_count", "prompt_eval_cached_count", "eval_count"):
             count = response_data.get(count_field)

@@ -1,0 +1,305 @@
+{
+  "commit": "f59da97d270ebe1157dac65e9862ec8ed77116cd",
+  "baseline_commit": "f59da97d270ebe1157dac65e9862ec8ed77116cd",
+  "platform": "Windows-10-10.0.26200-SP0",
+  "python": "3.10.2",
+  "started_utc": "2026-10-19T05:47:04.235688+00:00",
+  "mode": "offline synthetic",
+  "dependencies": {
+    "Django": "5.2.17",
+    "djangorestframework": "3.18.1",
+    "piper-tts": null,
+    "onnxruntime": null,
+    "numpy": "2.2.6",
+    "paho-mqtt": null,
+    "pyserial": null,
+    "openwakeword": null,
+    "pypdf": "6.19.0"
+  },
+  "errors": [],
+  "tracked_changes": [
+    "assistant/ai_engine/local.py",
+    "assistant/services.py",
+    "assistant/tests_voice.py",
+    "assistant/voice/tts.py",
+    "knowledge_base/retrieval.py"
+  ],
+  "stage": "complete",
+  "tests": {
+    "exit_code": 0,
+    "count": 1006,
+    "elapsed_seconds": 53.31,
+    "skipped": 1
+  },
+  "retrieval": {
+    "candidate_projection": {
+      "rows": 1000,
+      "equal_row_digest": true,
+      "repeats": 9,
+      "baseline_median_ms": 42.49,
+      "optimized_median_ms": 12.85,
+      "baseline_samples_ms": [
+        39.91109994240105,
+        42.489799903705716,
+        52.43659997358918,
+        48.481699894182384,
+        44.4188000401482,
+        47.5988999241963,
+        42.208699975162745,
+        38.5024999268353,
+        40.073600015603006
+      ],
+      "optimized_samples_ms": [
+        13.213200028985739,
+        9.951599990017712,
+        13.863899977877736,
+        16.622900031507015,
+        13.650199980475008,
+        12.012499966658652,
+        12.850300059653819,
+        12.362900073640049,
+        10.650299955159426
+      ],
+      "scope": "candidate projection only, not full RAG or voice latency"
+    },
+    "synthetic_rag": {
+      "median_ms": 51.432,
+      "samples_ms": [
+        51.805,
+        51.432,
+        52.003,
+        55.015,
+        47.67,
+        47.764,
+        48.277
+      ],
+      "matches": 2
+    },
+    "synthetic_memory": {
+      "median_ms": 8.536,
+      "samples_ms": [
+        10.071,
+        8.801,
+        8.536,
+        8.776,
+        8.221,
+        8.241,
+        8.193
+      ],
+      "matches": 2
+    }
+  },
+  "evidence_note": "Windows uncommitted feature working tree at accepted baseline HEAD; no Pi inference or physical hardware validation",
+  "baseline_tests": {
+    "count": 1002,
+    "elapsed_seconds": 34.15,
+    "exit_code": 0,
+    "skipped": 1
+  },
+  "focused_tests": {
+    "count": 77,
+    "elapsed_seconds": 1.069,
+    "exit_code": 0
+  },
+  "harness_checks": {
+    "isolated_cleanup": "passed",
+    "incorrect_expected_commit": "rejected with exit 2 before output creation",
+    "script_sha256": "f8e7e16381ba2f74c4c37cbba48c7e60ffa3dd0a65e9c64868b58cc6ee537552",
+    "final_script_offline_run_exit_code": 0
+  },
+  "finalization": {
+    "commit": "f59da97d270ebe1157dac65e9862ec8ed77116cd",
+    "baseline_commit": "f59da97d270ebe1157dac65e9862ec8ed77116cd",
+    "platform": "Windows-10-10.0.26200-SP0",
+    "python": "3.10.2",
+    "started_utc": "2026-10-19T06:27:43.755319+00:00",
+    "mode": "offline synthetic",
+    "dependencies": {
+      "Django": "5.2.17",
+      "djangorestframework": "3.18.1",
+      "piper-tts": null,
+      "onnxruntime": null,
+      "numpy": "2.2.6",
+      "paho-mqtt": null,
+      "pyserial": null,
+      "openwakeword": null,
+      "pypdf": "6.19.0"
+    },
+    "errors": [],
+    "tracked_changes": [
+      "assistant/ai_engine/local.py",
+      "assistant/services.py",
+      "assistant/tests_voice.py",
+      "assistant/voice/tts.py",
+      "knowledge_base/retrieval.py"
+    ],
+    "stage": "complete",
+    "tests": {
+      "exit_code": 0,
+      "count": 1010,
+      "elapsed_seconds": 38.525,
+      "passed": 1009,
+      "skipped": 1
+    },
+    "retrieval": {
+      "candidate_projection": {
+        "rows": 1000,
+        "equal_row_digest": true,
+        "repeats": 9,
+        "baseline_median_ms": 52.858,
+        "optimized_median_ms": 13.672,
+        "baseline_samples_ms": [
+          59.459100011736155,
+          67.2402000054717,
+          80.10770007967949,
+          41.3589000236243,
+          48.118699924089015,
+          63.24970000423491,
+          52.85810003988445,
+          49.17460004799068,
+          46.42319993581623
+        ],
+        "optimized_samples_ms": [
+          16.091099940240383,
+          18.10230000410229,
+          15.18960006069392,
+          11.83629990555346,
+          13.605000101961195,
+          15.191200072877109,
+          13.672199915163219,
+          12.03820004593581,
+          11.672700056806207
+        ],
+        "scope": "candidate projection only, not full RAG or voice latency"
+      },
+      "synthetic_rag": {
+        "median_ms": 73.783,
+        "samples_ms": [
+          73.783,
+          66.219,
+          73.388,
+          73.485,
+          101.119,
+          113.827,
+          110.583
+        ],
+        "matches": 2
+      },
+      "synthetic_memory": {
+        "median_ms": 11.878,
+        "samples_ms": [
+          11.914,
+          9.929,
+          11.878,
+          12.626,
+          10.298,
+          11.546,
+          13.305
+        ],
+        "matches": 2
+      }
+    },
+    "targeted_tests": {
+      "count": 83,
+      "passed": 83,
+      "elapsed_seconds": 0.949,
+      "exit_code": 0
+    },
+    "access_characterization": {
+      "scope": "isolated synthetic database, normal provisioning mode; not the live Pi",
+      "checks": [
+        {
+          "method": "GET",
+          "endpoint": "/api/assistant/chat/",
+          "status": 200,
+          "synthetic_value_visible": true
+        },
+        {
+          "method": "GET",
+          "endpoint": "/conversations/",
+          "status": 200,
+          "synthetic_value_visible": true
+        },
+        {
+          "method": "GET",
+          "endpoint": "/settings/",
+          "status": 200,
+          "synthetic_value_visible": true
+        },
+        {
+          "method": "GET",
+          "endpoint": "/api/system/logs/",
+          "status": 200,
+          "synthetic_value_visible": true
+        },
+        {
+          "method": "GET",
+          "endpoint": "/api/knowledge/documents/",
+          "status": 200,
+          "synthetic_value_visible": true
+        },
+        {
+          "method": "POST",
+          "endpoint": "/api/assistant/chat/",
+          "status": 200,
+          "anonymous_service_called": true,
+          "csrf_supplied": false
+        },
+        {
+          "method": "POST",
+          "endpoint": "/api/system/companion/control/",
+          "status": 200,
+          "csrf_supplied": false,
+          "transport": "database-only mock"
+        },
+        {
+          "method": "POST",
+          "endpoint": "/api/system/network/wifi/connect/",
+          "status": 403
+        },
+        {
+          "method": "POST",
+          "endpoint": "/api/knowledge/documents/",
+          "status": 403
+        },
+        {
+          "method": "POST",
+          "endpoint": "/api/assistant/chat/stream/",
+          "status_without_csrf": 403
+        },
+        {
+          "method": "POST",
+          "endpoint": "/api/assistant/chat/stream/",
+          "status_with_anonymous_csrf": 200
+        }
+      ]
+    },
+    "live_read_only_probes": {
+      "host": "smart-ai-companion.local:8000",
+      "scope": "anonymous status-only; no cookies/auth headers, no private response bodies or live inference/device writes",
+      "dashboard_head": 200,
+      "chat_missing_id_get": 400,
+      "setup_head": 404,
+      "conversations_head": 200,
+      "settings_head": 200,
+      "system_logs_api_head": 200,
+      "knowledge_documents_api_head": 200,
+      "wifi_connect_options": 403,
+      "document_zero_reindex_options": 403,
+      "current_pi_exploitability": "anonymous access to data-bearing surfaces confirmed from this host; payload behavior demonstrated with isolated synthetic data; real content, remote Git SHA, firewall and Internet exposure not verified",
+      "network_note": "initial sandboxed URLError resolved when read-only requests retried outside restricted networking"
+    },
+    "source_sha256": {
+      "assistant/ai_engine/local.py": "bb3ed123299699078702ab9d86fe703f83b74d56d51a0bfd4aa18493d03438b1",
+      "assistant/services.py": "f84b2b4cca7d9edb748b525612076d5facec0ba2a6f9e52a0a5f40d8522d225b",
+      "assistant/voice/tts.py": "bc53ab8f6ef177a3373a33676852ccdd9cc4e2b26f08013f27bfc17c5eb9cb77",
+      "assistant/tests_voice.py": "d1dbfafe7f69ba33c197c7b08f7f1bf029dbbfecf7ba1c34c16b825e2eaacd0e",
+      "assistant/tests_performance_diagnostics.py": "a374a51790debcde96043b0466c1a5da42c4d9b42ee218ae13c4e9fd9f9ac2d0",
+      "assistant/tests_performance_validation.py": "813a4eb89610ea636f4fef9108646bfe381c539b73c67468cb1b1bb4325e8723",
+      "knowledge_base/retrieval.py": "2a686bb67732801da72bb8c84164f2d593a4a8be932c4962eccf7e6c1c10cca3",
+      "knowledge_base/tests_retrieval_projection.py": "7b7ed97f1fbe2e167a5e3420194e74ccc1887ea2dbc69f50eecf81e8e30da48a",
+      "scripts/validate_pi_performance.py": "f8e7e16381ba2f74c4c37cbba48c7e60ffa3dd0a65e9c64868b58cc6ee537552"
+    },
+    "protected_artifact_count": 547
+  }
+}

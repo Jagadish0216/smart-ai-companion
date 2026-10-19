@@ -532,6 +532,25 @@ def _persist_generated_response(
     conversation.save(update_fields=["updated_at"])
 
 
+def _safe_ollama_metrics(metrics: dict) -> dict:
+    """Keep the logging/report boundary scalar even for alternate engines."""
+    numeric_fields = (
+        "input_messages", "input_chars", "system_chars",
+        "prompt_eval_count", "prompt_eval_cached_count", "eval_count",
+        "load_duration_ms", "prompt_eval_duration_ms", "eval_duration_ms",
+        "total_duration_ms", "prompt_tokens_per_sec", "tokens_per_sec",
+    )
+    safe = {}
+    for key in numeric_fields:
+        value = metrics.get(key)
+        if type(value) is int or type(value) is float and math.isfinite(value):
+            safe[key] = value
+    reason = metrics.get("done_reason")
+    if type(reason) is str and reason in ("stop", "length", "load", "unload"):
+        safe["done_reason"] = reason
+    return safe
+
+
 def _generation_metadata(prepared: PreparedAssistantRequest, result) -> dict:
     metadata = {
         "engine": result.engine,
@@ -542,6 +561,7 @@ def _generation_metadata(prepared: PreparedAssistantRequest, result) -> dict:
         "ttft_ms": result.ttft_ms,
         "num_predict": prepared.num_predict,
         "prompt_prepare_ms": result.prompt_prepare_ms,
+        "ollama_metrics": _safe_ollama_metrics(result.metrics),
         "rag_used": bool(prepared.rag_results),
         "rag_sources": [item.source_metadata() for item in prepared.rag_results],
         "rag_chunks": len(prepared.rag_results),
@@ -566,7 +586,7 @@ def _log_request_performance(prepared: PreparedAssistantRequest, metadata: dict)
     safe_metrics = {
         key: metadata.get(key)
         for key in (
-            "execution_ms", "policy_ms", "routing_ms", "rag_ms", "online_ms",
+            "execution_ms", "policy_ms", "routing_ms", "rag_ms", "online_ms", "ollama_metrics",
             "prompt_prepare_ms", "ttft_ms", "generation_ms", "route",
             "resource_profile", "effective_model",
             "num_predict", "max_output_tokens", "eval_count", "output_limit_reached",

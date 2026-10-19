@@ -98,13 +98,18 @@ class PiperProvider(TextToSpeechProvider):
                     self._lock.release()
             raise
         try:
+            ready_started = time.perf_counter()
+            worker_reused = self._ready
             self._ensure_ready(cancel_event, deadline, serial)
+            ready_ms = round((time.perf_counter() - ready_started) * 1000, 2)
             self._request_id += 1
             request_id = self._request_id
             message = {"type": "synthesize", "request_id": request_id, "text": text}
             if len(json.dumps(message).encode("utf-8")) > MAX_REQUEST_BYTES:
                 raise TTSError("Piper synthesis request is too large.")
+            exchange_started = time.perf_counter()
             response = self._exchange(message, cancel_event, deadline, serial)
+            exchange_ms = round((time.perf_counter() - exchange_started) * 1000, 2)
             self._check(cancel_event, deadline, serial)
             self._validate_error(response, request_id)
             if (set(response) != {"type", "request_id", "wav"} or response["type"] != "result"
@@ -121,6 +126,13 @@ class PiperProvider(TextToSpeechProvider):
             except Exception as exc:
                 raise TTSError("Piper worker returned invalid or empty WAV audio.") from exc
             self._check(cancel_event, deadline, serial)
+            metrics = {
+                "worker_reused": worker_reused, "ready_ms": ready_ms,
+                "exchange_ms": exchange_ms, "text_chars": len(text),
+                "wav_bytes": len(audio),
+            }
+            logger.info("Piper synthesis timings: %s", metrics,
+                        extra={"piper_timings": metrics})
             return audio
         except BaseException:
             self._stop_worker()
