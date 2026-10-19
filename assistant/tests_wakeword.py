@@ -634,7 +634,7 @@ class HandsFreeProductionCycleTests(SimpleTestCase):
                 events.append("wake_released")
 
         class Player:
-            def __init__(self, *args):
+            def __init__(self, *args, on_amplitude=None):
                 pass
 
             def start(self):

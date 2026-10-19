@@ -11,7 +11,7 @@ import os
 import re
 import struct
 from collections import deque
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from pathlib import Path
 from queue import Empty, Full, Queue
@@ -37,6 +37,7 @@ django.setup()
 from django.conf import settings  # noqa: E402
 
 from assistant.services import AssistantService  # noqa: E402
+from assistant.display.audio_level import AudioLevelMeter, observe
 from assistant.display import DisplayMode, DisplayState, get_companion_display  # noqa: E402
 from assistant.policy import AssistantResponsePolicy  # noqa: E402
 from assistant.execution_policy import CONSTRAINED_RESOURCE_STATUS, REDUCED_RESOURCE_STATUS  # noqa: E402
@@ -66,6 +67,15 @@ def _set_display_state(display, state):
             display.set_state(state)
         except Exception:
             logger.warning("Companion display update failed; voice interaction continues")
+
+    _set_display_level(display, 0)
+
+
+def _set_display_level(display, level):
+    try:
+        observe(getattr(display, "set_level", None), level)
+    except Exception:
+        pass  # Even a provider property lookup must remain noncritical.
 
 
 def route_to_display_mode(route):
@@ -391,10 +401,12 @@ def record_audio_with_capture_vad(
     min_speech_ms: int = 300,
     on_capture_ready: Callable[[], None] | None = None,
     max_start_threshold: float | None = None,
+    on_amplitude: Callable[[float], None] | None = None,
 ) -> None:
     """Record until speech ends; signal ready once after warm-up/calibration.
 
-    Callback errors follow the same terminate/reap path as capture errors.
+    Ready callback errors follow the same terminate/reap path as capture errors.
+    Amplitude callbacks reuse post-calibration RMS and are always best effort.
     Omitting it and the optional adaptive ceiling preserves ordinary capture.
     """
     vad = AdaptiveCaptureVAD(
@@ -487,6 +499,8 @@ def record_audio_with_capture_vad(
             )
             was_started, was_calibrated = vad.speech_started, vad.calibrated
             event = vad.feed(rms, chunk_duration)
+            if was_calibrated:
+                observe(on_amplitude, rms)
             if not was_calibrated and vad.calibrated and vad.stop_reason is None:
                 print("Speak now...")
                 if on_capture_ready is not None:
@@ -1007,7 +1021,8 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                           on_playback_start: Callable[[str], None] | None = None,
                           on_caption: Callable[[str], None] | None = None,
                           on_stream_start: Callable[[dict], None] | None = None,
-                          on_stream_metadata: Callable[[dict], None] | None = None):
+                          on_stream_metadata: Callable[[dict], None] | None = None,
+                          on_amplitude: Callable[[float], None] | None = None):
     """Service producer -> bounded text -> one preparer -> bounded audio -> one player."""
     pending = Queue(maxsize=2)
     ready_audio = Queue(maxsize=2)
@@ -1170,7 +1185,10 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                 try:
                     if config.audio_backend == "alsa":
                         if player is None:
-                            player = PersistentAlsaPlayer(config.alsa_playback_device, stopped, temp_path)
+                            player = PersistentAlsaPlayer(
+                                config.alsa_playback_device, stopped, temp_path,
+                                **({"on_amplitude": on_amplitude} if on_amplitude is not None else {}),
+                            )
                             player.start()
                             player.write_silence(round(config.leading_silence_seconds * ALSA_SAMPLE_RATE))
                         else:
@@ -1290,7 +1308,7 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                     raise errors[0]
                 try:
                     worker.result(timeout=0.05)
-                except TimeoutError:
+                except FutureTimeoutError:
                     pass
         if errors:
             raise errors[0]
@@ -1523,6 +1541,8 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
     if audio_file is not None and text is not None:
         raise VoiceLoopError("Choose either audio-file or text input, not both.")
     hands_free_request = hands_free_capture is not None and audio_file is None and text is None
+    meter = AudioLevelMeter(lambda level: _set_display_level(display, level))
+    amplitude = meter.feed if display is not None and getattr(display, "enabled", True) else None
     cycle_started = time.perf_counter()
     timings = {}
     with tempfile.TemporaryDirectory(prefix="smart-ai-voice-") as temp_dir:
@@ -1550,6 +1570,7 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
                         timings, "record", record_audio_hands_free, recorded_path,
                         config.alsa_capture_device, hands_free_capture,
                         on_capture_ready=lambda: _set_display_state(display, DisplayState.LISTENING),
+                        **({"on_amplitude": amplitude} if amplitude is not None else {}),
                     )
                     _set_display_state(display, DisplayState.THINKING)
                 elif config.capture_vad_enabled:
@@ -1572,6 +1593,7 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
                         noise_calibration_seconds=config.capture_vad_noise_calibration_seconds,
                         start_confirm_ms=config.capture_vad_start_confirm_ms,
                         min_speech_ms=config.capture_vad_min_speech_ms,
+                        **({"on_amplitude": amplitude} if amplitude is not None else {}),
                         **({"backend": "alsa"} if config.audio_backend == "alsa" else {}),
                     )
                 else:
@@ -1588,6 +1610,7 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
                         config.record_seconds,
                         config.input_warmup_seconds,
                     )
+            meter.reset(send=not hands_free_request)
             _timed_call(
                 timings,
                 "normalize",
@@ -1619,6 +1642,7 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
         _set_display_query(display, transcript)
 
         def on_playback_start(first_speech_text):
+            meter.reset(send=False)  # The following STATE helper sends zero.
             _set_display_state(display, DisplayState.SPEAKING)
 
         try:
@@ -1631,6 +1655,7 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
                 on_caption=lambda page: _set_display_text(display, page),
                 on_stream_start=lambda event: _set_display_route(display, event),
                 on_stream_metadata=lambda event: _set_display_route(display, event),
+                **({"on_amplitude": amplitude} if amplitude is not None else {}),
             )
         except VoiceLoopError:
             raise

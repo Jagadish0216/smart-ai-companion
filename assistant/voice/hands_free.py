@@ -12,6 +12,8 @@ import subprocess
 import time
 import wave
 
+from assistant.display.audio_level import observe
+
 SAMPLE_RATE = 48000
 CHANNELS = 2
 SAMPLE_WIDTH = 4
@@ -173,7 +175,7 @@ class NativeRequestReader:
 
 
 def record_audio_hands_free(output_path: Path, device: str, config: HandsFreeCaptureConfig,
-                           *, on_capture_ready=None):
+                           *, on_capture_ready=None, on_amplitude=None):
     """Drain, calibrate, then write every post-ready frame to a bounded WAV.
 
     No classification result can remove/reset audio or stop a waiting budget.
@@ -213,7 +215,9 @@ def record_audio_hands_free(output_path: Path, device: str, config: HandsFreeCap
                 chunk = reader.read_frames(count)
                 output.writeframesraw(chunk)  # Always retain before consulting the endpoint.
                 captured_frames += count
-                ended = detector.feed(normalized_left_rms(chunk), count / SAMPLE_RATE)
+                rms = normalized_left_rms(chunk)
+                ended = detector.feed(rms, count / SAMPLE_RATE)
+                observe(on_amplitude, rms)
                 if captured_frames >= max_frames:
                     stop_reason = "max_duration"
                     break

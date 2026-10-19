@@ -801,7 +801,7 @@ class VoiceInputInjectionTests(SimpleTestCase):
             self.mocks[target] = patcher.start()
             self.addCleanup(patcher.stop)
         for target in ("assistant.voice.alsa_stream.os.set_blocking", "builtins.print"):
-            patcher = patch(target)
+            patcher = patch(target, create=True)
             self.mocks[target] = patcher.start()
             self.addCleanup(patcher.stop)
 
@@ -886,7 +886,9 @@ class VoiceInputInjectionTests(SimpleTestCase):
             self.assertEqual(voice_loop.main([]), 0)
         self.mocks["VoiceLoopConfig.from_settings"].assert_called_once_with()
         self.mocks["record_audio_with_capture_vad"].assert_called_once()
-        self.assertEqual(self.mocks["record_audio_with_capture_vad"].call_args.kwargs, {
+        capture_options = dict(self.mocks["record_audio_with_capture_vad"].call_args.kwargs)
+        self.assertTrue(callable(capture_options.pop("on_amplitude")))
+        self.assertEqual(capture_options, {
             "backend": "alsa", "adaptive": True, "noise_calibration_seconds": 0.5,
             "start_confirm_ms": 60, "min_speech_ms": 300,
         })

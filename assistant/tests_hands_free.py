@@ -164,6 +164,18 @@ class HandsFreeRecordingTests(SimpleTestCase):
         self.assertIn("speech_seen=false", self.diagnostic())
         self.assertIn("capture_duration=0.20s", self.diagnostic())
 
+    def test_amplitude_observer_reuses_endpoint_rms_and_cannot_interrupt_retention(self):
+        post = [pcm(value) for value in [0.06, 0.065, 0.0668, 0.073, 0.063] * 2]
+        for fail in (False, True):
+            self.feed(post)
+            observer = MagicMock(side_effect=RuntimeError() if fail else None)
+            with patch("assistant.voice.hands_free.normalized_left_rms", wraps=normalized_left_rms) as rms:
+                record_audio_hands_free(self.path, "hw:test", self.config, on_amplitude=observer)
+            self.assertEqual(rms.call_count, 12)  # Two calibration chunks, ten retained chunks.
+            self.assertEqual(observer.call_count, 10)
+            self.assertAlmostEqual(observer.call_args_list[0].args[0], 0.06, places=6)
+            self.assertEqual(self.audio(), b"".join(post))
+
     def test_nonconsecutive_speech_then_quiet_ends_early_and_retains_every_chunk(self):
         post = [pcm(value) for value in [0.10, 0.062, 0.10] + [0.062] * 10]
         self.feed(post)
@@ -327,7 +339,7 @@ class HandsFreeVoiceCycleTests(SimpleTestCase):
             self.mocks[name] = patcher.start()
             self.addCleanup(patcher.stop)
 
-        def record(path, device, config, *, on_capture_ready):
+        def record(path, device, config, *, on_capture_ready, on_amplitude=None):
             self.assertEqual(self.states[-1], "READY")
             on_capture_ready()
             with wave.open(str(path), "wb") as wav:
@@ -340,7 +352,7 @@ class HandsFreeVoiceCycleTests(SimpleTestCase):
         self.mocks["get_stt_provider"].return_value.transcribe.return_value = "What is an ESP32?"
 
         def speak(*args, on_playback_start, on_caption,
-                  on_stream_start=None, on_stream_metadata=None):
+                  on_stream_start=None, on_stream_metadata=None, on_amplitude=None):
             self.assertEqual(self.states[-1], "THINKING")
             self.display.set_query.assert_called_once_with("What is an ESP32?")
             if on_stream_start is not None:

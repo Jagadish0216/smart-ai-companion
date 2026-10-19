@@ -287,7 +287,7 @@ class AlsaLifecycleTests(SimpleTestCase):
         self.config = voice_loop.VoiceLoopConfig("", audio_backend="alsa", leading_silence_seconds=0.5,
                                                 tts_chunk_chars=17)
         self.mocks["trim_pcm_edges"].return_value = (0, 0)
-        def player_factory(device, stopped, temp_path):
+        def player_factory(device, stopped, temp_path, *, on_amplitude=None):
             player = MagicMock()
             player.write_file.side_effect = lambda path, on_progress=None: self.mocks["play_audio_alsa"](path, device, cancel_event=stopped)
             return player
@@ -325,7 +325,9 @@ class AlsaLifecycleTests(SimpleTestCase):
         self.mocks["record_audio_alsa"].assert_not_called()
         capture = self.mocks["record_audio_with_capture_vad"].call_args
         self.assertEqual(capture.args[1], DEVICE)
-        self.assertEqual(capture.kwargs, {
+        capture_options = dict(capture.kwargs)
+        self.assertTrue(callable(capture_options.pop("on_amplitude")))
+        self.assertEqual(capture_options, {
             "backend": "alsa", "adaptive": True, "noise_calibration_seconds": 0.5,
             "start_confirm_ms": 60, "min_speech_ms": 300,
         })

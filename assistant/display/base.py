@@ -22,6 +22,12 @@ class DisplayMode(str, Enum):
     WEB = "WEB"
 
 
+def validate_level(level):
+    if type(level) is not int or not 0 <= level <= 100:
+        raise ValueError("Display level must be an integer from 0 through 100.")
+    return level
+
+
 class CompanionDisplay(ABC):
     enabled = True
 
@@ -48,6 +54,11 @@ class CompanionDisplay(ABC):
         return False
 
     def clear_mode(self) -> bool:
+        return False
+
+    def set_level(self, level: int) -> bool:
+        """Optional amplitude command; older providers remain compatible."""
+        validate_level(level)
         return False
 
     @abstractmethod

@@ -321,6 +321,17 @@ class CaptionPaginationTests(SimpleTestCase):
 
 @override_settings(RAG_ENABLED=False, ONLINE_RETRIEVAL_ENABLED=False, DEVICE_CONTROL_ENABLED=False)
 class DisplayVoiceLifecycleTests(SimpleTestCase):
+    def test_level_resets_after_success_error_and_cancellation(self):
+        self.assertEqual(self.cycle(), 42)
+        self.display.set_level.assert_called_with(0)
+        for error in (RuntimeError("capture failed"), KeyboardInterrupt()):
+            self.mocks["record_audio"].side_effect = error
+            self.display.reset_mock()
+            with self.assertRaises((RuntimeError, KeyboardInterrupt)):
+                self.cycle()
+            self.display.set_state.assert_called_with(DisplayState.ERROR)
+            self.display.set_level.assert_called_with(0)
+
     def setUp(self):
         self.events = []
         self.display = MagicMock()
@@ -399,7 +410,7 @@ class DisplayVoiceLifecycleTests(SimpleTestCase):
 
         with patch("scripts.voice_loop.prepare_alsa_playback", side_effect=prepare), \
                 patch("assistant.voice.alsa_stream.subprocess.Popen") as popen, \
-                patch("assistant.voice.alsa_stream.os.set_blocking"), \
+                patch("assistant.voice.alsa_stream.os.set_blocking", create=True), \
                 patch("assistant.voice.alsa_stream.os.write", side_effect=write):
             child = popen.return_value
             child.poll.return_value = None
@@ -657,7 +668,10 @@ class DisplayVoiceLifecycleTests(SimpleTestCase):
                     "STATE THINKING", "QUERY Explain local AI.", "MODE LOCAL",
                     "STATE SPEAKING", "TEXT " + answer, "STATE READY",
                 ]
-                self.assertEqual(commands, expected)
+                self.assertEqual([c for c in commands if not c.startswith("LEVEL ")], expected)
+                for index, command in enumerate(commands):
+                    if command.startswith("STATE "):
+                        self.assertEqual(commands[index + 1], "LEVEL 0")
                 # Stored QUERY survives both the SPEAKING transition and captions.
                 for command, state, query, mode, text in snapshots:
                     if command in ("MODE LOCAL", "STATE SPEAKING", "TEXT " + answer):
@@ -679,7 +693,7 @@ class DisplayVoiceLifecycleTests(SimpleTestCase):
                 self.assertEqual(voice_loop.run_voice_cycle(
                     voice_loop.VoiceLoopConfig("source"), text="Question?", display=display), 42)
                 expected = "MODE " + mode if mode else "CLEAR MODE"
-                self.assertEqual(commands[2], expected)
+                self.assertEqual([c for c in commands if not c.startswith("LEVEL ")][2], expected)
                 self.assertEqual([c for c in commands if c.startswith("MODE ")], [expected] if mode else [])
                 self.assertEqual(next(s[3] for s in snapshots if s[0] == "STATE SPEAKING"), mode)
 

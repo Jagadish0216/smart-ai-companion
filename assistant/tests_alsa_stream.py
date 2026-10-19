@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 from threading import Event, Timer, enumerate as threads
+from unittest import skipUnless
 from unittest.mock import MagicMock, call, patch
 
 from django.test import SimpleTestCase, override_settings
@@ -92,7 +93,7 @@ class PersistentPlayerTests(SimpleTestCase):
         patcher = patch("assistant.voice.alsa_stream.subprocess.Popen", return_value=self.child)
         self.popen = patcher.start()
         self.addCleanup(patcher.stop)
-        patcher = patch("assistant.voice.alsa_stream.os.set_blocking")
+        patcher = patch("assistant.voice.alsa_stream.os.set_blocking", create=True)
         patcher.start()
         self.addCleanup(patcher.stop)
         patcher = patch("assistant.voice.alsa_stream.os.write", side_effect=self.write)
@@ -230,7 +231,7 @@ class PersistentPlayerTests(SimpleTestCase):
             self.player.start()
         self.assertIsNone(self.player.stderr)
         self.popen.side_effect = None
-        with patch("assistant.voice.alsa_stream.os.set_blocking", side_effect=OSError("pipe setup failed")):
+        with patch("assistant.voice.alsa_stream.os.set_blocking", create=True, side_effect=OSError("pipe setup failed")):
             with self.assertRaisesRegex(OSError, "pipe setup failed"):
                 self.player.start()
         self.child.terminate.assert_called_once()
@@ -311,7 +312,7 @@ class PersistentPipelineTests(SimpleTestCase):
         self.assertFalse(any(thread.name.startswith("voice-stream-audio") for thread in threads()))
         return result
 
-    @patch("assistant.voice.alsa_stream.os.set_blocking")
+    @patch("assistant.voice.alsa_stream.os.set_blocking", create=True)
     @patch("assistant.voice.alsa_stream.os.write")
     @patch("assistant.voice.alsa_stream.subprocess.Popen")
     @patch("scripts.voice_loop.prepare_alsa_playback")
@@ -453,7 +454,7 @@ class PersistentPipelineTests(SimpleTestCase):
                         patch("scripts.voice_loop.get_tts_provider", return_value=self.provider), \
                         patch("scripts.voice_loop.AssistantService.process_message_stream") as service:
                     stt.return_value.transcribe.return_value = "A question."
-                    def factory(device, stopped, path):
+                    def factory(device, stopped, path, *, on_amplitude=None):
                         def write(raw_path, *, on_progress=None):
                             active.set()
                             self.assertTrue(stopped.wait(2))
@@ -472,6 +473,7 @@ class PersistentPipelineTests(SimpleTestCase):
                         voice_loop.run_voice_cycle(self.config, display=display)
                 states = [item.args[0].value for item in display.set_state.call_args_list]
                 self.assertEqual(states, ["LISTENING", "THINKING"] + (["SPEAKING"] if partial else []) + ["ERROR"])
+                display.set_level.assert_called_with(0)
                 if partial:
                     player.assert_called_once()
                     player.return_value.abort.assert_called()
@@ -491,6 +493,7 @@ class PersistentPipelineTests(SimpleTestCase):
                 self.assertFalse(any(thread.name.startswith("voice-stream-audio") for thread in threads()))
 
 
+@skipUnless(hasattr(alsa_stream.os, "set_blocking"), "Requires Unix nonblocking pipe support")
 class RealPipeTests(SimpleTestCase):
     def test_real_nonblocking_pipe_normal_eof_and_cancelled_stalled_reader(self):
         original_popen = subprocess.Popen

@@ -9,7 +9,7 @@ try:
 except ImportError:  # Disabled development environments need no serial package.
     serial = None
 
-from .base import CompanionDisplay, DisplayMode, DisplayState
+from .base import CompanionDisplay, DisplayMode, DisplayState, validate_level
 
 logger = logging.getLogger(__name__)
 WRITE_TIMEOUT_SECONDS = 0.05
@@ -120,6 +120,11 @@ class SerialCompanionDisplay(CompanionDisplay):
 
     def clear_mode(self):
         return self._send("CLEAR MODE")
+
+    def set_level(self, level):
+        # Coalescing/keepalive belongs to the meter: STATE resets firmware LEVEL
+        # and a reconnect must never suppress an otherwise identical value.
+        return self._send("LEVEL " + str(validate_level(level)))
 
     def close(self):
         with self._lock:

@@ -400,6 +400,20 @@ class AdaptiveCaptureIntegrationTests(SimpleTestCase):
 
 
 class CaptureReadyCallbackTests(SimpleTestCase):
+    def test_amplitude_uses_existing_rms_after_calibration_and_failure_keeps_audio(self):
+        chunks = [self.pcm(0.01)] * 25 + [self.pcm(0.06)] * 20 + [self.pcm(0.001)] * 2
+        for fail in (False, True):
+            self.process.stdout.read.side_effect = chunks
+            levels = MagicMock(side_effect=RuntimeError() if fail else None)
+            with patch("scripts.voice_loop._normalized_alsa_left_rms",
+                       wraps=self.voice_loop._normalized_alsa_left_rms) as rms:
+                self.record(on_amplitude=levels)
+            self.assertEqual(rms.call_count, len(chunks))
+            self.assertEqual(levels.call_count, 22)
+            self.assertAlmostEqual(levels.call_args_list[0].args[0], 0.06, places=6)
+            with wave.open(str(self.output_path), "rb") as wav:
+                self.assertEqual(wav.readframes(wav.getnframes()), b"".join(chunks[13:]))
+
     def setUp(self):
         from scripts import voice_loop
         self.voice_loop = voice_loop
