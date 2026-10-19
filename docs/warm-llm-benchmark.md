@@ -1,5 +1,10 @@
 # Cold, repeated warm and distinct warm local inference
 
+For the separate microphone-to-speaker diagnostic, stage definitions, eight-case
+quality rubric and one-cycle operator procedure, see
+[offline voice validation](offline-voice-validation.md). Text timings alone do
+not establish audible latency; production Qwen and audio behavior remain unchanged.
+
 ## Realistic new-question trials: `--warm-distinct`
 
 This extends the same harness from `b910c68a384c78b132a853df1349d9fa1d59a04e`.
