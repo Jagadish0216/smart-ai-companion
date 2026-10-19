@@ -1,0 +1,91 @@
+{
+  "baseline": "c4c5c442df0972ad177b038a4e9f7f4c540c5604",
+  "branch": "codex/offline-model-selection",
+  "git_state": "Tested before commit on codex/offline-model-selection; feature-only commit/push explicitly authorized. Baseline denotes parent.",
+  "scope": "Windows regression, mocked synthetic service integration, offline plan only. No Pi inference, STT, TTS or audible measurements.",
+  "platform": "Windows-10-10.0.26200-SP0",
+  "python": "3.10.2",
+  "dependencies": {
+    "Django": "5.2.17",
+    "djangorestframework": "3.18.1",
+    "piper-tts": null,
+    "onnxruntime": null,
+    "numpy": "2.2.6",
+    "paho-mqtt": null,
+    "pyserial": null,
+    "openwakeword": null,
+    "pypdf": "6.19.0"
+  },
+  "full_suite": {
+    "run": 1036,
+    "passed": 1035,
+    "skipped": 1,
+    "seconds": 129.182,
+    "exit_code": 0
+  },
+  "focused_suite": {
+    "run": 272,
+    "passed": 272,
+    "seconds": 16.098,
+    "exit_code": 0
+  },
+  "new_tests": {
+    "count": 11,
+    "coverage": [
+      "loopback-only endpoint and redirect rejection",
+      "exact GGUF tag/digest inventory",
+      "missing telemetry/current flags/thermal margins",
+      "unequal pair rejection",
+      "thermal abort preserves invalid report and terminates owned child",
+      "deadline termination escalation/reaping",
+      "real service RAG, memory and follow-up with mocked inference",
+      "confirmed-prefix and full-digest pin rejection",
+      "resident identity and multiple-runner rejection",
+      "separate load/prefill/decode and cold/warm/reload labels",
+      "Qwen residency refuses Llama before schema/inference; releases benchmark lock"
+    ]
+  },
+  "plan_only": "Passed without network or inference; six fixed fixtures and 48-token maximum",
+  "pi_model_inventory_attempt": {
+    "operation": "read-only GET /api/tags, no inference",
+    "address": "smart-ai-companion.local:11434",
+    "status": "unverified",
+    "error_type": "URLError"
+  },
+  "protected_files_verified": 555,
+  "production_changes": false,
+  "limitations": [
+    "No candidate quality, speed, peak RSS or thermal stability accepted",
+    "Real Linux process-session cancellation and server-side cancellation pending",
+    "Physical capture/Whisper/Piper/ALSA/TFT acceptance pending; no production changes",
+    "New script keeps all aborts invalid; one sample is not a model comparison"
+  ],
+  "source_sha256": {
+    "scripts/compare_offline_models.py": "9ab6e9184b9c811d8e4a0c7283e9f6ec7891265769d9d3b0fb17ceec81cfe721",
+    "assistant/tests_offline_models.py": "ed8c475284f67210f6f1233c1d134109fd8821da0d416a62c150dc72c0d2c8cd"
+  },
+  "user_confirmed_pi_state": {
+    "source": "User supplied snapshot; not measured by this workspace",
+    "temperature_c": 46.1,
+    "throttling": "0x0",
+    "available_ram_gib": 3.0,
+    "qwen_resident_approx_gb": 3.6,
+    "active_cooler": false,
+    "digest_prefixes": {
+      "qwen3.5:4b-q4_K_M": "d8b0f5e9760c",
+      "llama3.2:1b": "baf6a787fdff",
+      "llama3.2:3b": "a80c4f17acd5"
+    }
+  },
+  "runtime_identity_note": "Only user-confirmed prefixes are known here; each Pi trial fetches and rechecks the full installed digest. No invented full digests or new Pi timing/quality results.",
+  "benchmark_guards": {
+    "cool_start_below_c": 55,
+    "cutoff_c": 70,
+    "minimum_available_ram_mib": 512,
+    "max_output_tokens": 48,
+    "child_wall_deadline_s": 45,
+    "request_idle_keep_alive": "60s",
+    "explicit_model_unload": false,
+    "own_harness_linux_lock": true
+  }
+}

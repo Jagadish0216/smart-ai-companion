@@ -1,5 +1,10 @@
 # Local inference latency: investigation and controlled trials
 
+For the currently uncooled Pi, use the newer
+[`offline-model-selection.md`](offline-model-selection.md) procedure and its
+single-request harness. Do not run this document's extended multi-round A/B
+while cooling is unavailable. Production defaults remain unchanged.
+
 2026-10-19. Working branch: `system-performance-audit-v1`; validated comparison
 baseline: `3bb84a9ca6987f6fd11df366be97aabbdef929b8`. Finalization and feature-only
 publication were explicitly authorized; Pi deployment remains a separate step.
