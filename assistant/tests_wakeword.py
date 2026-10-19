@@ -14,6 +14,7 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import SimpleTestCase, override_settings
 
+from assistant.test_support import WAKE_WORD_TEST_SETTINGS
 from assistant.voice.wakeword.audio import AlsaWakeCapture, CAPTURE_READ_BYTES, LeftChannelConverter
 from assistant.voice.wakeword.base import (
     DisabledWakeWordProvider, WakeWordConfig, WakeWordDetection, WakeWordError,
@@ -29,6 +30,7 @@ def native_pcm(left=0, right=0, frames=3840):
     return struct.pack("<ii", left, right) * frames
 
 
+@override_settings(**WAKE_WORD_TEST_SETTINGS)
 class WakeWordConfigurationTests(SimpleTestCase):
     def test_safe_defaults(self):
         config = WakeWordConfig.from_settings()
@@ -350,6 +352,7 @@ class WakeCaptureResourceTests(SimpleTestCase):
         self.assertIsNone(provider.capture)
 
 
+@override_settings(**WAKE_WORD_TEST_SETTINGS)
 class WakeModelSetupTests(SimpleTestCase):
     def engine_for(self, directory):
         def metadata(name):
@@ -422,7 +425,7 @@ class WakeModelSetupTests(SimpleTestCase):
                     call_command("prepare_wake_word_model", stdout=io.StringIO())
 
 
-@override_settings(VOICE_WAKE_WORD_ENABLED=True)
+@override_settings(**{**WAKE_WORD_TEST_SETTINGS, "VOICE_WAKE_WORD_ENABLED": True})
 class HandsFreeRuntimeTests(SimpleTestCase):
     def setUp(self):
         self.config = voice_loop.VoiceLoopConfig("", audio_backend="alsa", capture_vad_enabled=True)
@@ -599,11 +602,21 @@ class HandsFreeRuntimeTests(SimpleTestCase):
         self.assertEqual(self.mocks["run_voice_cycle"].call_count, 3)
 
 
-@override_settings(VOICE_WAKE_WORD_ENABLED=True)
+@override_settings(**{**WAKE_WORD_TEST_SETTINGS, "VOICE_WAKE_WORD_ENABLED": True})
 class HandsFreeProductionCycleTests(SimpleTestCase):
     """Use the real provider, voice cycle and threaded stream with fake hardware."""
 
+    def setUp(self):
+        # The response-policy capability probe is unrelated to mocked voice I/O.
+        rag_patch = patch("knowledge_base.services.is_rag_available", return_value=False)
+        rag_patch.start()
+        self.addCleanup(rag_patch.stop)
+
+    @override_settings(RAG_ENABLED=True, AI_ENGINE="local")
     def test_actual_cycle_never_overlaps_wake_capture_with_capture_tts_or_playback(self):
+        # Check the DSP dependency before main's retry loop and mocked cooldown.
+        # Otherwise a missing NumPy import is retried forever before Capture.start.
+        LeftChannelConverter()
         events = []
         active = {"wake": False, "playback": False, "waits": 0}
         testcase = self

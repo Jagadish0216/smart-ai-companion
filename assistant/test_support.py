@@ -3,6 +3,19 @@
 from unittest.mock import patch
 
 
+# Fixtures that assert default wake behavior must not inherit appliance .env values.
+WAKE_WORD_TEST_SETTINGS = {
+    "VOICE_WAKE_WORD_ENABLED": False,
+    "VOICE_WAKE_WORD_ENGINE": "openwakeword",
+    "VOICE_WAKE_WORD_MODEL": "hey_jarvis",
+    "VOICE_WAKE_WORD_MODEL_PATH": "",
+    "VOICE_WAKE_WORD_THRESHOLD": "0.5",
+    "VOICE_WAKE_WORD_VAD_THRESHOLD": "0.5",
+    "VOICE_WAKE_WORD_TIMEOUT_SECONDS": "0",
+    "VOICE_WAKE_WORD_COOLDOWN_SECONDS": "0.75",
+}
+
+
 def install_resource_report(
     testcase,
     *,

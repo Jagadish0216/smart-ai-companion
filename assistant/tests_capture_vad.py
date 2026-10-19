@@ -525,7 +525,9 @@ class CaptureReadyCallbackTests(SimpleTestCase):
         callback.assert_not_called()
         self.process.terminate.assert_called_once()
 
-    def test_real_interactive_voice_cycle_preserves_accepted_vad_timing(self):
+    @override_settings(RAG_ENABLED=True, AI_ENGINE="local")
+    @patch("knowledge_base.services.is_rag_available", return_value=False)
+    def test_real_interactive_voice_cycle_preserves_accepted_vad_timing(self, rag_available):
         display = MagicMock()
         states = ["READY"]
         display.set_state.side_effect = lambda state: states.append(state.value)
@@ -551,5 +553,6 @@ class CaptureReadyCallbackTests(SimpleTestCase):
             with self.assertRaisesRegex(VoiceLoopError, "unavailable"):
                 self.voice_loop.run_voice_cycle(config, display=display)
         self.assertEqual(states, ["READY", "LISTENING", "THINKING", "ERROR"])
+        rag_available.assert_called_once_with()
         self.assertAlmostEqual(self.vads[-1].start_threshold, 0.027, places=6)
         self.process.terminate.assert_called_once()
