@@ -1,5 +1,10 @@
 # Offline model selection and short Pi validation
 
+The existing harness now also has an explicitly requested two-request
+[`--cold-warm` procedure](warm-llm-benchmark.md). Use that procedure to measure
+resident Llama latency independently of cold initialization. The single-request
+workflow below remains available; neither workflow changes production defaults.
+
 2026-10-19. Accepted source baseline: `c4c5c442df0972ad177b038a4e9f7f4c540c5604`.
 Feature branch: `codex/offline-model-selection`. Feature-only commit/push was
 explicitly authorized for Pi testing; no merge or deployment is authorized.
@@ -60,8 +65,9 @@ Existing CPU tuning, compact style and 30-character complete-first-sentence
 experiments remain opt-in; none is enabled in production. The short text harness
 explicitly holds compact style off, CPU options unset, context 4096, temperature
 0, seed 42 and think false for every candidate. It sends one 48-token maximum
-request, further bounded by the real resource policy. It does not warm a model
-through an extra request, run STT/Piper, capture microphone input or play audio.
+request in the original `--run` mode, further bounded by the real resource policy.
+Only explicit `--cold-warm` runs two short requests. Neither mode runs STT/Piper,
+captures microphone input or plays audio.
 Only benchmark requests use `keep_alive=60s`, equally for both models, instead of
 inheriting the production 24h retention. This requests natural idle expiry and
 may shorten the selected runner's residency; it is not an explicit unload call
@@ -150,7 +156,9 @@ either runner. Do not treat that aborted attempt as a valid sample.
    ```
 
    No automatic warm-up or repetition occurs. Each invocation has a 45-second
-   child wall deadline including isolated setup, and a 20-second socket timeout.
+   child wall deadline including isolated setup. Socket timeout follows the
+   existing service-policy setting in `--run`; the new `--cold-warm` explicitly
+   caps both engine and service-policy socket timeouts at 20 seconds.
    The parent samples about every 0.5 s **plus telemetry cost**; bounded telemetry
    commands/read waits add response delay, so this is not a hard real-time
    temperature guarantee. It terminates only its own process session, closes the
@@ -295,17 +303,20 @@ Existing untrusted-network security release blockers remain in
 ## Windows results and protected scope
 
 See `offline-model-windows-results.json` and `offline-model-windows-tests.log` for
-the final regression evidence: **1,036 tests run, 1,035 passed, one Linux-only
+the original `917695f` milestone's regression evidence: **1,036 tests run, 1,035 passed, one Linux-only
 skip in 129.182 s**; **272 focused tests passed in 16.098 s**. Compilation and
 the six-fixture offline plan passed. All 555 hashed protected/unrelated files
-remained unchanged. New tests exercise real service RAG/memory/follow-up
+remained unchanged. The current evidence files also include the later cold/warm
+extension's complete and targeted results, described in `warm-llm-benchmark.md`.
+Tests exercise real service RAG/memory/follow-up
 paths with synthetic mocked backend output, fail-closed telemetry, local-only
 inventory/redirect handling, unequal-pair rejection and thermal-abort cleanup.
 Mocked answers are **not** model quality evidence. Linux process-group termination,
 real Ollama cancellation/metadata, thermal polling, allocation memory and physical
 voice/device operation still require Pi validation. Production implementation and
-defaults are unchanged. Only the six implementation/test/documentation artifacts
-listed below are intended for this feature commit:
+defaults are unchanged. The original `917695f` milestone contained the six
+implementation/test/documentation artifacts listed below. The subsequent
+cold/warm extension's inventory is in `warm-llm-benchmark.md`.
 
 ```text
 assistant/tests_offline_models.py

@@ -180,7 +180,7 @@ class OfflineFixtureIntegrationTests(TestCase):
         install_resource_report(self)
         overrides = {name: getattr(settings, name, None) for name in (
             "AI_ENGINE", "OLLAMA_HOST", "OLLAMA_MODEL", "OLLAMA_NUM_THREAD", "OLLAMA_NUM_BATCH", "OLLAMA_TIMEOUT",
-            "OLLAMA_THINK", "OLLAMA_KEEP_ALIVE", "VOICE_COMPACT_STYLE", "ONLINE_RETRIEVAL_ENABLED", "ONLINE_KNOWLEDGE_AUTO_PERSIST",
+            "OLLAMA_THINK", "OLLAMA_KEEP_ALIVE", "AI_LOCAL_GENERATION_TIMEOUT_SECONDS", "VOICE_COMPACT_STYLE", "ONLINE_RETRIEVAL_ENABLED", "ONLINE_KNOWLEDGE_AUTO_PERSIST",
             "DEVICE_CONTROL_ENABLED", "COMPANION_DISPLAY_ENABLED", "MQTT_HOST", "SEARXNG_BASE_URL", "RAG_ENABLED")}
         self.addCleanup(reset_engine)
         with tempfile.TemporaryDirectory() as temp, override_settings(**overrides):
@@ -189,7 +189,7 @@ class OfflineFixtureIntegrationTests(TestCase):
                     result = Path(temp) / "sample.json"
                     digest = "baf6a787fdff" + "0" * 52
                     args = SimpleNamespace(child_dir=temp, host="http://127.0.0.1:11434", model=benchmark.MODELS[1], verified_digest=digest,
-                                           fixture=fixture, child_result=str(result))
+                                           fixture=fixture, child_result=str(result), required_residency="warm" if fixture == "fact" else None)
                     response = MagicMock()
                     response.__enter__.return_value = response
                     response.__iter__.return_value = [json.dumps({"done": True, "done_reason": "stop",
@@ -199,13 +199,17 @@ class OfflineFixtureIntegrationTests(TestCase):
                          patch("urllib.request.install_opener"), patch("urllib.request.urlopen", return_value=response) as urlopen, \
                          patch("django.db.connections.close_all"), \
                          patch.object(benchmark, "inventory", return_value={benchmark.MODELS[1]: {"usable": True, "digest": digest}}), \
-                         patch.object(benchmark, "metadata", return_value={"models": []}):
+                         patch.object(benchmark, "metadata", return_value={"models": [{"name": benchmark.MODELS[1], "digest": digest, "context_length": 4096}] if fixture == "fact" else []}):
                         benchmark.child(args)
                     sample = json.loads(result.read_text())
                     self.assertEqual(sample["request"]["options"], benchmark.request_options())
                     self.assertEqual(sample["request"]["model"], benchmark.MODELS[1])
                     self.assertEqual(sample["request"]["keep_alive"], "60s")
+                    self.assertGreaterEqual(sample["first_meaningful_text_ms"], 0)
+                    self.assertIsNone(sample["correctness_review"]["correct"])
                     urlopen.assert_called_once()
+                    if fixture == "fact":
+                        self.assertEqual(urlopen.call_args.kwargs["timeout"], 20)
                     self.assertEqual(sample["rag_used"], fixture == "rag")
                     self.assertEqual(sample["memory_used"], fixture == "memory")
                     if fixture == "followup":

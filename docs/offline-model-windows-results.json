@@ -1,8 +1,8 @@
 {
   "baseline": "c4c5c442df0972ad177b038a4e9f7f4c540c5604",
   "branch": "codex/offline-model-selection",
-  "git_state": "Tested before commit on codex/offline-model-selection; feature-only commit/push explicitly authorized. Baseline denotes parent.",
-  "scope": "Windows regression, mocked synthetic service integration, offline plan only. No Pi inference, STT, TTS or audible measurements.",
+  "git_state": "Evidence collected before feature-only publication; warm_benchmark_parent denotes the tested parent. No merge or deployment.",
+  "scope": "Windows regression, synthetic cold/warm orchestration and mocked service integration only. No new Pi inference, cache, STT/TTS or acoustic measurements.",
   "platform": "Windows-10-10.0.26200-SP0",
   "python": "3.10.2",
   "dependencies": {
@@ -17,20 +17,20 @@
     "pypdf": "6.19.0"
   },
   "full_suite": {
-    "run": 1036,
-    "passed": 1035,
+    "run": 1046,
+    "passed": 1045,
     "skipped": 1,
-    "seconds": 129.182,
+    "seconds": 61.493,
     "exit_code": 0
   },
   "focused_suite": {
-    "run": 272,
-    "passed": 272,
-    "seconds": 16.098,
+    "run": 282,
+    "passed": 282,
+    "seconds": 8.021,
     "exit_code": 0
   },
   "new_tests": {
-    "count": 11,
+    "count": 21,
     "coverage": [
       "loopback-only endpoint and redirect rejection",
       "exact GGUF tag/digest inventory",
@@ -42,8 +42,15 @@
       "confirmed-prefix and full-digest pin rejection",
       "resident identity and multiple-runner rejection",
       "separate load/prefill/decode and cold/warm/reload labels",
-      "Qwen residency refuses Llama before schema/inference; releases benchmark lock"
-    ]
+      "Qwen residency refuses Llama before schema/inference; releases benchmark lock",
+      "separate cold/warm calls with independently measured warm TTFT",
+      "premature expiry, wrong identity/context and failed cold initialization",
+      "cache hits/unknown counters/changed evaluated work invalidate pair",
+      "reloads/unequal requests/incomplete reports cannot imply improvement",
+      "warm thermal abort and per-child deadline cleanup",
+      "failed warm phase persists cold evidence and invalid overall report"
+    ],
+    "warm_extension_count": 10
   },
   "plan_only": "Passed without network or inference; six fixed fixtures and 48-token maximum",
   "pi_model_inventory_attempt": {
@@ -61,8 +68,9 @@
     "New script keeps all aborts invalid; one sample is not a model comparison"
   ],
   "source_sha256": {
-    "scripts/compare_offline_models.py": "9ab6e9184b9c811d8e4a0c7283e9f6ec7891265769d9d3b0fb17ceec81cfe721",
-    "assistant/tests_offline_models.py": "ed8c475284f67210f6f1233c1d134109fd8821da0d416a62c150dc72c0d2c8cd"
+    "scripts/compare_offline_models.py": "dff68dae9ec2a834ea3cba6cc25530a2bf7722416785574744e80e80a22682e0",
+    "assistant/tests_offline_models.py": "f20f9811706662b13b03b0320a87f91cf8dff9aa079fe865382fb7cd169b91d6",
+    "assistant/tests_warm_benchmark.py": "b6c9f7e5899768a69e3c70bb2bb06fb94da83e8a6f1b0fc1c6410ddacf743b38"
   },
   "user_confirmed_pi_state": {
     "source": "User supplied snapshot; not measured by this workspace",
@@ -86,6 +94,37 @@
     "child_wall_deadline_s": 45,
     "request_idle_keep_alive": "60s",
     "explicit_model_unload": false,
-    "own_harness_linux_lock": true
-  }
+    "own_harness_linux_lock": true,
+    "mode_requests": {
+      "run": 1,
+      "cold_warm": 2
+    },
+    "paired_socket_and_policy_timeout_s": 20,
+    "cold_warm_fixture": "fact only",
+    "warm_continuation_below_c": 70,
+    "cache_rule": "Require reported zero hits and equal positive evaluated prompt work; unknown is invalid",
+    "deadline_note": "45 seconds per child, monitored with bounded polling overhead; checked again after child exit"
+  },
+  "warm_benchmark_parent": "917695fbdd7a182e6fae93fbbafe21b30345845b",
+  "harness_focused": {
+    "run": 21,
+    "passed": 21,
+    "seconds": 0.526,
+    "exit_code": 0
+  },
+  "user_supplied_llama_cold_evidence": {
+    "source": "User supplied report; not regenerated or revalidated here",
+    "model": "llama3.2:1b",
+    "digest_prefix": "baf6a787fdff",
+    "load_ms": 17433.33,
+    "prompt_eval_ms": 2407.88,
+    "decode_ms": 1860.19,
+    "first_text_ms": 19844,
+    "full_answer_s": 21.919,
+    "generation_tokens_per_s": 9.1,
+    "prompt_tokens": 142,
+    "generated_tokens": 17,
+    "answer": "The capital of India is New Delhi. It is north of the equator."
+  },
+  "new_pi_performance_results": null
 }

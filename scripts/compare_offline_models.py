@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One synthetic text request per invocation; no downloads, audio or production DB writes."""
+"""Short single or explicit cold/warm trials; no downloads, audio or production DB writes."""
 from __future__ import annotations
 
 import argparse
@@ -162,6 +162,56 @@ def load_summary(metrics, resident):
             "definition": "Warm is an operational label: matching resident context and load <=100 ms; not proof of prompt-cache reuse."}
 
 
+def verify_request_residency(resident, model, digest, phase=None):
+    verify_residents(resident, model, digest)
+    if phase == "cold" and resident:
+        raise TrialRefused("cold_requires_no_resident_model")
+    if phase == "warm":
+        if not resident:
+            raise TrialRefused("premature_model_expiry")
+        if resident[0].get("context_length") != 4096:
+            raise TrialRefused("warm_context_changed")
+
+
+def validate_cold_warm(samples):
+    if len(samples) != 2 or any(s.get("status") != "sample_complete_quality_pending" for s in samples):
+        return "incomplete_cold_warm_pair"
+    cold, warm = samples
+    if cold.get("phase") != "cold" or warm.get("phase") != "warm":
+        return "invalid_phase_order"
+    if cold.get("load", {}).get("label") != "cold" or warm.get("load", {}).get("label") != "warm":
+        return "model_reloaded_or_load_unverified"
+    a, b = cold.get("sample", {}), warm.get("sample", {})
+    if a.get("request") != b.get("request") or not a.get("request"):
+        return "unequal_cold_warm_request"
+    for key in ("num_predict", "route", "resource_profile", "rag_used", "memory_used", "recent_history_used"):
+        if key not in a or key not in b or a[key] != b[key]:
+            return "unequal_cold_warm_policy"
+    for sample in (a, b):
+        metrics = sample.get("metrics", {})
+        for key in ("load_duration_ms", "prompt_eval_duration_ms", "eval_duration_ms", "eval_count", "prompt_eval_count", "tokens_per_sec"):
+            value = metrics.get(key)
+            if type(value) not in (int, float) or not 0 <= value < float("inf"):
+                return "incomplete_backend_metrics"
+        meaningful = sample.get("first_meaningful_text_ms")
+        if type(meaningful) not in (int, float) or not 0 <= meaningful < float("inf"):
+            return "meaningful_text_timing_missing"
+        if (not sample.get("answer") or type(sample.get("total_answer_s")) not in (int, float)
+                or not 0 < sample["total_answer_s"] < float("inf")
+                or any(metrics[key] <= 0 for key in ("eval_count", "prompt_eval_count", "eval_duration_ms", "tokens_per_sec"))):
+            return "incomplete_backend_metrics"
+        if metrics.get("done_reason") != "stop" or metrics["eval_count"] >= sample["num_predict"]:
+            return "truncated_or_unfinished_answer"
+        cached = metrics.get("prompt_eval_cached_count")
+        if type(cached) is not int or cached < 0:
+            return "prompt_cache_unverified"
+        if cached:
+            return "prompt_cache_reuse"
+    if a["metrics"]["prompt_eval_count"] != b["metrics"]["prompt_eval_count"]:
+        return "evaluated_prompt_work_changed"
+    return None
+
+
 def compare_reports(a, b):
     """Only matching, completed samples form a pair; quality still needs a human."""
     differences = {}
@@ -208,6 +258,9 @@ def child(args):
     settings.OLLAMA_MODEL = args.model
     settings.OLLAMA_NUM_THREAD = settings.OLLAMA_NUM_BATCH = None
     settings.OLLAMA_TIMEOUT = 20
+    if getattr(args, "required_residency", None):
+        # The service passes its policy timeout explicitly, overriding the engine.
+        settings.AI_LOCAL_GENERATION_TIMEOUT_SECONDS = 20
     settings.OLLAMA_KEEP_ALIVE = "60s"  # Request-local idle expiry; no explicit unload.
     settings.OLLAMA_THINK = False
     settings.VOICE_COMPACT_STYLE = False
@@ -240,12 +293,14 @@ def child(args):
         engine = get_engine()
         original = engine._build_chat_request
         requests = []
+        measured = {}
 
         def build(*positional, **keyword):
             # Recheck immediately before inference, after migrations/policy work.
             installed = inventory(args.host)[args.model]
             digest = verify_identity(args.model, installed, args.verified_digest)
-            verify_residents(metadata(args.host, "/api/ps").get("models", []), args.model, digest)
+            verify_request_residency(metadata(args.host, "/api/ps").get("models", []), args.model, digest,
+                                     getattr(args, "required_residency", None))
             request = original(*positional, **keyword)
             payload = json.loads(request.data)
             # Retain the service's protective effective generation cap.
@@ -255,9 +310,19 @@ def child(args):
             request.data = json.dumps(payload).encode()
             requests.append({"message_sha256": sha(payload["messages"]), "options": controls,
                              "model": payload["model"], "think": payload["think"], "keep_alive": payload["keep_alive"]})
+            measured["request_started"] = time.perf_counter()
             return request
 
         engine._build_chat_request = build
+        original_stream = engine.generate_stream
+
+        def stream(*positional, **keyword):
+            for event in original_stream(*positional, **keyword):
+                if event.type == "delta" and any(char.isalnum() for char in event.text):
+                    measured.setdefault("first_meaningful_text_ms", round((time.perf_counter() - measured["request_started"]) * 1000, 3))
+                yield event
+
+        engine.generate_stream = stream
         # Disable HTTP proxies and redirects for inference, including localhost.
         urllib.request.install_opener(urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect()))
         query = FIXTURES[args.fixture][0]
@@ -283,11 +348,14 @@ def child(args):
         if not metrics.get("eval_count") or not metrics.get("eval_duration_ms"):
             raise RuntimeError("Missing generated-token timing")
         result = {"answer": done["response"][:8192], "request": requests[0],
+                  "first_meaningful_text_ms": measured.get("first_meaningful_text_ms"),
                   "first_text_token_ms": done.get("ttft_ms"), "total_answer_s": time.perf_counter() - started,
                   "metrics": metrics, "num_predict": done.get("num_predict"),
                   "route": done.get("route"), "rag_used": done.get("rag_used"),
                   "memory_used": done.get("memory_used"), "recent_history_used": done.get("recent_history_used"),
-                  "resource_profile": done.get("resource_profile"), "manual_quality": None}
+                  "resource_profile": done.get("resource_profile"), "manual_quality": None,
+                  "correctness_review": {"reference": FIXTURES[args.fixture][1], "correct": None,
+                                         "note": "Human review required; no automatic factual-quality acceptance."}}
         Path(args.child_result).write_text(json.dumps(result, indent=2))
     finally:
         connections.close_all()
@@ -311,12 +379,108 @@ def terminate(process):
         process.wait(timeout=2)
 
 
+def run_request(args, digest, report, phase=None):
+    from scripts.validate_pi_performance import isolated_database
+    from scripts.benchmark_inference_ab import telemetry
+    with isolated_database("offline-monitor-"):
+        first = telemetry()
+        report["telemetry"].append(first)
+        reason = pressure_reason(first, starting=phase != "warm")
+        if reason:
+            report["abort_reason"] = reason
+            raise RuntimeError("Cool healthy start required")
+        with tempfile.TemporaryDirectory(prefix="offline-single-") as temporary:
+            target = Path(temporary) / "result.json"
+            command = [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:],
+                       "--child-dir", temporary, "--child-result", str(target)]
+            command += ["--verified-digest", digest]
+            if phase:
+                command += ["--required-residency", phase]
+            process = subprocess.Popen(command, cwd=ROOT, start_new_session=True,
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                start = time.monotonic()
+                while process.poll() is None:
+                    sample = telemetry()
+                    report["telemetry"].append(sample)
+                    reason = pressure_reason(sample)
+                    if reason or time.monotonic() - start >= 45:
+                        report["abort_reason"] = reason or "45_second_wall_deadline"
+                        raise RuntimeError("Safety stop")
+                    verify_request_residency(metadata(args.host, "/api/ps").get("models", []), args.model, digest,
+                                             "warm" if phase == "warm" else None)
+                    time.sleep(0.5)
+                if time.monotonic() - start >= 45:
+                    report["abort_reason"] = "45_second_wall_deadline"
+                    raise RuntimeError("Request exceeded its wall deadline")
+                if process.returncode or not target.is_file():
+                    report["child_exit_code"] = process.returncode
+                    raise RuntimeError("Isolated request failed; not a valid timing sample")
+                final = telemetry()
+                report["telemetry"].append(final)
+                if pressure_reason(final):
+                    report["abort_reason"] = pressure_reason(final)
+                    raise RuntimeError("Final safety check failed")
+                report["sample"] = json.loads(target.read_text())
+                report["load"] = load_summary(report["sample"]["metrics"], report["resident_before"])
+            finally:
+                terminate(process)
+    after = inventory(args.host)
+    if after != report["inventory"]:
+        raise RuntimeError("Installed inventory changed during sample")
+    resident = metadata(args.host, "/api/ps").get("models", [])
+    report["resident_after"] = [{k: item.get(k) for k in ("name", "digest", "size", "size_vram", "context_length")} for item in resident]
+    verify_request_residency(resident, args.model, digest, "warm" if phase else None)
+    if len(resident) != 1:
+        raise RuntimeError("Resident model identity not confirmed")
+    report["status"] = "sample_complete_quality_pending"
+
+
+def run_cold_warm(args, digest, report, save):
+    report.update(benchmark="cold_warm", valid=False, samples=[], status="incomplete_cold_warm",
+                  uncached_warm_under_two_seconds=None, quality_accepted=False)
+    for phase in ("cold", "warm"):
+        phase_report = {"phase": phase, "status": "incomplete", "telemetry": [], "inventory": report["inventory"]}
+        report["samples"].append(phase_report)
+        save()  # A partial pair is never reported as a successful benchmark.
+        try:
+            resident = metadata(args.host, "/api/ps").get("models", [])
+            verify_request_residency(resident, args.model, digest, phase)
+            phase_report["resident_before"] = [{k: item.get(k) for k in ("name", "digest", "size", "size_vram", "context_length")} for item in resident]
+            run_request(args, digest, phase_report, phase)
+            if phase == "cold":
+                sample = phase_report.get("sample", {})
+                metrics = sample.get("metrics", {})
+                if (phase_report.get("status") != "sample_complete_quality_pending"
+                        or phase_report.get("load", {}).get("label") != "cold"
+                        or not sample.get("answer") or metrics.get("done_reason") != "stop"
+                        or metrics.get("eval_count", 48) >= sample.get("num_predict", 48)):
+                    raise TrialRefused("cold_request_failed_validation")
+        except BaseException:
+            phase_report["status"] = "aborted"
+            save()
+            raise
+        save()
+    reason = validate_cold_warm(report["samples"])
+    if reason:
+        report["invalid_reason"] = reason
+        report["cache_status"] = reason if reason.startswith("prompt_cache") else "not_accepted"
+        raise TrialRefused(reason)
+    warm = report["samples"][1]["sample"]
+    report.update(status="cold_warm_complete_quality_pending", valid=True,
+                  cache_status="reported_zero_hits_and_equal_prompt_work",
+                  uncached_warm_under_two_seconds=warm["first_meaningful_text_ms"] < 2000,
+                  interpretation="Independent repeated-question warm measurement; human correctness and broader conversational/physical voice validation still required.")
+    save()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--inventory", action="store_true")
     mode.add_argument("--plan-only", action="store_true")
     mode.add_argument("--run", action="store_true")
+    mode.add_argument("--cold-warm", action="store_true", help="Exactly two factual requests: empty-residency cold, then independently timed warm")
     mode.add_argument("--compare", type=Path, nargs=2, metavar=("A_REPORT", "B_REPORT"))
     parser.add_argument("--host", default="http://127.0.0.1:11434")
     parser.add_argument("--model", choices=MODELS)
@@ -326,6 +490,7 @@ def main():
     parser.add_argument("--child-dir", help=argparse.SUPPRESS)
     parser.add_argument("--child-result", help=argparse.SUPPRESS)
     parser.add_argument("--verified-digest", help=argparse.SUPPRESS)
+    parser.add_argument("--required-residency", choices=("cold", "warm"), help=argparse.SUPPRESS)
     args = parser.parse_args()
     args.host = local_host(args.host)
     if args.expected_digest and not re.fullmatch(r"(?:sha256:)?[a-f0-9]{12,64}", args.expected_digest):
@@ -333,9 +498,12 @@ def main():
     if args.child_dir:
         child(args)
         return
-    if args.run and (not args.model or platform.system() != "Linux"):
+    inference_mode = args.run or args.cold_warm
+    if args.cold_warm and args.fixture != "fact":
+        parser.error("Cold/warm mode uses only the fixed factual question")
+    if inference_mode and (not args.model or platform.system() != "Linux"):
         parser.error("One explicit installed model and Linux are required")
-    if args.run and subprocess.run(["git", "merge-base", "--is-ancestor", BASELINE, "HEAD"], cwd=ROOT).returncode:
+    if inference_mode and subprocess.run(["git", "merge-base", "--is-ancestor", BASELINE, "HEAD"], cwd=ROOT).returncode:
         parser.error("Accepted performance baseline must be an ancestor")
     args.output = args.output.resolve()
     args.output.mkdir(parents=True, exist_ok=False)
@@ -346,9 +514,11 @@ def main():
               "tracked_diff_sha256": hashlib.sha256(subprocess.check_output(["git", "diff", "HEAD"], cwd=ROOT)).hexdigest(),
               "options": request_options(), "quality_accepted": False, "telemetry": []}
     output = args.output / "report.json"
+    if args.cold_warm:
+        report.update(benchmark="cold_warm", valid=False, samples=[], uncached_warm_under_two_seconds=None)
     lock = None
     try:
-        if args.run:
+        if inference_mode:
             lock = acquire_trial_lock()
         if args.compare:
             report = compare_reports(*(json.loads(path.read_text()) for path in args.compare))
@@ -367,58 +537,17 @@ def main():
         report["expected_digest"] = args.expected_digest or CONFIRMED_PREFIXES.get(args.model)
         resident = metadata(args.host, "/api/ps").get("models", [])
         # No second resident LLM dependency. Do not evict another app's runner.
-        verify_residents(resident, args.model, digest)
+        verify_request_residency(resident, args.model, digest, "cold" if args.cold_warm else None)
         report["resident_before"] = [{k: item.get(k) for k in ("name", "digest", "size", "size_vram", "context_length")} for item in resident]
-        from scripts.validate_pi_performance import isolated_database
-        from scripts.benchmark_inference_ab import telemetry
-        with isolated_database("offline-monitor-"):
-            first = telemetry()
-            report["telemetry"].append(first)
-            reason = pressure_reason(first, starting=True)
-            if reason:
-                report["abort_reason"] = reason
-                raise RuntimeError("Cool healthy start required")
-            with tempfile.TemporaryDirectory(prefix="offline-single-") as temporary:
-                target = Path(temporary) / "result.json"
-                command = [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:],
-                           "--child-dir", temporary, "--child-result", str(target)]
-                command += ["--verified-digest", digest]
-                process = subprocess.Popen(command, cwd=ROOT, start_new_session=True,
-                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                start = time.monotonic()
-                try:
-                    while process.poll() is None:
-                        sample = telemetry()
-                        report["telemetry"].append(sample)
-                        reason = pressure_reason(sample)
-                        if reason or time.monotonic() - start >= 45:
-                            report["abort_reason"] = reason or "45_second_wall_deadline"
-                            raise RuntimeError("Safety stop")
-                        verify_residents(metadata(args.host, "/api/ps").get("models", []), args.model, digest)
-                        time.sleep(0.5)
-                    if process.returncode or not target.is_file():
-                        report["child_exit_code"] = process.returncode
-                        raise RuntimeError("Isolated request failed; not a valid timing sample")
-                    final = telemetry()
-                    report["telemetry"].append(final)
-                    if pressure_reason(final):
-                        report["abort_reason"] = pressure_reason(final)
-                        raise RuntimeError("Final safety check failed")
-                    report["sample"] = json.loads(target.read_text())
-                    report["load"] = load_summary(report["sample"]["metrics"], report["resident_before"])
-                finally:
-                    terminate(process)
-        after = inventory(args.host)
-        if after != report["inventory"]:
-            raise RuntimeError("Installed inventory changed during sample")
-        resident = metadata(args.host, "/api/ps").get("models", [])
-        report["resident_after"] = [{k: item.get(k) for k in ("name", "digest", "size", "size_vram", "context_length")} for item in resident]
-        verify_residents(resident, args.model, digest)
-        if len(resident) != 1:
-            raise RuntimeError("Resident model identity not confirmed")
-        report["status"] = "sample_complete_quality_pending"
+        if args.cold_warm:
+            run_cold_warm(args, digest, report, lambda: output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8"))
+        else:
+            run_request(args, digest, report)
     except BaseException as error:
-        report["status"] = "aborted"
+        report["status"] = "invalid_cold_warm" if args.cold_warm else "aborted"
+        if args.cold_warm:
+            report["valid"] = False
+            report["uncached_warm_under_two_seconds"] = None
         report["error_type"] = type(error).__name__
         if isinstance(error, TrialRefused):
             report["abort_reason"] = error.reason
