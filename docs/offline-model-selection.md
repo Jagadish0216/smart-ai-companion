@@ -1,5 +1,10 @@
 # Offline model selection and short Pi validation
 
+The [100-question quality evaluation](offline-quality-evaluation.md) adds a
+versioned faculty/everyday test bank, independent review worksheets and a guarded
+per-question Pi runner. It does not change the model default or establish that
+Llama has passed quality or matched-latency acceptance.
+
 The existing harness also has explicit two-request
 [`--cold-warm` and `--warm-distinct` procedures](warm-llm-benchmark.md). Use the
 distinct mode for new questions with quantified prefix caching, and the original
