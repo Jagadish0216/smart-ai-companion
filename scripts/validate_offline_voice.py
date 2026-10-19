@@ -378,8 +378,10 @@ def child(args):
         connections.close_all()
 
 
-def monitor(process, sample, check_resident, report, *, clock=time.monotonic, sleep=time.sleep):
-    deadline = clock() + 60
+def monitor(process, sample, check_resident, report, *, clock=time.monotonic, sleep=time.sleep, timeout=60):
+    if not 0 < timeout <= 60:
+        raise ValueError("Monitor timeout must be positive and at most 60 seconds")
+    deadline = clock() + timeout
     while process.poll() is None:
         point = sample()
         report["telemetry"].append(point)

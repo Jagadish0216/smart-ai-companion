@@ -1,0 +1,28 @@
+{
+  "starting_commit": "54c004d8b57fb502fed9d072e2e29a1d3772ff5c",
+  "branch": "codex/offline-model-selection",
+  "scope": "Windows mock/offline regression only; no Pi inference",
+  "full_suite": {
+    "run": 1116,
+    "passed": 1115,
+    "skipped": 1,
+    "seconds": 68.158,
+    "exit_code": 0
+  },
+  "focused_suite": {
+    "run": 62,
+    "passed": 62,
+    "skipped": 0,
+    "seconds": 2.023
+  },
+  "new_tests": 9,
+  "source_sha256": {
+    "scripts/test_short_answer_thermal.py": "8902d6f2eea8ea3ec7a38ee0d2c01a7327466576605f772bee2dc58ba9b7686d",
+    "scripts/validate_offline_voice.py": "5ef1f948a6312ac7ee2c4f565b6177a7a311db013d680b312bae24d591930b9b",
+    "assistant/tests_short_answer_thermal.py": "ab9bc60553aa267bbcab129fc32c75a56b62854e03c588ae1c1e5f517df70724"
+  },
+  "protected_hashes_unchanged": 558,
+  "question_bank_unchanged": true,
+  "windows_refusal": "linux_pi_only_no_laptop_inference",
+  "pi_validation_pending": true
+}
