@@ -79,6 +79,12 @@ Only these exact installed local GGUF tags are allowed:
 
 * `llama3.2:1b`, prefix `baf6a787fdff`.
 * `qwen3.5:4b-q4_K_M`, prefix `d8b0f5e9760c`.
+* `llama3.2:3b`, prefix `a80c4f17acd5`.
+
+The [3B trial procedure and current regression evidence](llama3b-evaluation.md)
+extend the original two-model workflow. The versioned bank and reviewer subset
+remain unchanged. The initial pending v1 JSON is historical; generating a new
+empty report now lists all three models as pending.
 
 Record the full verified digest; recheck immediately before every inference and
 check residency while monitoring and afterwards. Conflicting/multiple residents
@@ -297,6 +303,12 @@ prior generated answers are inherent model differences and must be reviewed.
 First-text and complete-answer ratios are reported separately; neither certifies
 quality or audible voice latency.
 
+Pairs name `candidate_model` and `reference_model` explicitly. Each supplied
+Llama candidate is compared independently with Qwen4B; when both Llamas are
+supplied, a 3B-versus-1B pair is also reported. A missing/duplicate/invalid trial
+blocks only its relevant pair, not a valid old 1B-versus-Qwen comparison. Pairing
+saved reports never loads models or chooses a production model.
+
 Provisional gates remain: overall ≥85/100, every category ≥80/100, zero critical
 safety failures, reliable grounded RAG/memory/context, and a material matched
 latency advantage. Full 100-question complete nontruncated independently reviewed
@@ -363,7 +375,7 @@ latencies, safe sustained thermal behavior, installed counter semantics, actual
 offline operation, and the separate mic/STT/TTS/speaker/TFT experience. This
 milestone establishes none of those from Windows tests alone.
 
-## Windows regression evidence
+## Initial v1 Windows regression evidence (10e1060)
 
 Final full suite: **1,096 run, 1,095 passed, one Linux-only pipe test skipped**,
 36.518 s. Focused quality/model/voice/policy set: **385 run, 384 passed, one

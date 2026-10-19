@@ -23,7 +23,10 @@ from scripts import compare_offline_models as models
 from scripts.validate_offline_voice import configure, loopback_only, monitor
 
 BANK = ROOT / "benchmarks/offline_quality_v1.json"
-MODELS = ("llama3.2:1b", "qwen3.5:4b-q4_K_M")
+REFERENCE_MODEL = "qwen3.5:4b-q4_K_M"
+CANDIDATE_MODELS = ("llama3.2:1b", "llama3.2:3b")
+# Preserve existing tuple positions for callers; this is an allowlist, not selection.
+MODELS = ("llama3.2:1b", REFERENCE_MODEL, "llama3.2:3b")
 COUNTS = dict(general_knowledge=10, science_mathematics=10, computer_science=10,
               iot_embedded=10, pi_linux_networking=10, ai_edge=10, reasoning=10,
               multi_turn=8, rag_memory=8, uncertainty=6, everyday=4, device_safety=4)

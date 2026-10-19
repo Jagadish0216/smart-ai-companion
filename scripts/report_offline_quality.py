@@ -14,7 +14,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from scripts.evaluate_offline_quality import COUNTS, MODELS, WEIGHTS, read_bank, bank_digest
+from scripts.evaluate_offline_quality import COUNTS, MODELS, WEIGHTS, REFERENCE_MODEL, CANDIDATE_MODELS, read_bank, bank_digest
 from scripts import compare_offline_models as models
 
 FLAGS = ("critical_safety_failure", "fabricated_citation", "fabricated_memory", "hallucination", "task_success")
@@ -232,15 +232,21 @@ def summarize(reports, reviews):
     for entries in groups.values():
         for r, s, _, _ in entries: pairs[s["question_id"]][r["model"]].append((r,s))
     for qid, by_model in sorted(pairs.items()):
-        if not all(len(by_model[m]) == 1 for m in MODELS):
-            result["paired_latency"].append({"question_id":qid,"eligible":False,"reasons":["missing_or_multiple_trials_select_predeclared_unique_pair"]})
-            continue
-        (ar,a),(br,b) = (by_model[m][0] for m in MODELS)
-        reasons = pair_reasons(ar,a,br,b)
-        result["paired_latency"].append({"question_id":qid,"eligible":not reasons,"reasons":reasons,
-            "candidate_over_reference_first_text": a.get("first_meaningful_text_ms",0)/b["first_meaningful_text_ms"] if not reasons and b.get("first_meaningful_text_ms",0)>0 else None,
-            "candidate_over_reference_complete": a.get("total_answer_s",0)/b["total_answer_s"] if not reasons and b.get("total_answer_s",0)>0 else None,
-            "model_specific_differences":"Different templates/tokenizers, weights and actual prior generated answers. Inspect token counts, load, cache and quality; latency eligibility is not quality acceptance."})
+        comparisons = [(m,REFERENCE_MODEL) for m in CANDIDATE_MODELS if by_model.get(m)]
+        if not comparisons: comparisons = [(CANDIDATE_MODELS[0],REFERENCE_MODEL)]
+        if all(by_model.get(m) for m in CANDIDATE_MODELS):
+            comparisons.append((CANDIDATE_MODELS[1],CANDIDATE_MODELS[0]))
+        for candidate, reference in comparisons:
+            identity = {"question_id":qid,"candidate_model":candidate,"reference_model":reference}
+            if not all(len(by_model[m]) == 1 for m in (candidate,reference)):
+                result["paired_latency"].append(dict(identity,eligible=False,reasons=["missing_or_multiple_trials_select_predeclared_unique_pair"]))
+                continue
+            (ar,a),(br,b) = (by_model[m][0] for m in (candidate,reference))
+            reasons = pair_reasons(ar,a,br,b)
+            result["paired_latency"].append(dict(identity,eligible=not reasons,reasons=reasons,
+                candidate_over_reference_first_text=a.get("first_meaningful_text_ms",0)/b["first_meaningful_text_ms"] if not reasons and b.get("first_meaningful_text_ms",0)>0 else None,
+                candidate_over_reference_complete=a.get("total_answer_s",0)/b["total_answer_s"] if not reasons and b.get("total_answer_s",0)>0 else None,
+                model_specific_differences="Different templates/tokenizers, weights and actual prior generated answers. Inspect token counts, load, cache and quality; latency eligibility is not quality acceptance."))
     return result
 
 

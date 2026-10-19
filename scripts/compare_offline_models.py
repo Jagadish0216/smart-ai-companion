@@ -21,8 +21,8 @@ from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 BASELINE = "c4c5c442df0972ad177b038a4e9f7f4c540c5604"
-MODELS = ("qwen3.5:4b-q4_K_M", "llama3.2:1b", "qwen3.5:2b-q4_K_M", "qwen3.5:0.8b-q8_0")
-CONFIRMED_PREFIXES = {MODELS[0]: "d8b0f5e9760c", MODELS[1]: "baf6a787fdff"}
+MODELS = ("qwen3.5:4b-q4_K_M", "llama3.2:1b", "qwen3.5:2b-q4_K_M", "qwen3.5:0.8b-q8_0", "llama3.2:3b")
+CONFIRMED_PREFIXES = {MODELS[0]: "d8b0f5e9760c", MODELS[1]: "baf6a787fdff", "llama3.2:3b": "a80c4f17acd5"}
 
 
 class TrialRefused(RuntimeError):

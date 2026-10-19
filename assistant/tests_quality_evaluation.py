@@ -24,7 +24,7 @@ def point(**kw):
 
 
 def trial(model=MODEL):
-    digest = DIGEST if model == MODEL else "d8b0f5e9760c" + "0"*52
+    digest = quality.models.CONFIRMED_PREFIXES[model] + "0"*52
     sample = dict(question_id="CS01",question=quality.read_bank()["questions"][20]["question"],sample_id="sample-"+model,
                   status="completed",inference_requested=True,truncated=False,answer="Observed public test answer.",
                   model=model,digest=digest,setup_sha256="setup",instruction_sha256="instruction",system_sha256="system",user_sha256="user",category="computer_science",
@@ -256,15 +256,15 @@ class ReviewTests(SimpleTestCase):
                    ONLINE_RETRIEVAL_ENABLED=False,DEVICE_CONTROL_ENABLED=False,
                    AI_GENERATION_NORMAL_NUM_PREDICT=192,AI_LOCAL_GENERATION_TIMEOUT_SECONDS=40,RAG_ENABLED=True,RAG_NUM_PREDICT=192)
 class ScenarioTests(TestCase):
-    def exercise(self, question="MT06", truncate=False, interrupted=False, canary=False):
+    def exercise(self, question="MT06", truncate=False, interrupted=False, canary=False, model=MODEL, digest=DIGEST):
         from assistant.ai_engine import AIEngineResult,AIEngineStreamEvent
         from assistant.ai_engine.local import LocalLLMEngine
         from assistant.execution_policy import AIExecutionPlan
-        execution=AIExecutionPlan(resource_profile="BALANCED", configured_model=MODEL, effective_model=MODEL,
+        execution=AIExecutionPlan(resource_profile="BALANCED", configured_model=model, effective_model=model,
             model_reason="single_model",generation_budget="NORMAL",max_output_tokens=192,context_message_limit=10,
             local_ai_allowed=True,generation_allowed=True,online_allowed=False,timeout_seconds=40,
             policy_reason="test",resource_policy_available=True)
-        engine=LocalLLMEngine(model=MODEL,host="http://127.0.0.1:11434")
+        engine=LocalLLMEngine(model=model,host="http://127.0.0.1:11434")
         captured=[]
         original_builder=engine._build_chat_request
         def builder(*a,**kw):
@@ -274,15 +274,15 @@ class ScenarioTests(TestCase):
         engine._build_chat_request=builder
         def stream(query,conversation_history=None,system_instruction=None,**kw):
             messages=engine._build_messages(query,conversation_history,system_instruction)
-            engine._build_chat_request(messages,stream=True,num_predict=kw.get("num_predict"),model=MODEL)
+            engine._build_chat_request(messages,stream=True,num_predict=kw.get("num_predict"),model=model)
             text="Actual generated first response, including its original mistakes." if len(captured)==1 else "Actual generated follow-up response."
             yield AIEngineStreamEvent(type="delta",text=text)
             if interrupted:raise KeyboardInterrupt()
-            yield AIEngineStreamEvent(type="done",result=AIEngineResult(text=text,engine="local",model=MODEL,
+            yield AIEngineStreamEvent(type="done",result=AIEngineResult(text=text,engine="local",model=model,
                 metrics={"eval_count":128 if truncate else 20,"eval_duration_ms":2000,"load_duration_ms":1,
                          "prompt_eval_count":150,"prompt_eval_cached_count":0,"done_reason":"length" if truncate else "stop"}))
         engine.generate_stream=stream
-        args=SimpleNamespace(question=question,model=MODEL,host="http://127.0.0.1:11434",digest=DIGEST,phase="warm")
+        args=SimpleNamespace(question=question,model=model,host="http://127.0.0.1:11434",digest=digest,phase="warm")
         report={"status":"incomplete","samples":[]}
         snapshots=[]
         reference_bank=quality.read_bank()
@@ -298,13 +298,26 @@ class ScenarioTests(TestCase):
              patch("assistant.services.get_ai_execution_plan",return_value=execution), \
              patch("scripts.benchmark_inference_ab.telemetry",return_value=point()), \
              patch.object(quality,"read_bank",return_value=reference_bank), \
-             patch.object(quality.models,"inventory",return_value={MODEL:{"usable":True,"digest":DIGEST}}), \
-             patch.object(quality,"resident",return_value=[RESIDENT]):
+             patch.object(quality.models,"inventory",return_value={model:{"usable":True,"digest":digest}}), \
+             patch.object(quality,"resident",return_value=[dict(RESIDENT,name=model,digest=digest)]):
             if interrupted:
                 with self.assertRaises(KeyboardInterrupt):quality.evaluate(args,report,lambda:snapshots.append(deepcopy(report)))
             else:
                 quality.evaluate(args,report,lambda:snapshots.append(deepcopy(report)))
         return report,captured,snapshots
+
+    def test_three_b_cs01_same_question_budget_and_service_path(self):
+        model="llama3.2:3b"
+        digest="a80c4f17acd5"+"0"*52
+        with override_settings(OLLAMA_MODEL=model):
+            report,captured,_=self.exercise(question="CS01",canary=True,model=model,digest=digest)
+        sample=report["samples"][0]
+        self.assertEqual(report["status"],"completed_quality_pending")
+        self.assertEqual((sample["model"],sample["digest"]),(model,digest))
+        self.assertEqual(len(captured),1)
+        self.assertEqual(sample["controls"]["options"],{"seed":42,"temperature":0,"num_ctx":4096,"num_predict":160})
+        self.assertEqual(captured[0]["messages"][-1]["content"],"How do CPU clock cycles per second differ from instructions executed per second?")
+        self.assertNotIn("EVALUATOR_ONLY_CANARY",json.dumps(captured))
 
     def test_actual_prior_answer_retained_without_correct_reference_preload(self):
         report,captured,_=self.exercise()

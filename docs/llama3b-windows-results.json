@@ -1,0 +1,87 @@
+{
+  "scope": "Windows mock/synthetic regression tests only; no Pi inference or measured 3B quality/speed claim",
+  "starting_commit": "10e1060260d86af60df20ce64b68cd3af38bcb40",
+  "branch": "codex/offline-model-selection",
+  "platform": "Windows-10-10.0.26200-SP0",
+  "python": "3.10.2",
+  "full_suite": {
+    "exit_code": 0,
+    "count": 1107,
+    "elapsed_seconds": 106.381,
+    "passed": 1106,
+    "skipped": 1
+  },
+  "focused_suite": {
+    "run": 396,
+    "passed": 395,
+    "skipped": 1,
+    "elapsed_seconds": 14.565,
+    "exit_code": 0
+  },
+  "initial_targeted_suite": {
+    "run": 67,
+    "passed": 67,
+    "skipped": 0,
+    "elapsed_seconds": 3.296
+  },
+  "new_tests": {
+    "run": 11,
+    "passed": 11
+  },
+  "source_sha256": {
+    "scripts/compare_offline_models.py": "1fc295f4d5b4d6f58f0eb0a87dbc3f4c57f94cbba4cd48b33f605025b8ea3b73",
+    "scripts/evaluate_offline_quality.py": "f6996988d892c6d89a94ce0e17be77f8e366e923799ad5e3e4aa250f761bdc25",
+    "scripts/report_offline_quality.py": "3cff990cbe17a165b18ff8cca12946de6c8f338c05847a34af1a2f4068f10f86",
+    "assistant/tests_llama3b.py": "dde00d871aadbef3fa39f8633c4d98184844e061a95e347b9f44bba8e8bc85db",
+    "assistant/tests_quality_evaluation.py": "d5b19ef5924ff8f798724bc9899bbbbcad9f6ab3c58677bc8d8d795acd08bc37"
+  },
+  "bank": {
+    "canonical_sha256": "e752f0aea718c85ee321f0b543e31557bd5986f580c02137ff09f9c6a87c81c7",
+    "version": "1.0.0",
+    "questions": 100,
+    "reviewer_subset": 25,
+    "all_benchmark_files_byte_unchanged": true
+  },
+  "protected_files": {
+    "before": 558,
+    "after": 558,
+    "hash_changes": 0,
+    "inventory_changes": 0,
+    "scope": "555 original protected/unrelated files plus three benchmark artifacts"
+  },
+  "windows_cli_refusal": {
+    "model": "llama3.2:3b",
+    "reason": "linux_pi_only_no_laptop_inference",
+    "inference_process_started": false
+  },
+  "model_identity": {
+    "tag": "llama3.2:3b",
+    "required_prefix": "a80c4f17acd5",
+    "full_installed_digest": "pending actual Pi preflight",
+    "quantization": "record actual installed metadata; not assumed",
+    "resident_allocation": "record Ollama size/size_vram; not an RSS/PSS measurement"
+  },
+  "cs01": {
+    "num_predict": 160,
+    "question_unchanged": true,
+    "rubric_unchanged": true
+  },
+  "changed_files": [
+    "scripts/compare_offline_models.py",
+    "scripts/evaluate_offline_quality.py",
+    "scripts/report_offline_quality.py",
+    "assistant/tests_llama3b.py",
+    "assistant/tests_quality_evaluation.py",
+    "docs/offline-model-selection.md",
+    "docs/offline-quality-evaluation.md",
+    "docs/llama3b-evaluation.md",
+    "docs/llama3b-windows-results.json",
+    "docs/llama3b-windows-tests.log"
+  ],
+  "pi_inference_run": false,
+  "model_downloads": false,
+  "production_configuration_changed": false,
+  "main_changed": false,
+  "all_model_quality_and_matched_latency_pending": true,
+  "pi_command": "python scripts/evaluate_offline_quality.py --question CS01 --model llama3.2:3b --output /tmp/quality-llama3b-CS01-01"
+}

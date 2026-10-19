@@ -5,6 +5,10 @@ versioned faculty/everyday test bank, independent review worksheets and a guarde
 per-question Pi runner. It does not change the model default or establish that
 Llama has passed quality or matched-latency acceptance.
 
+The [Llama 3B extension](llama3b-evaluation.md) adds the already installed
+`llama3.2:3b` candidate without changing the question bank, model default or
+thermal/timeout limits. Its actual Pi quality and latency remain unmeasured here.
+
 The existing harness also has explicit two-request
 [`--cold-warm` and `--warm-distinct` procedures](warm-llm-benchmark.md). Use the
 distinct mode for new questions with quantified prefix caching, and the original
@@ -44,14 +48,14 @@ confirmed the following Pi inventory (prefixes only, not full digests):
 |---|---|---|
 | `qwen3.5:4b-q4_K_M` | `d8b0f5e9760c` | Existing quality reference |
 | `llama3.2:1b` | `baf6a787fdff` | First short trial |
-| `llama3.2:3b` | `a80c4f17acd5` | Installed; outside this milestone's candidate list |
+| `llama3.2:3b` | `a80c4f17acd5` | Third explicit evaluation candidate; no production selection |
 
 The two smaller Qwen candidates were not reported installed; do not download
 them. Latest user-supplied state: 46.1 C, current/latched flags `0x0`, available
 RAM 3.0 GiB, Qwen4B resident at approximately 3.6 GB. These are a snapshot,
 not a live preflight performed by this workspace. Runtime version, full digests,
 new model timing and quality still require Pi validation. Each trial retrieves
-the full digest locally and checks the user-confirmed prefix for Qwen4B/Llama1B;
+the full digest locally and checks the user-confirmed prefix for Qwen4B/Llama1B/Llama3B;
 an optional `--expected-digest` further pins a full digest or >=12 hex prefix.
 An unexpected updated artifact is refused, not silently accepted.
 
