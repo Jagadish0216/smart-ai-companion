@@ -72,6 +72,8 @@ class LocalLLMEngine(AIEngine):
         num_predict: Optional[int] = None,
         num_ctx: Optional[int] = None,
         think: Optional[bool] = None,
+        num_thread: Optional[int] = None,
+        num_batch: Optional[int] = None,
     ):
         import os
 
@@ -89,6 +91,12 @@ class LocalLLMEngine(AIEngine):
             else int(os.environ.get("OLLAMA_NUM_PREDICT", "128"))
         )
         self._model_cache: tuple[float, set[str]] | None = None
+        self._cpu_options = {}
+        for name, value, ceiling in (("num_thread", num_thread, 64), ("num_batch", num_batch, 2048)):
+            if value is not None:
+                if type(value) is not int or not 1 <= value <= ceiling:
+                    raise ValueError(f"{name} must be an integer between 1 and {ceiling}.")
+                self._cpu_options[name] = value
 
     @property
     def engine_name(self) -> str:
@@ -420,6 +428,7 @@ class LocalLLMEngine(AIEngine):
             "keep_alive": self._keep_alive,
             "think": self._think,
             "options": {
+                **self._cpu_options,
                 "num_ctx": self._num_ctx,
                 "num_predict": (
                     num_predict if num_predict is not None else self._num_predict
@@ -523,7 +532,7 @@ class LocalLLMEngine(AIEngine):
             "stream": False,
             "keep_alive": self._keep_alive,
             "think": self._think,
-            "options": {"num_ctx": self._num_ctx},
+            "options": {**self._cpu_options, "num_ctx": self._num_ctx},
         }).encode("utf-8")
         request = urllib.request.Request(
             f"{self._host}/api/generate",

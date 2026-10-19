@@ -158,6 +158,10 @@ OLLAMA_KEEP_ALIVE = os.environ.get('OLLAMA_KEEP_ALIVE', '24h')
 OLLAMA_THINK = os.environ.get('OLLAMA_THINK', 'false').lower() in ('1', 'true', 'yes', 'on')
 OLLAMA_NUM_CTX = int(os.environ.get('OLLAMA_NUM_CTX', '4096'))
 OLLAMA_NUM_PREDICT = int(os.environ.get('OLLAMA_NUM_PREDICT', '128'))
+# Unset preserves Ollama's backend-selected CPU settings. Explicit trials only.
+OLLAMA_NUM_THREAD = int(os.environ['OLLAMA_NUM_THREAD']) if os.environ.get('OLLAMA_NUM_THREAD') else None
+OLLAMA_NUM_BATCH = int(os.environ['OLLAMA_NUM_BATCH']) if os.environ.get('OLLAMA_NUM_BATCH') else None
+VOICE_COMPACT_STYLE = os.environ.get('VOICE_COMPACT_STYLE', 'false').lower() in ('1', 'true', 'yes', 'on')
 # Deprecated settings are parsed for compatibility only; never select models.
 AI_LIGHTWEIGHT_MODEL = os.environ.get('AI_LIGHTWEIGHT_MODEL', OLLAMA_MODEL)
 AI_GENERATION_NORMAL_NUM_PREDICT = int(
@@ -303,6 +307,8 @@ VOICE_LEADING_SILENCE_SECONDS = os.environ.get('VOICE_LEADING_SILENCE_SECONDS', 
 VOICE_TTS_CHUNK_CHARS = os.environ.get('VOICE_TTS_CHUNK_CHARS', '300')
 VOICE_STREAM_TTS_TARGET_CHARS = os.environ.get('VOICE_STREAM_TTS_TARGET_CHARS', '180')
 VOICE_STREAM_FIRST_CHUNK_MIN_CHARS = os.environ.get('VOICE_STREAM_FIRST_CHUNK_MIN_CHARS', '60')
+# Empty keeps sentence/phrase packing identical to the accepted configuration.
+VOICE_STREAM_FIRST_SENTENCE_MIN_CHARS = os.environ.get('VOICE_STREAM_FIRST_SENTENCE_MIN_CHARS', '')
 VOICE_STREAM_FIRST_CHUNK_TARGET_CHARS = os.environ.get('VOICE_STREAM_FIRST_CHUNK_TARGET_CHARS', '100')
 VOICE_STREAM_INTER_CHUNK_SILENCE_SECONDS = os.environ.get('VOICE_STREAM_INTER_CHUNK_SILENCE_SECONDS', '0.12')
 VOICE_TTS_MAX_TOTAL_CHARS = os.environ.get('VOICE_TTS_MAX_TOTAL_CHARS', '0')

@@ -142,6 +142,7 @@ class VoiceLoopConfig:
     stream_inter_chunk_silence_seconds: float = 0.12
     stream_first_chunk_min_chars: int = 60
     stream_first_chunk_target_chars: int = 100
+    stream_first_sentence_min_chars: int | None = None
     capture_vad_adaptive: bool = True
     capture_vad_noise_calibration_seconds: float = 0.5
     capture_vad_start_confirm_ms: int = 60
@@ -191,6 +192,10 @@ class VoiceLoopConfig:
             ),
             stream_first_chunk_min_chars=int(getattr(settings, "VOICE_STREAM_FIRST_CHUNK_MIN_CHARS", 60)),
             stream_first_chunk_target_chars=int(getattr(settings, "VOICE_STREAM_FIRST_CHUNK_TARGET_CHARS", 100)),
+            stream_first_sentence_min_chars=(
+                int(settings.VOICE_STREAM_FIRST_SENTENCE_MIN_CHARS)
+                if getattr(settings, "VOICE_STREAM_FIRST_SENTENCE_MIN_CHARS", "") else None
+            ),
             capture_vad_adaptive=_as_bool(getattr(settings, "VOICE_CAPTURE_VAD_ADAPTIVE", True)),
             capture_vad_noise_calibration_seconds=float(getattr(settings, "VOICE_CAPTURE_VAD_NOISE_CALIBRATION_SECONDS", 0.5)),
             capture_vad_start_confirm_ms=int(getattr(settings, "VOICE_CAPTURE_VAD_START_CONFIRM_MS", 60)),
@@ -234,6 +239,10 @@ class VoiceLoopConfig:
             raise VoiceLoopError("VOICE_STREAM_INTER_CHUNK_SILENCE_SECONDS must be finite and between 0 and 1.")
         if self.stream_first_chunk_min_chars <= 0 or self.stream_first_chunk_target_chars < self.stream_first_chunk_min_chars:
             raise VoiceLoopError("VOICE_STREAM_FIRST_CHUNK_MIN_CHARS must be positive and no greater than VOICE_STREAM_FIRST_CHUNK_TARGET_CHARS.")
+        if (self.stream_first_sentence_min_chars is not None
+                and (type(self.stream_first_sentence_min_chars) is not int
+                     or not 20 <= self.stream_first_sentence_min_chars <= self.stream_first_chunk_min_chars)):
+            raise VoiceLoopError("First sentence minimum must be between 20 and the first chunk minimum.")
         if self.tts_max_total_chars < 0:
             raise VoiceLoopError("VOICE_TTS_MAX_TOTAL_CHARS cannot be negative.")
         if self.input_warmup_seconds < 0:
@@ -741,10 +750,12 @@ class StreamingSpeechBuffer:
     a closing quote/bracket arriving in the next delta stays with its sentence.
     """
 
-    def __init__(self, target_chars=180, *, first_min_chars=60, first_target_chars=100):
+    def __init__(self, target_chars=180, *, first_min_chars=60, first_target_chars=100,
+                 first_sentence_min_chars=None):
         self.target_chars = target_chars
         self.first_min_chars = first_min_chars
         self.first_target_chars = first_target_chars
+        self.first_sentence_min_chars = first_min_chars if first_sentence_min_chars is None else first_sentence_min_chars
         self.first_unit_emitted = False
         self.complete_sentence_emitted = False
         self.emitted_units = 0
@@ -884,7 +895,7 @@ class StreamingSpeechBuffer:
             lower = max(1, self.target_chars - 60)
             upper = self.target_chars + 40
             if not self.first_unit_emitted:
-                useful = [(end, length) for end, length in sentences if length >= self.first_min_chars]
+                useful = [(end, length) for end, length in sentences if length >= self.first_sentence_min_chars]
                 near_first = [end for end, length in useful if length <= self.first_target_chars]
                 boundary = near_first[-1] if near_first else (useful[0][0] if useful else None)
             else:
@@ -1035,6 +1046,7 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
     buffer = StreamingSpeechBuffer(
         config.stream_tts_target_chars, first_min_chars=config.stream_first_chunk_min_chars,
         first_target_chars=config.stream_first_chunk_target_chars,
+        first_sentence_min_chars=config.stream_first_sentence_min_chars,
     )
     notice_filter = LeadingResourceNoticeFilter()
     printed_notices = set()

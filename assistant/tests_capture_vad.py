@@ -553,6 +553,8 @@ class CaptureReadyCallbackTests(SimpleTestCase):
             with self.assertRaisesRegex(VoiceLoopError, "unavailable"):
                 self.voice_loop.run_voice_cycle(config, display=display)
         self.assertEqual(states, ["READY", "LISTENING", "THINKING", "ERROR"])
-        rag_available.assert_called_once_with()
+        # Plain voice planning no longer probes RAG; the mocked service would
+        # otherwise build the sole authoritative capability registry.
+        rag_available.assert_not_called()
         self.assertAlmostEqual(self.vads[-1].start_threshold, 0.027, places=6)
         self.process.terminate.assert_called_once()

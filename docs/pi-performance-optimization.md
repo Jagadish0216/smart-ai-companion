@@ -1,5 +1,11 @@
 # Pi performance investigation and acceptance preparation
 
+Inference follow-up at validated feature commit `3bb84a9`: see
+[`inference-latency-optimization.md`](inference-latency-optimization.md) for the
+new user-supplied Pi prefill/decode measurements, default-preserving changes,
+opt-in experiments, model options and exact-fixture A/B harness. The historical
+Windows measurements below remain unchanged; they are not Pi inference results.
+
 2026-10-19. Accepted baseline: `f59da97d270ebe1157dac65e9862ec8ed77116cd`.
 Feature branch: `system-performance-audit-v1`, finalized for controlled Pi testing
 under the user's explicit commit/push authorization. **No new Pi measurement
