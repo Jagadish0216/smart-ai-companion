@@ -4,12 +4,12 @@ namespace DisplayConfig {
 constexpr int16_t SCREEN_WIDTH = 480;
 constexpr int16_t SCREEN_HEIGHT = 320;
 constexpr uint8_t DISPLAY_ROTATION = 1;
-constexpr int16_t LEFT_EYE_CENTER_X = 150;
-constexpr int16_t RIGHT_EYE_CENTER_X = 330;
-constexpr int16_t EYE_CENTER_Y = 100;
+constexpr int16_t LEFT_EYE_CENTER_X = 166;
+constexpr int16_t RIGHT_EYE_CENTER_X = 314;
+constexpr int16_t EYE_CENTER_Y = 108;
 constexpr int16_t EYE_DIRTY_WIDTH = 84;
-constexpr int16_t EYE_DIRTY_HEIGHT = 104;
-constexpr int16_t EYE_DIRTY_Y = 48;
+constexpr int16_t EYE_DIRTY_HEIGHT = 80;
+constexpr int16_t EYE_DIRTY_Y = 64;
 constexpr int16_t MOUTH_DIRTY_X = 186;
 constexpr int16_t MOUTH_DIRTY_Y = 157;
 constexpr int16_t MOUTH_DIRTY_WIDTH = 108;
@@ -44,4 +44,6 @@ static_assert(MAX_QUERY_TEXT_LENGTH + 7 <= SERIAL_LINE_BUFFER_SIZE,
               "Query command must fit the bounded serial line");
 static_assert(EYE_DIRTY_Y + EYE_DIRTY_HEIGHT <= MOUTH_DIRTY_Y,
               "Eye and mouth replacements must not overlap");
+static_assert(MOUTH_DIRTY_Y + MOUTH_DIRTY_HEIGHT <= BAND_Y,
+              "Face must stay above interaction text");
 }  // namespace DisplayConfig

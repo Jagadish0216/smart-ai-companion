@@ -31,7 +31,9 @@ class CompanionFace {
   TFT_eSPI& tft_;
   TFT_eSprite eyeSprite_;
   TFT_eSprite textSprite_;
+  TFT_eSprite mouthSprite_;
   bool spritesAttempted_ = false, eyeSpriteReady_ = false, textSpriteReady_ = false;
+  bool mouthSpriteReady_ = false;
   CompanionState state_ = CompanionState::BOOTING;
   CompanionMode mode_ = CompanionMode::NONE, displayedMode_ = CompanionMode::NONE;
   char statusText_[DisplayConfig::MAX_STATUS_TEXT_LENGTH + 1] = {};
@@ -49,14 +51,19 @@ class CompanionFace {
   int16_t gazeXQ_ = 0, gazeYQ_ = 0;
   bool eyeValid_ = false;
   uint16_t eyeColor_ = 0;
-  int16_t pupilX_ = 0, pupilY_ = 0, upperLid_ = -1, lowerLid_ = -1;
-  int8_t mouthLevel_ = -1, indicatorType_ = -1, indicatorStep_ = -1;
+  int16_t eyeX_ = 0, eyeY_ = 0, upperLid_ = -1, lowerLid_ = -1;
+  int16_t mouthLevel_ = -1;
+  int8_t indicatorType_ = -1, indicatorStep_ = -1;
   int16_t meterHeights_[DisplayConfig::METER_BARS] = {};
   void renderExpression(uint32_t now);
   void renderEyes(uint16_t color, int16_t x, int16_t y, int16_t upper, int16_t lower);
   void composeEye(TFT_eSPI& canvas, uint16_t color, int16_t x, int16_t y,
                   int16_t upper, int16_t lower);
   void renderMouth(uint8_t level);
+  void beginMouth();
+  void endMouth();
+  TFT_eSPI& mouthCanvas();
+  void renderThinking(uint32_t elapsed);
   void drawSmile(bool concerned = false);
   void clearMouth();
   void renderIndicators(uint32_t now);

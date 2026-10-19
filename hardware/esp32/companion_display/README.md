@@ -1,23 +1,17 @@
-# Smart AI Companion Display Firmware V2.1
+# Smart AI Companion Display Firmware V2.2
 
-A consistent cyan companion with tall Concept-3 eyes above an edge-to-edge
-subtitle/context band. Dark pupils and white highlights retain the visual
-identity. Eyelids, eased gaze, mouth, and restrained color give each state its
-personality.
+Minimal cyan light-shape eyes on black, a shallow idle smile, an independent
+three-dot thinking animation, and a continuous audio-driven speech shape.
+QUERY, MODE, TEXT and LEVEL retain their existing protocol and lifecycle.
 
-Raspberry Pi QUERY/MODE integration is implemented: validated transcripts supply
-QUERY, and service routes supply LOCAL, KNOWLEDGE, or WEB during streaming.
-Physical acceptance of this Pi integration remains pending.
-
-Existing Raspberry Pi STATE/TEXT captions and V2 LEVEL/QUERY/MODE command
-semantics remain supported. **Actual Pi microphone/playback LEVEL integration
-is not implemented here.** LEVEL remains manually testable over serial and
-will be connected to Pi audio in the next integration phase. No Python,
-audio, AI-generation, Wi-Fi, MQTT, touch, sensor, LED, or wiring changes are
-part of this firmware.
+Built on the Phase B audio-level branch. The Pi already supplies microphone and
+streaming ALSA playback LEVEL updates on supported paths; no Pi changes are
+required for this redesign. Physical acceptance was confirmed by the owner on
+2026-10-19: READY and THINKING animations, smooth SPEAKING response to actual
+audio LEVEL, clear audio without stuttering, QUERY/MODE/captions, and return to
+READY without flicker all passed. The accepted appearance is unchanged.
 
 The original proof sketch in hardware/esp32/display_test is unchanged.
-
 
 ## Verified hardware
 
@@ -58,7 +52,7 @@ firmware does not attempt software backlight control.
    was used for the verified hardware test.
 5. Apply the repository's TFT_eSPI configuration before compiling.
 
-No additional libraries are required by Display Firmware V2.1.
+No additional libraries are required by Display Firmware V2.2.
 
 ## Why TFT_eSPI needs a library setup file
 
@@ -74,7 +68,7 @@ tft_espi/User_Setup.h
 It must be copied to the installed TFT_eSPI library as `User_Setup.h` before
 compilation. The checked-in setup selects ILI9488, the verified GPIO mapping,
 the minimal required fonts, disabled touch, and the stable 10 MHz SPI clock.
-Twenty MHz may be evaluated later, but it is intentionally not enabled in V2.1.
+Twenty MHz may be evaluated later, but it is intentionally not enabled in V2.2.
 
 ### Apply the setup with PowerShell
 
@@ -126,7 +120,7 @@ file.
 Expected startup output resembles:
 
 ```text
-Smart AI Companion Display Firmware V2.1
+Smart AI Companion Display Firmware V2.2
 Display: 480 x 320
 State: BOOTING
 ```
@@ -134,113 +128,61 @@ State: BOOTING
 The dimensions are printed using `tft.width()` and `tft.height()` after display
 initialization and rotation.
 
-## V2.1 layout and character
+## V2.2 layout and rendering
 
-All states use the same underlying 66 x 86 px rounded eyes, radius 18,
-centered at (150,100) and (330,100). Pupil radius is 7, with a radius-2 white
-highlight. Eased horizontal/vertical gaze stays within about +/-6 and +/-5 px.
-The eyes' full shape never compresses during a blink.
+[State layout preview](../../../docs/tft-modern-face-v2-preview.png) (illustration,
+not a hardware capture; owner-reported hardware acceptance is recorded above).
 
-An upper/lower eyelid mask covers the eye instead: the upper lid contributes
-78% of closure, the lower 22%. The deterministic coverage sequence is
-0, 35, 80, 96, 80, 35, 0 percent in 36 ms time slots. Full reopening targets
-216 ms; completion is 252 ms. Rendering skips elapsed frames rather than
-queuing a slow blink. Perceived pacing still needs real 10 MHz TFT acceptance.
-Primary blink gaps are 4.8, 6.4, 5.7, 7.2, and 5.3 seconds, with an occasional
-double blink every fifth primary cycle and a 180 ms second-blink gap. OFFLINE
-and ECO add 1.6 and 2.4 seconds to normal blink gaps.
+Eyes are solid 68 x 54 px rounded light shapes (20 px maximum radius), centered
+at (166,108) and (314,108). The entire eye moves with eased gaze; pupils and
+highlights are removed. Blinks close into rounded slits with the existing
+elapsed-time blink sequence and relaxed scheduling. READY gaze moves only
+about +/-2 px horizontally and +/-1 px vertically over long holds.
 
-The face occupies the upper 220 pixels. The interaction band is
-(0,220,480,100), with a single subtle separator at y=220 and no outer border.
-Main text is in (24,250,432,62), inset 2 px, with at most two lines.
-The installed TFT_eSPI FreeSans12pt7b proportional font is used at native size:
-capital A is 18 px tall, between the previous built-in typography sizes.
-Its 17 px maximum ascent and 6 px descender fit baselines 20 and 49 inside
-the local text region. Two-line baseline spacing is 29 px; single-line
-baseline is 37. Unusually wide text falls back to existing font 2; very long
-queries can end in a display-only ellipsis. Wrapping uses measured widths,
-preserves words when they fit, and splits an oversized token only as needed.
-No new font file or dependency is added.
+The mouth region is (186,157,108,48), separated from both eyes and captions.
+READY has a shallow smile; LISTENING has a quiet line and subtly attentive eyes.
+THINKING has slow upward/side gaze (1.4 s holds) and three small beads cycling
+every 240 ms in a 1.44 s period. It never uses the speaking mouth. SPEAKING
+maps the smoothed amplitude continuously to a solid rounded shape from
+38 x 4 to 62 x 16 px, with a small silence gate. There are no abrupt mouth
+categories or hollow mechanical outlines. ERROR/PROTECTIVE have narrowed eyes,
+a quiet line, readable default text and a steady red/amber header accent.
+OFFLINE/ECO retain dim, relaxed expressions; all eleven states remain supported.
 
-MODE is small muted font-2 text, right aligned at (456,228), visible only
-during THINKING/SPEAKING. It has no outline and never overlays main text.
-A small three-dot processing sequence occupies (24,228,64,18), with 350 ms
-steps, for THINKING/CONNECTING and the initial boot interval. Steady 18 x 2 px
-amber/red accents occupy that header area for PROTECTIVE/ERROR.
+The interaction band is (0,220,480,100), black with one subtle separator.
+The existing proportional FreeSans12pt7b captions, measured two-line wrapping,
+font-2 fallback, display ellipsis, 40-byte TEXT and 80-byte QUERY limits remain.
+Main text uses (24,250,432,62). MODE remains right aligned at (456,228).
+THINKING labels the content field QUERY when displaying a supplied query; processing beads sit on the face,
+so the header does not duplicate their motion. CONNECTING/BOOTING retain small
+header dots. LISTENING reserves the right side for the existing seven-bar
+amplitude meter, with caption text confined to the left 260 px.
 
-The seven listening bars retain their V2 profile, dimensions, LEVEL filter,
-and stale behavior: x=320,336,352,368,384,400,416; width 8; bottom y=298;
-minimum height 4 and maximum heights 18,26,32,38,32,26,18. The listening
-text uses only the left 260 px of the content region, so caption/status
-refreshes do not wipe the live meter.
+Three independent 16-bit sprites are attempted once at startup:
 
-## Local composition and selective replacement
-
-Two 16-bit TFT_eSprite buffers are attempted once at startup:
-
-| Buffer | Dimensions | Pixel allocation including TFT_eSPI's extra pixel |
+| Buffer | Dimensions | Pixel bytes including extra pixel |
 |---|---|---|
-| Reusable eye | 84 x 104 | 17,474 bytes |
-| Interaction text | 432 x 62 | 53,570 bytes |
-| Combined | Two local regions | 71,044 bytes, excluding object/allocator overhead |
+| Reusable eye | 84 x 80 | 13,442 |
+| Interaction text | 432 x 62 | 53,570 |
+| Mouth / processing | 108 x 48 | 10,370 |
+| Total | Local regions only | 77,382 |
 
-There is one eye sprite, reused for both eyes. It composes the final
-background, tall eye, pupil, highlight, and eyelid masks, then pushes the
-result. Eye caches compare color, pupil position, and lid coverage: still
-frames push nothing. There is no full-screen sprite or permanent pair of
-eye buffers.
+This adds 6,338 pixel bytes over V2.1, excluding object/allocator overhead.
+Allocation failure falls back independently to bounded direct rendering and
+prints one startup warning. No per-frame allocations or full-screen sprites.
+Changed eyes are composed once and pushed to both positions; changed mouth
+geometry and processing beads are composed locally before pushing. Still
+components send no pixels. TEXT changes replace only the caption region;
+STATE marks dirty data without clearing the face. Only initialization uses
+fillScreen. Text/mode/query/reset semantics and the listening meter are intact.
 
-The text sprite composes background and the latest two-line text before one
-local push. In LISTENING only its left 260 px are pushed. Entering LISTENING
-clears the old caption's right-hand footprint locally and repaints the bars;
-leaving it replaces the complete content region with the new text frame.
-
-Each allocation is independent. Failure prints one concise startup warning
-and uses a bounded direct-render fallback for that component. It does not
-reboot, retry allocations in the loop, or continually allocate/free memory.
-Fallback can show more local erase/repaint flicker than sprite rendering.
-
-STATE no longer performs any drawing or blanket face clear. It resets the
-same interaction data/LEVEL lifecycle, resets blink scheduling, and marks
-text/expression for an update. Component caches and eased gaze survive:
-only changed eye frames, mouth shape, mode text, and processing/accent
-regions are replaced. Mouth clears are immediately followed by the new
-mouth in the same function; verified V2 four-category mouth dimensions
-remain unchanged.
-
-MODE changes touch only their 120 x 18 header field. Processing/accent updates
-touch only the 64 x 18 header field. The interaction band and separator are
-drawn once at initialization. Only initialization calls fillScreen.
-No face activity particles, brows, or recurring ERROR color animation are
-drawn.
-
-Normal active/LEVEL updates target 100 ms, quiet idle 180 ms, ECO 250 ms.
-Brief blink frames use their shorter interval without accelerating the
-100 ms LEVEL smoothing filter. Timing is millis-driven and wrap-safe;
-SPI transfer and glyph drawing can lower actual frame rate. Sprites remove
-the visible background-clear stage, but pushes are still sequential SPI
-writes, not atomic screen swaps or a guarantee of zero tearing.
-
-## State behavior
-
-| State | Face / animation | Interaction content |
-|---|---|---|
-| BOOTING | Tall eyes revealed by smooth upper-lid opening over about 900 ms; smile afterward | Starting...; brief lower-band processing dots |
-| SETUP | Friendly same-base eyes, slight upper lid, smile | Ready for setup |
-| CONNECTING | Same tall eyes, slight upward gaze | Connecting...; lower-band processing dots |
-| READY | Calm smile, long holds, 4.8 s gaze targets with horizontal/vertical easing, eyelid blinks | Ready |
-| LISTENING | Tall attentive eyes; slight lid/gaze response to level without resizing the eye | Listening...; preserved seven-bar amplitude meter |
-| THINKING | Center/up-right/hold/center/up-left/hold/center gaze in seven 500 ms phases; no face decoration | QUERY or Thinking...; small processing dots; supplied MODE |
-| SPEAKING | Tall eyes, subtle slow gaze/blinks, preserved closed/small/medium/wide mouth categories | TEXT captions; supplied MODE; no large state label |
-| OFFLINE | Friendly READY-like expression, dim cyan, 6.2 s gaze targets and slower blinks | Local mode |
-| ECO | Dim cyan, relaxed 10 px upper/2 px lower lids, smile, 7.2 s gaze targets | Eco mode |
-| PROTECTIVE | 18 px upper/4 px lower lids, mildly lowered pupils, small concerned mouth | Protecting resources; steady small amber accent |
-| ERROR | 22 px upper/6 px lower lids, mildly lowered pupils, small concerned mouth | Let's try again; steady small red accent |
-
-The meter is an amplitude visualization, not a frequency waveform. No
-network readings, progress percentages, temperatures, or other system data
-are invented.
-
+Active expression frames target 50 ms, idle 180 ms, ECO 250 ms, blinks 36 ms.
+The LEVEL filter keeps its separate 100 ms clock and quarter-distance easing;
+faster facial frames do not accelerate amplitude smoothing. Times are
+millis-driven and wrap-safe. Serial work stays bounded to 64 bytes per loop.
+Actual frame rate is limited by 10 MHz SPI transfers; target intervals are not
+hardware timing guarantees. Sprite pushes reduce local clear/repaint flicker
+but remain sequential transfers. Direct fallback can flicker more.
 
 ## Serial protocol
 
@@ -287,8 +229,8 @@ The latest valid LEVEL remains fresh for **1200 ms**. Send levels about 8–10
 times per second for a continuously reactive manual test. Fixed-point easing
 moves one quarter of the remaining difference per 100 ms level update, independently of eyelid frames, smoothing
 both the meter and mouth. A valid zero brings the mouth toward closed and
-the bars toward their minimum. The speaking mouth uses four smoothed-level
-ranges: below 12, 12–31, 32–61, and 62–100.
+the bars toward their minimum. The speaking mouth uses continuous smoothed
+amplitude, with a silence gate at levels 0–5 and gradual growth above that range.
 
 When no level is fresh, LISTENING eases toward a small autonomous pulse;
 SPEAKING eases toward a restrained deterministic multi-shape rhythm. These
@@ -387,8 +329,8 @@ not a partially executed command. Test TEXT with 40 wide characters and short
 two-line captions; inspect readability and absence of stale pixels.
 
 Visit all eleven states. Leave READY running for at least 60 seconds to see
-smooth gaze, asymmetrical eyelid coverage, and an occasional double blink. Check that transitions
-from ERROR/PROTECTIVE replace prior eyelid/mouth details and steady accents, from THINKING stop the lower-band processing dots,
+smooth gaze, rounded blink closure, and an occasional double blink. Check that transitions
+from ERROR/PROTECTIVE replace prior eyelid/mouth details and steady accents, from THINKING stop the facial processing dots and clear the QUERY header,
 and from LISTENING erase bars. Check that several TEXT updates during SPEAKING
 preserve the face/mouth animation and mode label, and final READY restores Ready.
 These visual/hardware checks require the actual ESP32/TFT.

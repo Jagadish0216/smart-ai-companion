@@ -223,7 +223,7 @@ void setup() {
   Serial.begin(115200);
   companionFace.begin();
 
-  Serial.println("Smart AI Companion Display Firmware V2.1");
+  Serial.println("Smart AI Companion Display Firmware V2.2");
   Serial.print("Display: ");
   Serial.print(tft.width());
   Serial.print(" x ");

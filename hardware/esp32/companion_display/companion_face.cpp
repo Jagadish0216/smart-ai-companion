@@ -13,18 +13,18 @@ bool equalsIgnoreCase(const char* left, const char* right) {
   }
   return *left == '\0' && *right == '\0';
 }
-// LEVEL smoothing is unchanged from V2: quarter-distance, 1/16 fixed point.
+// Quarter-distance filter at 100 ms, independent of expression frame rate.
 int16_t ease(int16_t current, int16_t target) {
   const int16_t delta = target - current;
   return current + (delta > 0 ? (delta + 3) / 4 : (delta - 3) / 4);
 }
-const int8_t GAZE_X[] = {0, 5, 0, -6, 0};
-const int8_t GAZE_Y[] = {0, -4, 3, -2, 0};
+const int8_t GAZE_X[] = {0, 2, 0, -2, 0};
+const int8_t GAZE_Y[] = {0, -1, 1, -1, 0};
 const uint8_t MOUTH_SEQUENCE[] = {0, 18, 36, 55, 34, 12, 0, 25, 46, 22, 0, 0};
 }  // namespace
 
 CompanionFace::CompanionFace(TFT_eSPI& display)
-    : tft_(display), eyeSprite_(&display), textSprite_(&display) {}
+    : tft_(display), eyeSprite_(&display), textSprite_(&display), mouthSprite_(&display) {}
 
 void CompanionFace::begin() {
   tft_.init();
@@ -38,10 +38,14 @@ void CompanionFace::begin() {
     spritesAttempted_ = true;
     eyeSprite_.setColorDepth(16);
     textSprite_.setColorDepth(16);
+    mouthSprite_.setColorDepth(16);
     eyeSpriteReady_ = eyeSprite_.createSprite(DisplayConfig::EYE_DIRTY_WIDTH,
                                              DisplayConfig::EYE_DIRTY_HEIGHT) != nullptr;
     textSpriteReady_ = textSprite_.createSprite(DisplayConfig::CONTENT_WIDTH,
                                                DisplayConfig::CONTENT_HEIGHT) != nullptr;
+    mouthSpriteReady_ = mouthSprite_.createSprite(DisplayConfig::MOUTH_DIRTY_WIDTH,
+                                                 DisplayConfig::MOUTH_DIRTY_HEIGHT) != nullptr;
+    if (!mouthSpriteReady_) Serial.println("Display: mouth sprite unavailable; direct fallback");
     if (!eyeSpriteReady_) Serial.println("Display: eye sprite unavailable; direct fallback");
     if (!textSpriteReady_) Serial.println("Display: text sprite unavailable; direct fallback");
   }
@@ -61,7 +65,7 @@ void CompanionFace::setState(CompanionState state) {
   copyText(statusText_, sizeof(statusText_), defaultStatusText(state));
   customText_ = false;
   stateEnteredAt_ = millis();
-  lastLevelFrameAt_ = stateEnteredAt_ - CompanionTheme::ACTIVE_FRAME_MS;
+  lastLevelFrameAt_ = stateEnteredAt_ - CompanionTheme::LEVEL_FRAME_MS;
   nextBlinkAt_ = stateEnteredAt_ + CompanionTheme::READY_BLINK_INTERVALS_MS[0] + relaxedBlinkExtra();
   blinking_ = secondBlinkPending_ = false;
   blinkCount_ = 0;
@@ -156,7 +160,7 @@ void CompanionFace::renderExpression(uint32_t now) {
     targetLevel = pulse[(elapsed / 300) % sizeof(pulse)];
   }
   // Brief faster eyelid frames must not accelerate the verified LEVEL filter.
-  if (now - lastLevelFrameAt_ >= CompanionTheme::ACTIVE_FRAME_MS) {
+  if (now - lastLevelFrameAt_ >= CompanionTheme::LEVEL_FRAME_MS) {
     lastLevelFrameAt_ = now;
     smoothLevelQ_ = ease(smoothLevelQ_, targetLevel * 16);
   }
@@ -171,7 +175,7 @@ void CompanionFace::renderExpression(uint32_t now) {
       const uint32_t opened = p * p * (2700 - 2 * p) / 810000;
       upper = (CompanionTheme::NORMAL_EYE_HEIGHT - 2) * (900 - opened) / 900;
       if (elapsed >= 900) drawSmile();
-      else if (mouthLevel_ != 6) { clearMouth(); mouthLevel_ = 6; }
+      else if (mouthLevel_ != 203) { clearMouth(); mouthLevel_ = 203; }
       break;
     }
     case CompanionState::READY:
@@ -193,17 +197,16 @@ void CompanionFace::renderExpression(uint32_t now) {
     case CompanionState::CONNECTING:
       targetY = -3; renderMouth(0); break;
     case CompanionState::LISTENING:
-      upper = 4 - smoothLevel / 35;
-      targetY = -2 - smoothLevel / 35;
+      upper = 2 - smoothLevel / 50;
+      targetY = -2 - smoothLevel / 50;
       renderMouth(0);
       break;
     case CompanionState::THINKING: {
-      const int8_t x[] = {0, 6, 6, 0, -6, -6, 0};
-      const int8_t y[] = {-2, -5, -5, -2, -5, -5, -2};
-      const uint8_t step = (elapsed / 500) % 7;
-      targetX = x[step]; targetY = y[step];
+      const int8_t x[] = {0, 3, 3, 0, -3, -3};
+      const uint8_t step = (elapsed / 1400) % 6;
+      targetX = x[step]; targetY = -3;
       upper = 6;
-      renderMouth(0);
+      renderThinking(elapsed);
       break;
     }
     case CompanionState::SPEAKING: {
@@ -211,15 +214,15 @@ void CompanionFace::renderExpression(uint32_t now) {
       const int8_t y[] = {-1, 0, 1, 0, 0};
       const uint8_t step = (elapsed / 4500) % 5;
       targetX = x[step]; targetY = y[step];
-      renderMouth(smoothLevel < 12 ? 0 : smoothLevel < 32 ? 1 : smoothLevel < 62 ? 2 : 3);
+      renderMouth(smoothLevel);
       break;
     }
     case CompanionState::PROTECTIVE:
-      allowBlink = false; upper = 18; lower = 4; targetY = 2;
+      allowBlink = false; upper = 12; lower = 2; targetY = 2;
       drawSmile(true);
       break;
     case CompanionState::ERROR:
-      allowBlink = false; upper = 22; lower = 6; targetY = 3;
+      allowBlink = false; upper = 16; lower = 2; targetY = 2;
       drawSmile(true);
       break;
   }
@@ -228,7 +231,7 @@ void CompanionFace::renderExpression(uint32_t now) {
   if (allowBlink) {
     const uint8_t coverage = blinkCoverage(now);
     const int16_t visible = CompanionTheme::NORMAL_EYE_HEIGHT - upper - lower;
-    // The shape never compresses: upper/lower masks cover 78% / 22% of the blink.
+    // Close into a soft rounded slit, then reopen at the elapsed-time phase.
     upper += visible * coverage * 78 / 10000;
     lower += visible * coverage * 22 / 10000;
   }
@@ -243,15 +246,16 @@ void CompanionFace::composeEye(TFT_eSPI& canvas, uint16_t color, int16_t x, int1
   const int16_t cy = DisplayConfig::EYE_CENTER_Y - DisplayConfig::EYE_DIRTY_Y;
   const int16_t width = CompanionTheme::NORMAL_EYE_WIDTH;
   const int16_t height = CompanionTheme::NORMAL_EYE_HEIGHT;
-  const int16_t left = cx - width / 2, top = cy - height / 2;
-  canvas.fillRoundRect(left, top, width, height, CompanionTheme::EYE_CORNER_RADIUS, color);
-  canvas.fillCircle(cx + x, cy + y, CompanionTheme::PUPIL_RADIUS, CompanionTheme::BACKGROUND);
-  canvas.fillCircle(cx + x - 2, cy + y - 2, 2, CompanionTheme::SOFT_WHITE);
-  if (upper > 0) canvas.fillRect(left, top, width, upper, CompanionTheme::BACKGROUND);
-  if (lower > 0) canvas.fillRect(left, top + height - lower, width, lower, CompanionTheme::BACKGROUND);
+  // Move the whole light shape; no pupils, highlights or mechanical lid cuts.
+  const int16_t visibleHeight = height - upper - lower;
+  const int16_t drawnHeight = visibleHeight < 3 ? 3 : visibleHeight;
+  const int16_t radius = drawnHeight / 2 < CompanionTheme::EYE_CORNER_RADIUS
+                          ? drawnHeight / 2 : CompanionTheme::EYE_CORNER_RADIUS;
+  const int16_t top = cy + y - height / 2 + upper;
+  canvas.fillRoundRect(cx + x - width / 2, top, width, drawnHeight, radius, color);
 }
 void CompanionFace::renderEyes(uint16_t color, int16_t x, int16_t y, int16_t upper, int16_t lower) {
-  if (eyeValid_ && color == eyeColor_ && x == pupilX_ && y == pupilY_ &&
+  if (eyeValid_ && color == eyeColor_ && x == eyeX_ && y == eyeY_ &&
       upper == upperLid_ && lower == lowerLid_) return;
   // One sprite is composed once and reused for both symmetric eyes.
   if (eyeSpriteReady_) {
@@ -269,7 +273,7 @@ void CompanionFace::renderEyes(uint16_t color, int16_t x, int16_t y, int16_t upp
       tft_.resetViewport();
     }
   }
-  eyeValid_ = true; eyeColor_ = color; pupilX_ = x; pupilY_ = y;
+  eyeValid_ = true; eyeColor_ = color; eyeX_ = x; eyeY_ = y;
   upperLid_ = upper; lowerLid_ = lower;
 }
 
@@ -277,26 +281,66 @@ void CompanionFace::clearMouth() {
   tft_.fillRect(DisplayConfig::MOUTH_DIRTY_X, DisplayConfig::MOUTH_DIRTY_Y,
                 DisplayConfig::MOUTH_DIRTY_WIDTH, DisplayConfig::MOUTH_DIRTY_HEIGHT, CompanionTheme::BACKGROUND);
 }
+TFT_eSPI& CompanionFace::mouthCanvas() {
+  return mouthSpriteReady_ ? static_cast<TFT_eSPI&>(mouthSprite_) : tft_;
+}
+void CompanionFace::beginMouth() {
+  if (!mouthSpriteReady_)
+    tft_.setViewport(DisplayConfig::MOUTH_DIRTY_X, DisplayConfig::MOUTH_DIRTY_Y,
+                     DisplayConfig::MOUTH_DIRTY_WIDTH, DisplayConfig::MOUTH_DIRTY_HEIGHT);
+  mouthCanvas().fillRect(0, 0, DisplayConfig::MOUTH_DIRTY_WIDTH,
+                         DisplayConfig::MOUTH_DIRTY_HEIGHT, CompanionTheme::BACKGROUND);
+}
+void CompanionFace::endMouth() {
+  if (mouthSpriteReady_)
+    mouthSprite_.pushSprite(DisplayConfig::MOUTH_DIRTY_X, DisplayConfig::MOUTH_DIRTY_Y);
+  else tft_.resetViewport();
+}
 void CompanionFace::drawSmile(bool concerned) {
-  const int8_t expression = concerned ? 5 : 4;
+  const int16_t expression = concerned ? 202 : 201;
   if (mouthLevel_ == expression) return;
   mouthLevel_ = expression;
-  clearMouth();
-  const int16_t y = 181;
-  tft_.drawLine(218, y + (concerned ? 5 : -3), 230, y + (concerned ? -3 : 5), CompanionTheme::PRIMARY_CYAN);
-  tft_.drawFastHLine(230, y + (concerned ? -3 : 5), 20, CompanionTheme::PRIMARY_CYAN);
-  tft_.drawLine(250, y + (concerned ? -3 : 5), 262, y + (concerned ? 5 : -3), CompanionTheme::PRIMARY_CYAN);
+  beginMouth();
+  TFT_eSPI& canvas = mouthCanvas();
+  const int16_t cx = DisplayConfig::MOUTH_DIRTY_WIDTH / 2;
+  if (concerned) {
+    canvas.fillRoundRect(cx - 16, 22, 32, 3, 1, CompanionTheme::DIM_CYAN);
+  } else {
+    // Shallow continuous arc, drawn only when the expression changes.
+    for (int16_t x = -20; x <= 20; x += 2)
+      canvas.fillCircle(cx + x, 25 - x * x / 100, 1, CompanionTheme::PRIMARY_CYAN);
+  }
+  endMouth();
 }
 void CompanionFace::renderMouth(uint8_t level) {
-  if (mouthLevel_ == level) return;
-  mouthLevel_ = level;
-  clearMouth();
-  // Verified V2 mouth geometry and categories are deliberately unchanged.
-  const int16_t widths[] = {38, 34, 46, 58}, heights[] = {4, 12, 22, 32};
-  const int16_t width = widths[level], height = heights[level];
-  tft_.fillRoundRect(240 - width / 2, 181 - height / 2, width, height, height / 2, CompanionTheme::PRIMARY_CYAN);
-  if (level) tft_.fillRoundRect(240 - (width - 10) / 2, 181 - (height - 6) / 2,
-                                width - 10, height - 6, (height - 6) / 2, CompanionTheme::BACKGROUND);
+  // Continuous amplitude envelope: a quiet line expands to a compact soft pill.
+  // Gate tiny amplitudes; integer pixel caching avoids redundant SPI pushes.
+  const int16_t amplitude = level <= 5 ? 0 : level - 5;
+  const int16_t width = 38 + amplitude * 24 / 95;
+  const int16_t height = 4 + amplitude * 12 / 95;
+  const int16_t geometry = width * 20 + height;
+  if (mouthLevel_ == geometry) return;
+  mouthLevel_ = geometry;
+  beginMouth();
+  mouthCanvas().fillRoundRect((DisplayConfig::MOUTH_DIRTY_WIDTH - width) / 2,
+                              24 - height / 2, width, height, height / 2,
+                              CompanionTheme::PRIMARY_CYAN);
+  endMouth();
+}
+void CompanionFace::renderThinking(uint32_t elapsed) {
+  // Three beads breathe in a slow traveling cycle; never use speech geometry.
+  const uint8_t step = (elapsed / 240) % 6;
+  if (mouthLevel_ == 210 + step) return;
+  mouthLevel_ = 210 + step;
+  beginMouth();
+  for (uint8_t i = 0; i < 3; ++i) {
+    const uint8_t phase = (step + 6 - i * 2) % 6;
+    const uint8_t radius = phase == 0 ? 3 : 2;
+    mouthCanvas().fillCircle(DisplayConfig::MOUTH_DIRTY_WIDTH / 2 - 14 + i * 14,
+                             24, radius, phase < 2 ? CompanionTheme::PRIMARY_CYAN
+                                                  : CompanionTheme::DIM_CYAN);
+  }
+  endMouth();
 }
 
 void CompanionFace::renderIndicators(uint32_t now) {
@@ -316,15 +360,23 @@ void CompanionFace::renderIndicators(uint32_t now) {
     displayedMode_ = visible;
   }
   const uint32_t elapsed = now - stateEnteredAt_;
-  const bool processing = state_ == CompanionState::THINKING || state_ == CompanionState::CONNECTING ||
+  const bool processing = state_ == CompanionState::CONNECTING ||
                           (state_ == CompanionState::BOOTING && elapsed < 900);
-  const int8_t type = processing ? 1 : state_ == CompanionState::PROTECTIVE ? 2 :
-                                      state_ == CompanionState::ERROR ? 3 : 0;
-  const int8_t step = processing ? (elapsed / 350) % 3 : 0;
+  const bool showingQuery = state_ == CompanionState::THINKING && query_[0] && !customText_;
+  const int8_t type = showingQuery ? 4 : processing ? 1 :
+                        state_ == CompanionState::PROTECTIVE ? 2 :
+                        state_ == CompanionState::ERROR ? 3 : 0;
+  const int8_t step = type == 1 ? (elapsed / 350) % 3 : 0;
   if (type == indicatorType_ && step == indicatorStep_) return;
   tft_.fillRect(DisplayConfig::INDICATOR_X, DisplayConfig::INDICATOR_Y,
                 DisplayConfig::INDICATOR_WIDTH, DisplayConfig::INDICATOR_HEIGHT, CompanionTheme::PANEL);
-  if (processing) {
+  if (type == 4) {
+    tft_.setFreeFont(nullptr);
+    tft_.setTextSize(1);
+    tft_.setTextDatum(TL_DATUM);
+    tft_.setTextColor(CompanionTheme::MUTED_GREY, CompanionTheme::PANEL);
+    tft_.drawString("QUERY", DisplayConfig::INDICATOR_X, DisplayConfig::INDICATOR_Y, 2);
+  } else if (type == 1) {
     for (uint8_t index = 0; index < 3; ++index)
       tft_.fillCircle(30 + 12 * index, 237, 2,
                       index == step ? CompanionTheme::PRIMARY_CYAN : CompanionTheme::DIM_CYAN);
