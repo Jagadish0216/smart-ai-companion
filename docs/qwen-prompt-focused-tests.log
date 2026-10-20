@@ -1,0 +1,58 @@
+Creating test database for alias 'default'...
+
+...................................................................................AI engine unavailable: disconnect
+.........AI engine unavailable: disconnect
+.AI engine unavailable: offline
+Found 243 test(s).
+System check identified no issues (0 silenced).
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: I understood your request: 'Explain local AI.'. Please provide any additional context needed for a more specific answer.
+TTS chunks: 2
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.318s ai_ttft=0.311s first_tts_text_ready=0.315s first_tts_unit_ready=0.315s first_audio_ready=0.319s ai_to_first_speech=0.320s first_speech=0.323s ai_total=0.318s tts=0.000s audio_prepare=0.007s playback=0.001s total=0.332s first_tts_chars=92 playback_chunks=2 playback_starvation_ms=1.729 max_playback_starvation_ms=1.729 num_predict=64
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: I understood your request: 'Explain local AI.'. Please provide any additional context needed for a more specific answer.
+TTS chunks: 2
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.315s ai_ttft=0.310s first_tts_text_ready=0.313s first_tts_unit_ready=0.313s first_audio_ready=0.316s ai_to_first_speech=0.316s first_speech=0.318s ai_total=0.315s tts=0.000s audio_prepare=0.004s playback=0.000s total=0.325s first_tts_chars=92 playback_chunks=2 playback_starvation_ms=1.748 max_playback_starvation_ms=1.748 num_predict=64
+Assistant: An answer.
+TTS chunks: 1
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 2
+Assistant: Another completed sentence. Another completed sentence. Another completed sentence. Another completed sentence. Another completed sentence.
+Assistant: Local AI is temporarily unavailable because the device is protecting itself.
+TTS chunks: 1
+Assistant: Please clarify your request.
+TTS chunks: 1
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. Queued sentence.
+Assistant: Incomplete text
+Assistant: Solar panels convert sunlight into electricity by using photovoltaic cells,
+TTS chunks: 1
+Assistant: An answer.
+TTS chunks: 1
+Assistant: Unfinished text
+Assistant: This explanation begins with enough meaningful words to describe the process, with useful details; and continues with the final thought.
+TTS chunks: 2
+Assistant: A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 3
+Assistant: A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence.
+TTS chunks: 4
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. Second sentence. Last unfinished thought
+TTS chunks: 3
+Assistant: It's a small computer. It runs Linux. It has GPIO pins.
+TTS chunks: 1
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 2
+Assistant: An answer.
+TTS chunks: 1
+Assistant: A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence.
+......................................................................................................................................................
+----------------------------------------------------------------------
+Ran 243 tests in 6.065s
+
+OK
+Destroying test database for alias 'default'...
