@@ -164,14 +164,14 @@ def whisper_transcribe(binary, model, audio, directory):
 
 
 def child(args):
-    result = {"status": "aborted", "engine": args.engine}
+    result = {"status": "aborted", "engine": args.worker_engine}
     started, cpu = time.monotonic(), time.process_time()
     try:
-        if args.engine == "moonshine" and (sys.prefix == sys.base_prefix or sys.prefix == args.baseline_prefix):
+        if args.worker_engine == "moonshine" and (sys.prefix == sys.base_prefix or sys.prefix == args.baseline_prefix):
             raise ValueError("isolated_candidate_environment_required")
         samples = read_audio(args.audio)
         with no_network():
-            if args.engine == "moonshine":
+            if args.worker_engine == "moonshine":
                 result["model_files"] = {name: fingerprint(args.moonshine_model/name) for name in FILES}
                 measured = moonshine_transcribe(args.moonshine_model, samples)
             else:
@@ -208,9 +208,18 @@ def run(args):
     from scripts import compare_offline_models as models
     from scripts.validate_offline_voice import demo_start_reason, require_resident, QWEN, monitor
     from scripts.validate_pi_performance import isolated_database
-    report = dict(status="aborted", reference=args.reference, samples=[], telemetry=[], audio_sha256=None,
+    single = getattr(args, "engine", None) == "moonshine"
+    engines = ("moonshine",) if single else ("whisper", "moonshine")
+    report = dict(run_mode="moonshine_only" if single else "two_engine_comparison",
+                  requested_engines=list(engines), status="aborted", reference=args.reference, samples=[], telemetry=[], audio_sha256=None,
                   llm_requests=0, offline="local_models_python_network_blocked_native_code_not_os_sandboxed")
-    report["whisper_controls"] = dict(threads=4, native_vad=False, timestamps=False)
+    report["whisper_controls"] = None if single else dict(threads=4, native_vad=False, timestamps=False)
+    if single:
+        report["historical_whisper_reference"] = dict(
+            source="operator_reported_non_contemporaneous_not_rerun", wer=.4545,
+            final_text_seconds=3.55, peak_sampled_temperature_c=54.5,
+            normalization_and_audio_fingerprint_verified=False,
+            interpretation="Historical context only; not a completed same-run comparison.")
     report["moonshine_controls"] = dict(architecture="SMALL_STREAMING", version="0.1.5",
         manifest="english_quantized_26_08_21", feed_block_seconds=.1, realtime_pacing=False)
     lock = None
@@ -231,7 +240,8 @@ def run(args):
             report["audio_sha256"] = hashlib.sha256(snapshot.read_bytes()).hexdigest()
             digest = models.verify_identity(QWEN, models.inventory(args.host)[QWEN], models.CONFIRMED_PREFIXES[QWEN])
             report["qwen_digest"] = digest
-            for engine, python in (("whisper", Path(sys.executable)), ("moonshine", args.python)):
+            for engine in engines:
+                python = args.python if engine == "moonshine" else Path(sys.executable)
                 point = telemetry()
                 report["telemetry"].append(point)
                 reason = demo_start_reason(point)
@@ -243,9 +253,11 @@ def run(args):
                 with tempfile.TemporaryDirectory(prefix="stt-worker-") as directory:
                     directory = Path(directory)
                     command = [str(python), str(Path(__file__).resolve()), "--child-dir", str(directory),
-                               "--engine", engine, "--audio", str(snapshot.resolve()),
-                               "--whisper-bin", str(args.whisper_bin.resolve()), "--whisper-model", str(args.whisper_model.resolve()),
+                               "--worker-engine", engine, "--audio", str(snapshot.resolve()),
                                "--moonshine-model", str(args.moonshine_model.resolve())]
+                    if engine == "whisper":
+                        command += ["--whisper-bin", str(args.whisper_bin.resolve()),
+                                    "--whisper-model", str(args.whisper_model.resolve())]
                     command += ["--baseline-prefix", sys.prefix]
                     command += ["--reference", args.reference]
                     process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -266,7 +278,7 @@ def run(args):
                     if reason:
                         raise models.TrialRefused(reason)
                     sample["status"] = "sample_complete_quality_pending"
-            report["status"] = "comparison_complete_quality_pending"
+            report["status"] = "moonshine_complete_quality_pending" if single else "comparison_complete_quality_pending"
     except BaseException as exc:
         report["reason"] = exc.reason if isinstance(exc, models.TrialRefused) else "comparison_failed_or_cancelled"
     finally:
@@ -281,13 +293,14 @@ def run(args):
                 sample[key] = aggregate(values) if values else None
         with args.output.open("x", encoding="utf-8") as output:
             json.dump(report, output, indent=2)
-    return 0 if report["status"] == "comparison_complete_quality_pending" else 2
+    return 0 if report["status"] in ("comparison_complete_quality_pending", "moonshine_complete_quality_pending") else 2
 
 
-def main():
+def main(argv=None):
     from scripts.compare_offline_models import local_host
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", action="store_true")
+    parser.add_argument("--engine", choices=("moonshine",), help="Run Moonshine only; omission compares Whisper then Moonshine")
     parser.add_argument("--operator-approved-public-audio", action="store_true")
     parser.add_argument("--audio", type=Path, default=Path("/home/jagadish/mic-test-1m-whisper.wav"))
     parser.add_argument("--reference", default=REFERENCE, help="Approved public reference only; maximum 256 words")
@@ -298,16 +311,22 @@ def main():
     parser.add_argument("--host", type=local_host, default="http://127.0.0.1:11434")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--child-dir", type=Path, help=argparse.SUPPRESS)
-    parser.add_argument("--engine", choices=("whisper", "moonshine"), help=argparse.SUPPRESS)
+    parser.add_argument("--worker-engine", choices=("whisper", "moonshine"), help=argparse.SUPPRESS)
     parser.add_argument("--baseline-prefix", help=argparse.SUPPRESS)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.child_dir:
+        if not args.worker_engine or args.engine or args.run:
+            parser.error("Child execution requires --worker-engine and cannot use operator --engine/--run")
         return child(args)
+    if args.worker_engine:
+        parser.error("--worker-engine is internal and requires --child-dir")
     if not args.run:
         print(json.dumps(compatibility(), indent=2))
         return 0
-    if not all((args.python, args.whisper_bin, args.whisper_model, args.moonshine_model, args.output)):
-        parser.error("Explicit separate Python, local models/binary and new output path are required")
+    if not all((args.python, args.moonshine_model, args.output)):
+        parser.error("Explicit separate Python, local Moonshine model and new output path are required")
+    if args.engine is None and not all((args.whisper_bin, args.whisper_model)):
+        parser.error("Default comparison requires explicit Whisper binary and model")
     if args.output.exists():
         parser.error("Report must be new")
     return run(args)
