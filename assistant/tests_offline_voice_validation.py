@@ -342,3 +342,84 @@ class QwenDemoGuardTests(SimpleTestCase):
                     else:
                         with self.assertRaises(voice.models.TrialRefused):
                             voice.require_resident("http://127.0.0.1:11434",digest,voice.QWEN)
+
+
+@override_settings(VOICE_AUDIO_BACKEND="alsa", VOICE_RECORD_SECONDS=5,
+                   VOICE_CAPTURE_VAD_ENABLED=False)
+class WrappedTranscriptionClassificationTests(SimpleTestCase):
+    """Exercise the actual production STT wrapper, not just the observer directly."""
+    def exercise_stt(self, transcript=None, failure=None, expected_reason=None):
+        class ReachedPolicy(Exception):
+            pass
+        expected = voice.FIXTURES["fact"][0]
+        provider = MagicMock()
+        provider.transcribe.return_value = transcript
+        provider.transcribe.side_effect = failure
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trace.json"
+            trace = voice.Trace(path)
+            config = voice_loop.VoiceLoopConfig.from_settings()
+            with patch.object(voice_loop,"record_audio_alsa"), \
+                 patch.object(voice_loop,"normalize_audio"), \
+                 patch.object(voice_loop,"get_stt_provider",return_value=provider), \
+                 patch.object(voice_loop.AssistantResponsePolicy,"plan_voice_response",side_effect=ReachedPolicy) as policy, \
+                 patch.object(voice_loop.AssistantService,"process_message_stream") as dispatch, \
+                 patch.object(voice_loop,"close_tts_provider"), \
+                 redirect_stdout(io.StringIO()) as console, \
+                 voice.observe_pipeline(voice_loop,trace,expected,synthetic=True):
+                if expected_reason is None:
+                    with self.assertRaises(ReachedPolicy):
+                        voice_loop.run_voice_cycle(config)
+                    policy.assert_called_once_with(transcript.strip())
+                else:
+                    with self.assertRaises(voice_loop.VoiceLoopError) as caught:
+                        voice_loop.run_voice_cycle(config)
+                    self.assertIsInstance(caught.exception.__cause__,voice.models.TrialRefused)
+                    self.assertEqual(voice.cycle_failure_reason(caught.exception,trace),expected_reason)
+                    policy.assert_not_called()
+                    trace.update(status="aborted",reason=voice.cycle_failure_reason(caught.exception,trace))
+                dispatch.assert_not_called()
+            self.assertIn("capture_end",trace.data["events_ms"])
+            self.assertIn("stt_start",trace.data["events_ms"])
+            self.assertEqual("stt_end" in trace.data["events_ms"],failure is None)
+            self.assertNotIn("dispatch",trace.data["events_ms"])
+            self.assertNotIn("UNAPPROVED_CANARY",console.getvalue())
+            self.assertNotIn("UNAPPROVED_CANARY",path.read_text())
+            if expected_reason:
+                self.assertNotIn("You:",console.getvalue())
+
+    def test_exact_public_match_reaches_normal_policy(self):
+        self.exercise_stt(voice.FIXTURES["fact"][0])
+
+    def test_punctuation_and_case_normalized_match_reaches_normal_policy(self):
+        self.exercise_stt("NAME INDIA'S CAPITAL! IS IT NORTH, OR SOUTH OF THE EQUATOR?")
+
+    def test_mismatched_speech_survives_voice_loop_wrapper_without_dispatch_or_leak(self):
+        self.exercise_stt("UNAPPROVED_CANARY unrelated speech",expected_reason="transcription_did_not_match_public_fixture")
+
+    def test_empty_speech_is_distinct_from_fixture_mismatch(self):
+        self.exercise_stt("   ",expected_reason="transcription_empty_or_no_speech")
+
+    def test_no_speech_marker_uses_existing_production_detector(self):
+        self.exercise_stt("[BLANK_AUDIO]",expected_reason="transcription_empty_or_no_speech")
+
+    def test_whisper_execution_failure_is_distinct_and_redacted(self):
+        self.exercise_stt(failure=RuntimeError("UNAPPROVED_CANARY backend detail"),expected_reason="whisper_execution_failed")
+
+    def test_whisper_timeout_remains_distinct(self):
+        self.exercise_stt(failure=TimeoutError("UNAPPROVED_CANARY timeout detail"),expected_reason="whisper_timeout")
+
+    def test_unrelated_error_and_cancellation_keep_existing_fallbacks(self):
+        self.assertEqual(voice.cycle_failure_reason(ValueError("UNAPPROVED_CANARY"),voice.Trace()),"cycle_error")
+        self.assertEqual(voice.cycle_failure_reason(KeyboardInterrupt(),voice.Trace()),"cycle_cancelled")
+
+
+    def test_stt_cancellation_keeps_cancellation_category(self):
+        class AudioCancelledError(Exception):
+            pass
+        trace = voice.Trace()
+        with voice.observe_pipeline(voice_loop,trace,voice.FIXTURES["fact"][0],True):
+            with self.assertRaises(AudioCancelledError) as caught:
+                voice_loop._timed_call({},"stt",MagicMock(side_effect=AudioCancelledError()))
+        self.assertEqual(voice.cycle_failure_reason(caught.exception,trace),"cycle_cancelled")
+        self.assertNotIn("stt_end",trace.data["events_ms"])

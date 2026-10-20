@@ -121,6 +121,21 @@ def public_transcript(value, expected):
     return value
 
 
+def cycle_failure_reason(exc, trace):
+    """Preserve categorical refusals through production wrappers, never their text."""
+    from assistant.latency_trace import failure_kind
+    current = exc
+    for _ in range(8):
+        if isinstance(current, models.TrialRefused):
+            return current.reason
+        current = getattr(current, "__cause__", None)
+        if current is None:
+            break
+    if trace.data.get("capture_stop_reason") == "start_timeout":
+        return "capture_start_timeout"
+    return "cycle_" + failure_kind(exc)
+
+
 def require_resident(host, digest, model=MODEL):
     actual = models.verify_identity(model, models.inventory(host)[model], digest)
     resident = models.metadata(host, "/api/ps").get("models", [])
@@ -161,10 +176,22 @@ def observe_pipeline(voice, trace, expected, synthetic=False):
         name = {"record": "capture", "stt": "stt"}.get(stage)
         if name:
             trace.mark(name + "_start")
-        result = real_timed(timings, stage, operation, *args, **kwargs)
+        try:
+            result = real_timed(timings, stage, operation, *args, **kwargs)
+        except Exception as exc:
+            if stage != "stt" or isinstance(exc, models.TrialRefused):
+                raise
+            from assistant.latency_trace import failure_kind
+            kind = failure_kind(exc)
+            if kind == "cancelled":
+                raise
+            reason = "whisper_timeout" if kind == "timeout" else "whisper_execution_failed"
+            raise models.TrialRefused(reason) from exc
         if name:
             trace.mark(name + "_end")
         if stage == "stt":
+            if not result.strip() or voice.is_no_speech_transcription(result):
+                raise models.TrialRefused("transcription_empty_or_no_speech")
             return public_transcript(result, expected)
         if stage == "tts":
             trace.mark("piper_first_audio")  # Whole first WAV returned, not first synthesized sample.
@@ -405,10 +432,7 @@ def child(args):
             run_cycle(args, trace)
         return 0 if trace.data["status"] == "sample_complete_quality_pending" else 2
     except BaseException as exc:
-        from assistant.latency_trace import failure_kind
-        reason = exc.reason if isinstance(exc, models.TrialRefused) else (
-            "capture_start_timeout" if trace.data.get("capture_stop_reason") == "start_timeout"
-            else "cycle_" + failure_kind(exc))
+        reason = cycle_failure_reason(exc, trace)
         trace.data.update(status="aborted", reason=reason)
         trace.save()
         return 2
