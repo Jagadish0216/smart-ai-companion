@@ -292,6 +292,8 @@ VOICE_AUDIO_BACKEND = os.environ.get('VOICE_AUDIO_BACKEND', 'pulse').strip().low
 VOICE_ALSA_CAPTURE_DEVICE = os.environ.get('VOICE_ALSA_CAPTURE_DEVICE', 'hw:CARD=sndrpigooglevoi,DEV=0')
 VOICE_ALSA_PLAYBACK_DEVICE = os.environ.get('VOICE_ALSA_PLAYBACK_DEVICE', 'hw:CARD=sndrpigooglevoi,DEV=0')
 VOICE_PLAYBACK_GAIN = os.environ.get('VOICE_PLAYBACK_GAIN', '4.0')
+# Opt-in replaces the legacy gain; never stack the approved profile with 4x gain.
+VOICE_PLAYBACK_PROFILE = os.environ.get('VOICE_PLAYBACK_PROFILE', 'legacy').strip().lower()
 VOICE_RECORD_SECONDS = os.environ.get('VOICE_RECORD_SECONDS', '5')
 VOICE_INPUT_WARMUP_SECONDS = os.environ.get('VOICE_INPUT_WARMUP_SECONDS', '1.0')
 VOICE_CAPTURE_VAD_ENABLED = os.environ.get('VOICE_CAPTURE_VAD_ENABLED', 'false').lower() in ('1', 'true', 'yes', 'on')

@@ -154,6 +154,7 @@ class VoiceLoopConfig:
     capture_vad_noise_calibration_seconds: float = 0.5
     capture_vad_start_confirm_ms: int = 60
     capture_vad_min_speech_ms: int = 300
+    playback_profile: str = "legacy"
 
     @classmethod
     def from_settings(cls, *, require_capture: bool = True) -> "VoiceLoopConfig":
@@ -193,6 +194,7 @@ class VoiceLoopConfig:
                 getattr(settings, "VOICE_ALSA_PLAYBACK_DEVICE", "hw:CARD=sndrpigooglevoi,DEV=0")
             ).strip(),
             playback_gain=float(getattr(settings, "VOICE_PLAYBACK_GAIN", 4.0)),
+            playback_profile=str(getattr(settings, "VOICE_PLAYBACK_PROFILE", "legacy")),
             stream_tts_target_chars=int(getattr(settings, "VOICE_STREAM_TTS_TARGET_CHARS", 180)),
             stream_inter_chunk_silence_seconds=float(
                 getattr(settings, "VOICE_STREAM_INTER_CHUNK_SILENCE_SECONDS", 0.12)
@@ -212,6 +214,10 @@ class VoiceLoopConfig:
         return config
 
     def validate(self, *, require_capture: bool = True) -> None:
+        if self.playback_profile not in {"legacy", "approved_loudness", "bounded_gain"}:
+            raise VoiceLoopError("Unknown voice playback profile.")
+        if self.playback_profile != "legacy" and self.audio_backend != "alsa":
+            raise VoiceLoopError("Opt-in speaker profiles require the existing ALSA path.")
         if self.audio_backend not in {"pulse", "alsa"}:
             raise VoiceLoopError("VOICE_AUDIO_BACKEND must be pulse or alsa.")
         if self.audio_backend == "alsa" and (
@@ -425,6 +431,7 @@ def record_audio_with_capture_vad(
     on_capture_ready: Callable[[], None] | None = None,
     max_start_threshold: float | None = None,
     on_amplitude: Callable[[float], None] | None = None,
+    on_vad_summary: Callable[[dict], None] | None = None,
 ) -> None:
     """Record until speech ends; signal ready once after warm-up/calibration.
 
@@ -583,6 +590,13 @@ def record_audio_with_capture_vad(
     finally:
         if watchdog is not None:
             watchdog.cancel()
+        if on_vad_summary is not None:
+            try:
+                on_vad_summary({key: getattr(vad, key) for key in (
+                    "noise_floor", "start_threshold", "continue_threshold", "max_wait_rms",
+                    "speech_duration", "capture_duration", "elapsed", "stop_reason")})
+            except Exception:
+                pass  # Observability must not change capture/error behavior.
         if vad.stop_reason is not None:
             print(
                 f"Capture VAD: noise_floor={vad.noise_floor:.4f} "
@@ -1111,7 +1125,8 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
         if config.audio_backend == "alsa":
             source_pcm = temp_path / f"stream-speaker-source-{number:03d}.pcm"
             speaker_path = temp_path / f"stream-speaker-{number:03d}.pcm"
-            prepare_alsa_playback(playback_path, source_pcm, config.playback_gain, cancel_event=stopped, raw_pcm=True)
+            prepare_alsa_playback(playback_path, source_pcm, config.playback_gain, cancel_event=stopped, raw_pcm=True,
+                                  **({"profile": config.playback_profile} if config.playback_profile != "legacy" else {}))
             leading, trailing = trim_pcm_edges(source_pcm, speaker_path, trim_leading=number > 1, cancel_event=stopped)
             return PreparedAudio(number, speaker_path, text, leading, trailing)
         return PreparedAudio(number, playback_path, text)
@@ -1441,10 +1456,18 @@ def play_audio(audio_path: Path, *, cancel_event=None) -> None:
 
 
 @latency.span("playback_conversion")
-def prepare_alsa_playback(input_path: Path, output_path: Path, gain: float, *, cancel_event=None, raw_pcm=False) -> None:
+def prepare_alsa_playback(input_path: Path, output_path: Path, gain: float, *, cancel_event=None, raw_pcm=False, profile="legacy") -> None:
     """Convert Piper WAV to native speaker WAV (batch) or headerless PCM (stream)."""
-    command = ["ffmpeg", "-y", "-i", str(input_path), "-af",
-               f"volume={gain},alimiter=limit=0.98:level=false",
+    filters = {
+        "legacy": f"volume={gain},alimiter=limit=0.98:level=false",
+        "approved_loudness": "loudnorm=I=-16:TP=-2:LRA=7,volume=1.10,alimiter=limit=0.95:level=false",
+        "bounded_gain": "volume=1.10,alimiter=limit=0.95:level=false",
+    }
+    if profile not in filters:
+        raise VoiceLoopError("Unknown voice playback profile.")
+    # Piper is mono: FL-only pan would be inappropriate. Existing -ac 2 duplicates
+    # mono for the configured ALSA sink. Both opt-ins REPLACE the legacy gain.
+    command = ["ffmpeg", "-y", "-i", str(input_path), "-af", filters[profile],
                "-ar", "48000", "-ac", "2", "-c:a", "pcm_s32le",
                *(["-f", "s32le"] if raw_pcm else []), str(output_path)]
     try:
@@ -1538,6 +1561,7 @@ def speak_speech_chunks(
                     _timed_call(
                         timings, "audio_prepare", prepare_alsa_playback, playback_path,
                         speaker_path, audio_config.playback_gain,
+                        **({"profile": audio_config.playback_profile} if audio_config.playback_profile != "legacy" else {}),
                     )
                     playback_operation = play_audio_alsa
                     playback_args = (speaker_path, audio_config.alsa_playback_device)

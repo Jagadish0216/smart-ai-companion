@@ -176,6 +176,8 @@ def observe_pipeline(voice, trace, expected, synthetic=False):
         name = {"record": "capture", "stt": "stt"}.get(stage)
         if name:
             trace.mark(name + "_start")
+        if stage == "record" and operation is voice.record_audio_with_capture_vad:
+            kwargs["on_vad_summary"] = lambda summary: trace.update(capture_vad_summary=summary)
         try:
             result = real_timed(timings, stage, operation, *args, **kwargs)
         except Exception as exc:
