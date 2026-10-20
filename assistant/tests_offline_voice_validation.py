@@ -174,20 +174,27 @@ def signal_value(name):
                    STT_ENGINE="whisper_cpp", TTS_ENGINE="piper")
 class IsolatedPhysicalPathTests(TestCase):
     def test_real_service_candidate_request_and_audio_observers_with_fake_hardware(self):
+        self.exercise_physical_path(False)
+
+    def test_production_qwen_uses_same_pipeline_without_diagnostic_controls(self):
+        self.exercise_physical_path(True)
+
+    def exercise_physical_path(self, production):
         """Exercise physical code path, real policy/RAG/memory orchestration, no devices."""
         import urllib.request
         from assistant.ai_engine import AIEngineResult, AIEngineStreamEvent, reset_engine
         from assistant.ai_engine.local import LocalLLMEngine
         expected, _ = voice.FIXTURES["fact"]
         answer = "New Delhi is the capital of India, and it lies north of the equator."
-        engine = LocalLLMEngine(host="http://127.0.0.1:11434", model=voice.MODEL)
+        model = voice.QWEN if production else voice.MODEL
+        engine = LocalLLMEngine(host="http://127.0.0.1:11434", model=model)
         def generated(query, *a, **kw):
             engine._build_chat_request([{"role": "user", "content": query}], stream=True,
-                                       num_predict=kw.get("num_predict"), model=voice.MODEL)
+                                       num_predict=kw.get("num_predict"), model=model)
             yield AIEngineStreamEvent(type="delta", text=answer[:35])
             yield AIEngineStreamEvent(type="delta", text=answer[35:])
             yield AIEngineStreamEvent(type="done", result=AIEngineResult(text=answer, engine="local",
-                model=voice.MODEL, metrics={"load_duration_ms": 1.3, "done_reason": "stop",
+                model=model, metrics={"load_duration_ms": 1.3, "done_reason": "stop",
                                           "prompt_eval_count": 140, "prompt_eval_cached_count": 120}))
         engine.generate_stream = generated
         class Player:
@@ -216,16 +223,122 @@ class IsolatedPhysicalPathTests(TestCase):
             stack.enter_context(patch("scripts.benchmark_inference_ab.telemetry", return_value=point()))
             stack.enter_context(patch.object(voice, "require_resident", return_value=[RESIDENT]))
             stack.enter_context(redirect_stdout(io.StringIO()))
-            result = voice.run_cycle(SimpleNamespace(synthetic=False, fixture="fact", host="http://127.0.0.1:11434", digest=DIGEST), trace)
+            result = voice.run_cycle(SimpleNamespace(synthetic=False, fixture="fact", host="http://127.0.0.1:11434", digest=DIGEST, production_qwen=production), trace)
         reset_engine()
         self.assertEqual(result["status"], "sample_complete_quality_pending")
         self.assertEqual(result["residency_label"], "warm")
         self.assertEqual(result["public_fixture_answer"], answer)
-        self.assertLessEqual(result["request_controls"]["options"]["num_predict"], 48)
-        self.assertEqual(result["request_controls"]["model"], voice.MODEL)
+        if production:
+            self.assertNotIn("seed", result["request_controls"]["options"])
+            self.assertEqual(result["request_controls"]["keep_alive"], engine._keep_alive)
+        else:
+            self.assertLessEqual(result["request_controls"]["options"]["num_predict"], 48)
+        self.assertEqual(result["request_controls"]["model"], model)
         self.assertEqual(result["prompt_cache"]["cached_tokens_reported"], 120)
         self.assertEqual(result["routing"]["route"], "local")
         self.assertEqual([x["state"] for x in result["display_calls"]],
                          ["LISTENING", "THINKING", "SPEAKING", "READY"])
         self.assertFalse(result["physical_latency_verified"])
         display.close.assert_called_once()
+
+
+class QwenDemoGuardTests(SimpleTestCase):
+    def test_production_configuration_preserves_all_generation_and_audio_controls(self):
+        controls = dict(AI_ENGINE="local", OLLAMA_MODEL=voice.QWEN,
+            OLLAMA_HOST="http://127.0.0.1:11434", OLLAMA_KEEP_ALIVE="24h",
+            OLLAMA_TIMEOUT=120, OLLAMA_NUM_CTX=4096, OLLAMA_NUM_BATCH=128,
+            STT_TIMEOUT=75, TTS_TIMEOUT=45, RAG_ENABLED=True,
+            VOICE_CAPTURE_VAD_START_THRESHOLD=.02, VOICE_STREAM_FIRST_SENTENCE_MIN_CHARS=30)
+        settings = SimpleNamespace(**controls)
+        voice.configure(settings, controls["OLLAMA_HOST"], production=True)
+        for key, value in controls.items():
+            self.assertEqual(getattr(settings, key), value)
+        self.assertFalse(settings.ONLINE_RETRIEVAL_ENABLED)
+        self.assertFalse(settings.DEVICE_CONTROL_ENABLED)
+        settings.OLLAMA_MODEL = "wrong-model"
+        with self.assertRaises(voice.models.TrialRefused):
+            voice.configure(settings, controls["OLLAMA_HOST"], production=True)
+
+    def test_strict_start_gate_and_missing_telemetry_fail_closed(self):
+        self.assertIsNone(voice.demo_start_reason(point(temperature_c=49.99)))
+        for sample in (point(temperature_c=50), point(temperature_c=None),
+                       point(ram_available_bytes=1), point(throttled={})):
+            self.assertIsNotNone(voice.demo_start_reason(sample))
+
+    def test_ready_cue_is_once_and_never_echoes_child_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trace.json"
+            poll = voice.ready_cue(path)
+            with redirect_stdout(io.StringIO()) as output:
+                poll()
+                path.write_text('{"events_ms":{"capture_ready":100},"secret":"never echo"}')
+                poll()
+                poll()
+            self.assertEqual(output.getvalue().count("MICROPHONE READY"), 1)
+            self.assertNotIn("never echo", output.getvalue())
+
+    def test_monitor_preserves_worker_failure_before_residency_check(self):
+        process = MagicMock()
+        process.poll.side_effect = [None, 2]
+        check = MagicMock(side_effect=AssertionError("must not assert residency after failure"))
+        voice.monitor(process, point, check, {"telemetry": []}, sleep=lambda _: None)
+        check.assert_not_called()
+
+    def test_monitor_120_second_bound_and_pressure_during_cycle(self):
+        process = MagicMock()
+        process.poll.return_value = None
+        values = iter((0, 120))
+        with self.assertRaisesMessage(voice.models.TrialRefused, "bounded_cycle_timeout"):
+            voice.monitor(process, point, lambda: None, {"telemetry": []},
+                clock=lambda: next(values), timeout=120, sleep=lambda _: None)
+        with self.assertRaises(ValueError):
+            voice.monitor(process, point, lambda: None, {"telemetry": []}, timeout=121)
+
+
+    def test_parent_abort_reaps_only_owned_worker_and_preserves_partial_trace(self):
+        from contextlib import nullcontext
+        import json
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "result.json"
+            args = SimpleNamespace(production_qwen=True, synthetic=False,
+                operator_live_trial=True, fixture="fact", host="http://127.0.0.1:11434", output=output)
+            process = MagicMock(pid=1234)
+            def spawn(command, **kwargs):
+                child_dir = Path(command[command.index("--child-dir")+1])
+                (child_dir / "trace.json").write_text(json.dumps({"status":"incomplete",
+                    "events_ms":{"capture_start":1}, "quality_accepted":False}))
+                self.assertIn("--production-qwen",command)
+                self.assertTrue(kwargs["start_new_session"])
+                return process
+            with patch("scripts.validate_pi_performance.isolated_database", return_value=nullcontext()), \
+                 patch.object(voice.sys,"platform","linux"), \
+                 patch.object(voice.models,"acquire_trial_lock") as lock, \
+                 patch.object(voice.models,"inventory",return_value={voice.QWEN:{}}), \
+                 patch.object(voice.models,"verify_identity",return_value="d8b0f5e9760c"+"0"*52), \
+                 patch.object(voice,"require_resident"), \
+                 patch("scripts.benchmark_inference_ab.telemetry",return_value=point()), \
+                 patch.object(voice.subprocess,"check_output",return_value="7dbf2ad1cb5512d5fcad302dd931964b15e9e002"), \
+                 patch.object(voice.subprocess,"Popen",side_effect=spawn) as popen, \
+                 patch.object(voice,"monitor",side_effect=voice.models.TrialRefused("temperature_safety_margin")), \
+                 patch.object(voice.models,"terminate") as terminate, redirect_stdout(io.StringIO()):
+                self.assertEqual(voice.run(args),2)
+            report=json.loads(output.read_text())
+            self.assertEqual(report["reason"],"temperature_safety_margin")
+            self.assertEqual(report["cycle"]["events_ms"],{"capture_start":1})
+            popen.assert_called_once()
+            terminate.assert_called_once_with(process)
+            lock.return_value.close.assert_called_once()
+
+    def test_qwen_residency_pins_tag_digest_and_context(self):
+        digest = "d8b0f5e9760c"+"0"*52
+        resident = dict(name=voice.QWEN,digest=digest,context_length=4096)
+        with patch.object(voice.models,"inventory",return_value={voice.QWEN:{"usable":True,"digest":digest}}):
+            for items in ([resident],[],[dict(resident,name=voice.MODEL)],
+                          [dict(resident,digest="a"*64)],[dict(resident,context_length=2048)],
+                          [resident,resident]):
+                with patch.object(voice.models,"metadata",return_value={"models":items}):
+                    if items == [resident]:
+                        self.assertEqual(voice.require_resident("http://127.0.0.1:11434",digest,voice.QWEN),items)
+                    else:
+                        with self.assertRaises(voice.models.TrialRefused):
+                            voice.require_resident("http://127.0.0.1:11434",digest,voice.QWEN)

@@ -25,6 +25,18 @@ sys.path.insert(0, str(ROOT))
 from scripts import compare_offline_models as models
 
 MODEL = "llama3.2:1b"
+QWEN = "qwen3.5:4b-q4_K_M"
+
+
+def selected_model(args):
+    return QWEN if getattr(args, "production_qwen", False) else MODEL
+
+
+def demo_start_reason(point):
+    reason = models.pressure_reason(point, starting=True)
+    if reason:
+        return reason
+    return "below_50_start_required" if point["temperature_c"] >= 50 else None
 FIXTURES = dict(models.FIXTURES, fact=(
     "Name India's capital. Is it north or south of the equator?", models.FIXTURES["fact"][1]),
     technical=("How do CPU cycles per second differ from instructions per second?", models.FIXTURES["technical"][1]),
@@ -109,10 +121,10 @@ def public_transcript(value, expected):
     return value
 
 
-def require_resident(host, digest):
-    actual = models.verify_identity(MODEL, models.inventory(host)[MODEL], digest)
+def require_resident(host, digest, model=MODEL):
+    actual = models.verify_identity(model, models.inventory(host)[model], digest)
     resident = models.metadata(host, "/api/ps").get("models", [])
-    models.verify_residents(resident, MODEL, actual)
+    models.verify_residents(resident, model, actual)
     if len(resident) != 1 or resident[0].get("context_length") != 4096:
         raise models.TrialRefused("selected_model_must_already_be_resident_context_4096")
     return resident
@@ -178,7 +190,15 @@ def observe_pipeline(voice, trace, expected, synthetic=False):
     def summary(timings):
         trace.data["legacy_timings_seconds_or_named_scalar"] = {
             key: value for key, value in timings.items() if type(value) in (int, float)}
+    original_mark = voice.latency.mark
+    def mark(name, **values):
+        if name in ("capture_ready", "calibration_end", "speech_detected", "endpoint_detected"):
+            trace.mark(name)
+            if name == "endpoint_detected" and values.get("reason") in ("start_timeout", "silence", "max_duration"):
+                trace.update(capture_stop_reason=values["reason"])
+        return original_mark(name, **values)
     with ExitStack() as stack:
+        stack.enter_context(patch.object(voice.latency, "mark", mark))
         stack.enter_context(patch.object(voice, "_timed_call", timed))
         stack.enter_context(patch.object(voice, "StreamingSpeechBuffer", Buffer))
         stack.enter_context(patch.object(voice, "_print_timing_summary", summary))
@@ -203,7 +223,15 @@ def seed_context(fixture):
     return conversation.id
 
 
-def configure(settings, host):
+def configure(settings, host, production=False):
+    if production:
+        if settings.AI_ENGINE != "local" or settings.OLLAMA_MODEL != QWEN or settings.OLLAMA_HOST.rstrip("/") != host or settings.OLLAMA_NUM_CTX != 4096:
+            raise models.TrialRefused("production_local_qwen_configuration_required")
+        # Offline fixture isolation only; preserve model, prompts, context, keep-alive,
+        # generation/time limits, RAG and all audio/resource settings.
+        settings.ONLINE_RETRIEVAL_ENABLED = settings.ONLINE_KNOWLEDGE_AUTO_PERSIST = False
+        settings.DEVICE_CONTROL_ENABLED = False
+        return
     settings.AI_ENGINE, settings.OLLAMA_HOST, settings.OLLAMA_MODEL = "local", host, MODEL
     settings.OLLAMA_NUM_THREAD = settings.OLLAMA_NUM_BATCH = None
     settings.OLLAMA_TIMEOUT = settings.AI_LOCAL_GENERATION_TIMEOUT_SECONDS = 15
@@ -221,10 +249,12 @@ def run_cycle(args, trace):
     from assistant.voice.factory import reset_voice_providers
     from django.conf import settings
     from unittest.mock import MagicMock
+    model = selected_model(args)
+    production = getattr(args, "production_qwen", False)
     expected, reference = FIXTURES[args.fixture]
     trace.data.update(mode="synthetic" if args.synthetic else "physical", fixture=args.fixture,
                       public_question=expected, reference_criteria=reference,
-                      synthetic_context=True, model=MODEL, model_digest=getattr(args, "digest", None))
+                      synthetic_context=True, production_request_controls=production, model=model, model_digest=getattr(args, "digest", None))
     config = voice.VoiceLoopConfig.from_settings(require_capture=not args.synthetic)
     if args.synthetic:
         from dataclasses import replace
@@ -277,15 +307,16 @@ def run_cycle(args, trace):
                 trace.update(pre_inference_telemetry=point)
                 if reason:
                     raise models.TrialRefused(reason)
-                require_resident(args.host, args.digest)
+                require_resident(args.host, args.digest, model=model)
                 request = builder(*a, **kw)
                 payload = json.loads(request.data)
-                if payload.get("model") != MODEL:
+                if payload.get("model") != model:
                     raise models.TrialRefused("model_selection_changed")
-                payload["options"].update(models.request_options())
-                # Respect a smaller protective-resource generation budget.
-                payload["options"]["num_predict"] = min(48, kw.get("num_predict") or 48)
-                request.data = json.dumps(payload).encode()
+                if not production:
+                    payload["options"].update(models.request_options())
+                    # Respect a smaller protective-resource generation budget.
+                    payload["options"]["num_predict"] = min(48, kw.get("num_predict") or 48)
+                    request.data = json.dumps(payload).encode()
                 requests.append(True)
                 trace.update(request_controls={k: payload.get(k) for k in ("model", "options", "think", "keep_alive")})
                 trace.mark("inference_request_ready")
@@ -313,6 +344,9 @@ def run_cycle(args, trace):
             stack.enter_context(patch.object(voice.AssistantService, "process_message_stream", service_stream))
             display = voice.get_companion_display()
             trace.data["display_enabled"] = bool(getattr(display, "enabled", False))
+            if production and not trace.data["display_enabled"]:
+                display.close()
+                raise models.TrialRefused("physical_tft_required")
         if display is not None:
             state_call = display.set_state
             def state(value):
@@ -359,28 +393,32 @@ def child(args):
     from django.conf import settings
     from django.core.management import call_command
     from django.db import connections
-    configure(settings, args.host)
     # voice_loop calls django.setup again; prevent duplicate logging setup while
     # stdout is suppressed (Windows Django color setup can probe the registry).
     settings.LOGGING_CONFIG = None
     trace = Trace(directory / "trace.json")
     try:
+        configure(settings, args.host, production=getattr(args, "production_qwen", False))
         with open(os.devnull, "w") as quiet, redirect_stdout(quiet), redirect_stderr(quiet), loopback_only():
             if not args.synthetic:
                 call_command("migrate", verbosity=0, interactive=False)
             run_cycle(args, trace)
         return 0 if trace.data["status"] == "sample_complete_quality_pending" else 2
     except BaseException as exc:
-        trace.data.update(status="aborted", reason=exc.reason if isinstance(exc, models.TrialRefused) else "cycle_failed_or_cancelled")
+        from assistant.latency_trace import failure_kind
+        reason = exc.reason if isinstance(exc, models.TrialRefused) else (
+            "capture_start_timeout" if trace.data.get("capture_stop_reason") == "start_timeout"
+            else "cycle_" + failure_kind(exc))
+        trace.data.update(status="aborted", reason=reason)
         trace.save()
         return 2
     finally:
         connections.close_all()
 
 
-def monitor(process, sample, check_resident, report, *, clock=time.monotonic, sleep=time.sleep, timeout=60):
-    if not 0 < timeout <= 60:
-        raise ValueError("Monitor timeout must be positive and at most 60 seconds")
+def monitor(process, sample, check_resident, report, *, clock=time.monotonic, sleep=time.sleep, timeout=60, on_poll=lambda: None):
+    if not 0 < timeout <= 120:
+        raise ValueError("Monitor timeout must be positive and at most 120 seconds")
     deadline = clock() + timeout
     while process.poll() is None:
         point = sample()
@@ -388,7 +426,10 @@ def monitor(process, sample, check_resident, report, *, clock=time.monotonic, sl
         reason = models.pressure_reason(point)
         if reason:
             raise models.TrialRefused(reason)
+        if process.poll() is not None:
+            break
         check_resident()
+        on_poll()
         if clock() >= deadline:
             raise models.TrialRefused("bounded_cycle_timeout")
         sleep(0.5)
@@ -396,7 +437,26 @@ def monitor(process, sample, check_resident, report, *, clock=time.monotonic, sl
         raise models.TrialRefused("bounded_cycle_timeout")
 
 
+def ready_cue(path):
+    """Only fixed public cues reach the terminal, never child console content."""
+    announced = False
+    def poll():
+        nonlocal announced
+        if announced:
+            return
+        try:
+            ready = "capture_ready" in json.loads(path.read_text(encoding="utf-8")).get("events_ms", {})
+        except (OSError, ValueError):
+            return
+        if ready:
+            print("MICROPHONE READY - speak the displayed public fixture now.", flush=True)
+            announced = True
+    return poll
+
+
 def run(args):
+    model = selected_model(args)
+    production = getattr(args, "production_qwen", False)
     report = {"status": "incomplete", "telemetry": [], "physical_latency_verified": False,
               "source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
               "head": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()}
@@ -411,35 +471,41 @@ def run(args):
                 lock = models.acquire_trial_lock()
                 point = telemetry()
                 report["telemetry"].append(point)
-                reason = models.pressure_reason(point, starting=True)
+                reason = demo_start_reason(point) if production else models.pressure_reason(point, starting=True)
                 if reason:
                     raise models.TrialRefused(reason)
-                args.digest = models.verify_identity(MODEL, models.inventory(args.host)[MODEL], "baf6a787fdff")
-                require_resident(args.host, args.digest)
+                args.digest = models.verify_identity(model, models.inventory(args.host)[model], models.CONFIRMED_PREFIXES[model])
+                require_resident(args.host, args.digest, model=model)
                 print("One live trial: say only this public question after the microphone is ready:\n" + FIXTURES[args.fixture][0], flush=True)
             with tempfile.TemporaryDirectory(prefix="voice-cycle-") as directory:
                 command = [sys.executable, str(Path(__file__).resolve()), "--child-dir", directory,
                            "--fixture", args.fixture, "--host", args.host]
                 command += ["--synthetic"] if args.synthetic else ["--digest", args.digest, "--operator-live-trial"]
+                if production:
+                    command.append("--production-qwen")
                 process = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                            start_new_session=sys.platform == "linux")
                 try:
                     if args.synthetic:
                         process.wait(timeout=30)
                     else:
-                        monitor(process, telemetry, lambda: require_resident(args.host, args.digest), report)
+                        monitor(process, telemetry, lambda: require_resident(args.host, args.digest, model=model), report,
+                                timeout=120 if production else 60,
+                                on_poll=ready_cue(Path(directory) / "trace.json"))
                         point = telemetry()
                         report["telemetry"].append(point)
                         reason = models.pressure_reason(point)
                         if reason:
                             raise models.TrialRefused(reason)
-                        require_resident(args.host, args.digest)
+                        if process.returncode == 0:
+                            require_resident(args.host, args.digest, model=model)
                     result = Path(directory) / "trace.json"
                     if result.is_file():
                         report["cycle"] = json.loads(result.read_text(encoding="utf-8"))
                     report["status"] = report.get("cycle", {}).get("status", "incomplete")
                     if process.returncode != 0:
                         report["status"] = "aborted"
+                        report["reason"] = report.get("cycle", {}).get("reason", "worker_failed_or_incomplete")
                 finally:
                     if sys.platform == "linux":
                         models.terminate(process)  # Also reap group descendants after leader exits.
@@ -465,6 +531,7 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--synthetic", action="store_true", help="No mic, model, speaker or TFT; default mode")
     mode.add_argument("--operator-live-trial", action="store_true", help="ONE physical microphone/speaker cycle")
+    parser.add_argument("--production-qwen", action="store_true", help="Opt-in production Qwen controls; physical single cycle only, below 50 C start, 120 s limit")
     parser.add_argument("--fixture", choices=FIXTURES, default="fact")
     parser.add_argument("--host", type=models.local_host, default="http://127.0.0.1:11434")
     parser.add_argument("--output", default="offline-voice-result.json")
@@ -472,6 +539,8 @@ def main():
     parser.add_argument("--digest", help=argparse.SUPPRESS)
     args = parser.parse_args()
     args.synthetic = not args.operator_live_trial
+    if args.production_qwen and args.synthetic:
+        parser.error("--production-qwen requires --operator-live-trial")
     if args.synthetic and args.fixture != "fact":
         parser.error("Synthetic orchestration uses the fixed fact fixture only")
     if args.child_dir:
