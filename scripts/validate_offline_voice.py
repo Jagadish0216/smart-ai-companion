@@ -133,6 +133,8 @@ def cycle_failure_reason(exc, trace):
             break
     if trace.data.get("capture_stop_reason") == "start_timeout":
         return "capture_start_timeout"
+    if trace.data.get("capture_stop_reason") in ("preparation_activity", "calibration_unreliable"):
+        return "capture_" + trace.data["capture_stop_reason"]
     return "cycle_" + failure_kind(exc)
 
 
@@ -169,7 +171,7 @@ def loopback_only():
 
 
 @contextmanager
-def observe_pipeline(voice, trace, expected, synthetic=False):
+def observe_pipeline(voice, trace, expected, synthetic=False, ready_fd=None):
     """Wrap existing calls; do not change capture, packing, PCM, gain or TFT protocol."""
     real_timed, real_buffer, real_player = voice._timed_call, voice.StreamingSpeechBuffer, voice.PersistentAlsaPlayer
     def timed(timings, stage, operation, *args, **kwargs):
@@ -178,6 +180,14 @@ def observe_pipeline(voice, trace, expected, synthetic=False):
             trace.mark(name + "_start")
         if stage == "record" and operation is voice.record_audio_with_capture_vad:
             kwargs["on_vad_summary"] = lambda summary: trace.update(capture_vad_summary=summary)
+            if kwargs.get("ready_lifecycle"):
+                display_ready = kwargs.get("on_capture_ready")
+                def ready():
+                    if display_ready:
+                        display_ready()
+                        trace.mark("ready_display_callback_returned")
+                    emit_public_ready(trace, ready_fd)
+                kwargs["on_capture_ready"] = ready
         try:
             result = real_timed(timings, stage, operation, *args, **kwargs)
         except Exception as exc:
@@ -221,9 +231,16 @@ def observe_pipeline(voice, trace, expected, synthetic=False):
             key: value for key, value in timings.items() if type(value) in (int, float)}
     original_mark = voice.latency.mark
     def mark(name, **values):
-        if name in ("capture_ready", "calibration_end", "speech_detected", "endpoint_detected"):
+        if name in ("capture_ready", "calibration_start", "calibration_end", "speech_detected", "endpoint_detected",
+                    "capture_open_start", "capture_open_end", "capture_first_frame", "capture_warmup_start",
+                    "capture_warmup_end", "speech_start_window_open", "minimum_speech_accepted"):
             trace.mark(name)
-            if name == "endpoint_detected" and values.get("reason") in ("start_timeout", "silence", "max_duration"):
+            if name == "speech_start_window_open":
+                events = trace.data["events_ms"]
+                trace.update(ready_emitted_before_speech_window=("microphone_ready_emitted" in events and
+                    events["microphone_ready_emitted"] <= events[name]),
+                    ready_display_evidence="callback_only_physical_visibility_unobserved")
+            if name == "endpoint_detected" and values.get("reason") in ("start_timeout", "silence", "max_duration", "preparation_activity", "calibration_unreliable"):
                 trace.update(capture_stop_reason=values["reason"])
         return original_mark(name, **values)
     with ExitStack() as stack:
@@ -285,6 +302,8 @@ def run_cycle(args, trace):
                       public_question=expected, reference_criteria=reference,
                       synthetic_context=True, production_request_controls=production, model=model, model_digest=getattr(args, "digest", None))
     config = voice.VoiceLoopConfig.from_settings(require_capture=not args.synthetic)
+    if config.capture_ready_lifecycle:
+        trace.update(readiness_contract="quiet_preparation_then_direct_ready_then_full_start_window")
     if args.synthetic:
         from dataclasses import replace
         config = replace(config, audio_backend="alsa")
@@ -386,7 +405,7 @@ def run_cycle(args, trace):
                 return state_call(value)
             stack.enter_context(patch.object(display, "set_state", state))
         try:
-            with observe_pipeline(voice, trace, expected, args.synthetic):
+            with observe_pipeline(voice, trace, expected, args.synthetic, ready_fd=getattr(args,"ready_fd",None)):
                 voice.run_voice_cycle(config, conversation_id=None if args.synthetic else seed_context(args.fixture), display=display)
             trace.mark("cycle_end")
         finally:
@@ -428,6 +447,8 @@ def child(args):
     trace = Trace(directory / "trace.json")
     try:
         configure(settings, args.host, production=getattr(args, "production_qwen", False))
+        if getattr(args,"ready_lifecycle",False):
+            settings.VOICE_CAPTURE_READY_LIFECYCLE = True
         with open(os.devnull, "w") as quiet, redirect_stdout(quiet), redirect_stderr(quiet), loopback_only():
             if not args.synthetic:
                 call_command("migrate", verbosity=0, interactive=False)
@@ -461,6 +482,19 @@ def monitor(process, sample, check_resident, report, *, clock=time.monotonic, sl
         sleep(0.5)
     if clock() >= deadline:
         raise models.TrialRefused("bounded_cycle_timeout")
+
+
+def emit_public_ready(trace, descriptor):
+    """Only this constant crosses the inherited descriptor; child logs stay suppressed."""
+    if descriptor is None:
+        raise models.TrialRefused("ready_channel_unavailable")
+    cue = b"MICROPHONE READY - speak the displayed public fixture now.\n"
+    try:
+        if os.write(descriptor,cue) != len(cue):
+            raise models.TrialRefused("ready_channel_unavailable")
+        trace.mark("microphone_ready_emitted")
+    finally:
+        os.close(descriptor)
 
 
 def ready_cue(path):
@@ -509,15 +543,25 @@ def run(args):
                 command += ["--synthetic"] if args.synthetic else ["--digest", args.digest, "--operator-live-trial"]
                 if production:
                     command.append("--production-qwen")
-                process = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                           start_new_session=sys.platform == "linux")
+                ready_fd = None
+                try:
+                    if getattr(args,"ready_lifecycle",False):
+                        print("PREPARING - keep quiet during warm-up/calibration; the capture cue will follow.",flush=True)
+                        ready_fd = os.dup(sys.stdout.fileno())
+                        command += ["--ready-lifecycle","--ready-fd",str(ready_fd)]
+                    process = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                               start_new_session=sys.platform == "linux",
+                                               **({"pass_fds":(ready_fd,)} if ready_fd is not None else {}))
+                finally:
+                    if ready_fd is not None:
+                        os.close(ready_fd)
                 try:
                     if args.synthetic:
                         process.wait(timeout=30)
                     else:
                         monitor(process, telemetry, lambda: require_resident(args.host, args.digest, model=model), report,
                                 timeout=120 if production else 60,
-                                on_poll=ready_cue(Path(directory) / "trace.json"))
+                                on_poll=(lambda: None) if getattr(args,"ready_lifecycle",False) else ready_cue(Path(directory) / "trace.json"))
                         point = telemetry()
                         report["telemetry"].append(point)
                         reason = models.pressure_reason(point)
@@ -549,6 +593,12 @@ def run(args):
     # Caller output must be new: never overwrite existing artifacts/settings.
     with Path(args.output).open("x", encoding="utf-8") as output:
         json.dump(report, output, indent=2)
+    if getattr(args,"ready_lifecycle",False) and report["status"] != "sample_complete_quality_pending":
+        reason=report.get("reason")
+        if reason in ("capture_preparation_activity","capture_calibration_unreliable","capture_start_timeout"):
+            print("Capture refused: " + reason + ". No automatic retry.",flush=True)
+        else:
+            print("Guarded cycle refused or failed; inspect the categorical report. No automatic retry.",flush=True)
     return 0 if report["status"] == "sample_complete_quality_pending" else 2
 
 
@@ -558,6 +608,8 @@ def main():
     mode.add_argument("--synthetic", action="store_true", help="No mic, model, speaker or TFT; default mode")
     mode.add_argument("--operator-live-trial", action="store_true", help="ONE physical microphone/speaker cycle")
     parser.add_argument("--production-qwen", action="store_true", help="Opt-in production Qwen controls; physical single cycle only, below 50 C start, 120 s limit")
+    parser.add_argument("--ready-lifecycle",action="store_true",help="Opt-in drained warm-up, quiet calibration and direct ready cue; requires production Qwen live mode")
+    parser.add_argument("--ready-fd",type=int,help=argparse.SUPPRESS)
     parser.add_argument("--fixture", choices=FIXTURES, default="fact")
     parser.add_argument("--host", type=models.local_host, default="http://127.0.0.1:11434")
     parser.add_argument("--output", default="offline-voice-result.json")
@@ -567,6 +619,10 @@ def main():
     args.synthetic = not args.operator_live_trial
     if args.production_qwen and args.synthetic:
         parser.error("--production-qwen requires --operator-live-trial")
+    if args.ready_lifecycle and (args.synthetic or not args.production_qwen):
+        parser.error("--ready-lifecycle requires --production-qwen --operator-live-trial")
+    if args.ready_fd is not None and not args.child_dir:
+        parser.error("Ready descriptor is internal to the owned child")
     if args.synthetic and args.fixture != "fact":
         parser.error("Synthetic orchestration uses the fixed fact fixture only")
     if args.child_dir:

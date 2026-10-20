@@ -15,7 +15,7 @@ import wave
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts import compare_offline_stt as stt
-from assistant.voice.capture_vad import AdaptiveCaptureVAD
+from assistant.voice.capture_vad import AdaptiveCaptureVAD, QuietCapturePreparation
 
 VARIANTS = ("baseline", "normalize", "highpass")
 
@@ -114,7 +114,7 @@ def prepare_variant(source, directory, variant):
         raise
 
 
-def replay(path):
+def replay(path, ready_lifecycle=False):
     # Settings import reads existing numeric configuration, without django.setup,
     # logging initialization, provider factories or database connections.
     os.environ.setdefault("DJANGO_SETTINGS_MODULE","config.settings")
@@ -128,15 +128,26 @@ def replay(path):
         start_confirm_ms=int(config.VOICE_CAPTURE_VAD_START_CONFIRM_MS),
         min_speech_ms=int(config.VOICE_CAPTURE_VAD_MIN_SPEECH_MS))
     vad = AdaptiveCaptureVAD(**options)
+    preparation = QuietCapturePreparation(vad,float(config.VOICE_INPUT_WARMUP_SECONDS)) if ready_lifecycle else None
     left, info = load_left(path)
     chunk = round(info["sample_rate"]*.02)
     events = []
     for offset in range(0,len(left),chunk):
         frame = left[offset:offset+chunk]
+        if preparation and preparation.warming_up():
+            preparation.consume_warmup(rms(frame),len(frame)/info["sample_rate"])
+            if vad.stop_reason: break
+            continue
+        was_calibrated = vad.calibrated
         event = vad.feed(rms(frame),len(frame)/info["sample_rate"])
-        if event: events.append(dict(event=event,at_audio_seconds=vad.elapsed))
+        if event: events.append(dict(event=event,at_audio_seconds=(offset+len(frame))/info["sample_rate"]))
+        if preparation and not was_calibrated and vad.calibrated:
+            if not preparation.calibration_usable(): break
+            events.append(dict(event="microphone_ready_simulated",at_audio_seconds=(offset+len(frame))/info["sample_rate"]))
+            vad.open_start_window()
         if vad.stop_reason: break
-    return dict(simulated_replay=True, origin="first_file_frame_calibration_starts_at_zero",
+    return dict(simulated_replay=True, ready_lifecycle=ready_lifecycle,
+        origin="file_warmup_then_calibration" if preparation else "first_file_frame_calibration_starts_at_zero",
         configured_capture_vad_enabled=config.VOICE_CAPTURE_VAD_ENABLED,
         configured_warmup_seconds=float(config.VOICE_INPUT_WARMUP_SECONDS),
         device_timing="warmup_pipe_buffering_and_wall_clock_not_simulated",options=options,
@@ -153,6 +164,7 @@ def main(argv=None):
     mode.add_argument("--prepare",action="store_true",help="Prepare one variant only, no inference")
     parser.add_argument("--audio",type=Path,required=True)
     parser.add_argument("--operator-approved-public-audio",action="store_true")
+    parser.add_argument("--ready-lifecycle",action="store_true",help="Analysis-only replay of corrected preparation and start-window semantics")
     parser.add_argument("--variant",choices=VARIANTS,action=SingleVariant)
     parser.add_argument("--output-dir",type=Path)
     parser.add_argument("--output",type=Path)
@@ -166,6 +178,8 @@ def main(argv=None):
         parser.error("Explicit approval for this existing public recording is required")
     if (args.run or args.prepare) and not args.variant:
         parser.error("Select exactly one variant")
+    if args.ready_lifecycle and (args.run or args.prepare):
+        parser.error("Readiness replay is analysis-only, never inference or preparation")
     if args.run:
         if not all((args.output,args.whisper_bin,args.whisper_model)) or args.output.exists():
             parser.error("Existing Whisper paths and a new output report are required")
@@ -181,7 +195,7 @@ def main(argv=None):
             return 2
     else:
         analysis=analyze(args.audio)
-        report=dict(status="analysis_only_no_inference",analysis=analysis,vad_replay=replay(args.audio),
+        report=dict(status="analysis_only_no_inference",analysis=analysis,vad_replay=replay(args.audio,args.ready_lifecycle),
                     planned_filters={v:filter_chain(v,analysis["peak"],analysis["channels"]) for v in VARIANTS})
     print(json.dumps(report,indent=2))
     return 0

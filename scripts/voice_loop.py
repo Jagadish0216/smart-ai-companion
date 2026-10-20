@@ -47,7 +47,7 @@ from assistant.voice.factory import close_tts_provider, get_stt_provider, get_tt
 from assistant.voice.processes import run_cancellable  # noqa: E402
 from assistant.voice.tts import TextToSpeechProvider  # noqa: E402
 from assistant.voice.alsa_stream import PersistentAlsaPlayer, trim_pcm_edges  # noqa: E402
-from assistant.voice.capture_vad import AdaptiveCaptureVAD  # noqa: E402
+from assistant.voice.capture_vad import AdaptiveCaptureVAD, QuietCapturePreparation  # noqa: E402
 from assistant.voice.hands_free import HandsFreeCaptureConfig, record_audio_hands_free  # noqa: E402
 from assistant.voice.wakeword.base import WakeWordConfig, WakeWordError  # noqa: E402
 from assistant.voice.wakeword.factory import get_wake_word_provider  # noqa: E402
@@ -155,6 +155,7 @@ class VoiceLoopConfig:
     capture_vad_start_confirm_ms: int = 60
     capture_vad_min_speech_ms: int = 300
     playback_profile: str = "legacy"
+    capture_ready_lifecycle: bool = False
 
     @classmethod
     def from_settings(cls, *, require_capture: bool = True) -> "VoiceLoopConfig":
@@ -206,6 +207,7 @@ class VoiceLoopConfig:
                 if getattr(settings, "VOICE_STREAM_FIRST_SENTENCE_MIN_CHARS", "") else None
             ),
             capture_vad_adaptive=_as_bool(getattr(settings, "VOICE_CAPTURE_VAD_ADAPTIVE", True)),
+            capture_ready_lifecycle=_as_bool(getattr(settings, "VOICE_CAPTURE_READY_LIFECYCLE", False)),
             capture_vad_noise_calibration_seconds=float(getattr(settings, "VOICE_CAPTURE_VAD_NOISE_CALIBRATION_SECONDS", 0.5)),
             capture_vad_start_confirm_ms=int(getattr(settings, "VOICE_CAPTURE_VAD_START_CONFIRM_MS", 60)),
             capture_vad_min_speech_ms=int(getattr(settings, "VOICE_CAPTURE_VAD_MIN_SPEECH_MS", 300)),
@@ -214,6 +216,8 @@ class VoiceLoopConfig:
         return config
 
     def validate(self, *, require_capture: bool = True) -> None:
+        if self.capture_ready_lifecycle and (self.audio_backend != "alsa" or not self.capture_vad_enabled or not self.capture_vad_adaptive):
+            raise VoiceLoopError("Calibrated readiness requires ALSA with enabled adaptive capture VAD.")
         if self.playback_profile not in {"legacy", "approved_loudness", "bounded_gain"}:
             raise VoiceLoopError("Unknown voice playback profile.")
         if self.playback_profile != "legacy" and self.audio_backend != "alsa":
@@ -432,6 +436,7 @@ def record_audio_with_capture_vad(
     max_start_threshold: float | None = None,
     on_amplitude: Callable[[float], None] | None = None,
     on_vad_summary: Callable[[dict], None] | None = None,
+    ready_lifecycle: bool = False,
 ) -> None:
     """Record until speech ends; signal ready once after warm-up/calibration.
 
@@ -439,6 +444,8 @@ def record_audio_with_capture_vad(
     Amplitude callbacks reuse post-calibration RMS and are always best effort.
     Omitting it and the optional adaptive ceiling preserves ordinary capture.
     """
+    if ready_lifecycle and backend != "alsa":
+        raise VoiceLoopError("Calibrated readiness requires the watchdog-bounded ALSA capture path.")
     vad = AdaptiveCaptureVAD(
         start_threshold=start_threshold, silence_seconds=silence_seconds,
         max_seconds=max_seconds, start_timeout_seconds=start_timeout_seconds,
@@ -447,6 +454,7 @@ def record_audio_with_capture_vad(
         chunk_seconds=CAPTURE_CHUNK_SECONDS,
         max_start_threshold=max_start_threshold,
     )
+    preparation = QuietCapturePreparation(vad, warmup_seconds) if ready_lifecycle else None
     sample_rate, sample_width, channels = CAPTURE_SAMPLE_RATE, CAPTURE_SAMPLE_WIDTH, 1
     command = [
         "parecord",
@@ -498,7 +506,7 @@ def record_audio_with_capture_vad(
             except OSError:
                 pass
         watchdog = Timer(
-            warmup_seconds + start_timeout_seconds + max_seconds + 1.0,
+            warmup_seconds + start_timeout_seconds + max_seconds + 1.0 + (noise_calibration_seconds if ready_lifecycle else 0),
             stop_stalled_capture,
         )
         watchdog.daemon = True
@@ -506,8 +514,16 @@ def record_audio_with_capture_vad(
     try:
         if watchdog is not None:
             watchdog.start()
-        time.sleep(warmup_seconds)
-        if adaptive:
+        if not ready_lifecycle:
+            time.sleep(warmup_seconds)
+        else:
+            latency.mark("capture_warmup_start", once=True)
+            if not preparation.warming_up():
+                latency.mark("capture_warmup_end", once=True)
+                latency.mark("calibration_start", once=True)
+        if ready_lifecycle:
+            print("PREPARING - keep quiet during warm-up and calibration; early activity refuses this capture.")
+        elif adaptive:
             print(f"Keep quiet: calibrating capture noise for {noise_calibration_seconds:g}s...")
         else:
             latency.mark("capture_ready", once=True)
@@ -531,6 +547,15 @@ def record_audio_with_capture_vad(
                 _normalized_alsa_left_rms(chunk)
                 if backend == "alsa" else _normalized_pcm_rms(chunk)
             )
+            if preparation and preparation.warming_up():
+                preparation.consume_warmup(rms, chunk_duration)
+                if vad.stop_reason:
+                    latency.mark("endpoint_detected", once=True, reason=vad.stop_reason)
+                    raise VoiceLoopError("Capture preparation has sustained audio activity; remain quiet until ready.")
+                if not preparation.warming_up():
+                    latency.mark("capture_warmup_end", once=True)
+                    latency.mark("calibration_start", once=True)
+                continue  # Explicit preparation samples, never fabricated silence or request PCM.
             was_started, was_calibrated = vad.speech_started, vad.calibrated
             event = vad.feed(rms, chunk_duration)
             if was_calibrated:
@@ -542,10 +567,20 @@ def record_audio_with_capture_vad(
             if vad.stop_reason is not None:
                 latency.mark("endpoint_detected", once=True, reason=vad.stop_reason)
             if not was_calibrated and vad.calibrated and vad.stop_reason is None:
+                if preparation and not preparation.calibration_usable():
+                    latency.mark("endpoint_detected", once=True, reason=vad.stop_reason)
+                    raise VoiceLoopError("Calibration is not quiet enough to signal microphone ready.")
                 latency.mark("capture_ready", once=True)
-                print("Speak now...")
+                if not ready_lifecycle:
+                    print("Speak now...")
                 if on_capture_ready is not None:
                     on_capture_ready()
+                if ready_lifecycle:
+                    print("MICROPHONE READY - speak now...", flush=True)
+                    vad.open_start_window()
+                    latency.mark("speech_start_window_open", once=True)
+            if ready_lifecycle and vad.accepted:
+                latency.mark("minimum_speech_accepted", once=True)
             if not was_started:
                 preroll.append(chunk)
                 if event == "start":
@@ -594,7 +629,10 @@ def record_audio_with_capture_vad(
             try:
                 on_vad_summary({key: getattr(vad, key) for key in (
                     "noise_floor", "start_threshold", "continue_threshold", "max_wait_rms",
-                    "speech_duration", "capture_duration", "elapsed", "stop_reason")})
+                    "speech_duration", "capture_duration", "elapsed", "stop_reason")}
+                    | (dict(accepted=vad.accepted, ready_lifecycle=True,
+                            warmup_audio_seconds=preparation.warmup_elapsed,
+                            start_window_origin_vad_seconds=vad.start_window_origin) if preparation else {}))
             except Exception:
                 pass  # Observability must not change capture/error behavior.
         if vad.stop_reason is not None:
@@ -1654,6 +1692,8 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
                     )
                     _set_display_state(display, DisplayState.THINKING)
                 elif config.capture_vad_enabled:
+                    if config.capture_ready_lifecycle:
+                        _set_display_text(display, "PREPARING - keep quiet")
                     print(
                         f"Preparing microphone ({config.input_warmup_seconds:g}s warm-up, "
                         "then speech-driven capture)..."
@@ -1675,6 +1715,9 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
                         min_speech_ms=config.capture_vad_min_speech_ms,
                         **({"on_amplitude": amplitude} if amplitude is not None else {}),
                         **({"backend": "alsa"} if config.audio_backend == "alsa" else {}),
+                        **({"ready_lifecycle": True,
+                            "on_capture_ready": lambda: _set_display_text(display, "MICROPHONE READY")}
+                           if config.capture_ready_lifecycle else {}),
                     )
                 else:
                     print(

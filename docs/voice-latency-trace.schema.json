@@ -148,7 +148,12 @@
               "tts_end",
               "tts_start",
               "user_persist_end",
-              "user_persist_start"
+              "user_persist_start",
+              "capture_warmup_start",
+              "capture_warmup_end",
+              "calibration_start",
+              "speech_start_window_open",
+              "minimum_speech_accepted"
             ]
           },
           "at_ms": {
@@ -175,7 +180,9 @@
             "enum": [
               "silence",
               "max_duration",
-              "start_timeout"
+              "start_timeout",
+              "preparation_activity",
+              "calibration_unreliable"
             ]
           },
           "profile": {

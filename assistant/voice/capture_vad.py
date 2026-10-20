@@ -58,6 +58,7 @@ class AdaptiveCaptureVAD:
         self.speech_started = False
         self.max_wait_rms = 0.0
         self.stop_reason = None
+        self.start_window_origin = 0.0
         if adaptive:
             self._thresholds()
 
@@ -80,6 +81,12 @@ class AdaptiveCaptureVAD:
         floor = min(self.noise_floor, self.start_threshold * 0.95)
         self.continue_threshold = floor + 0.25 * (self.start_threshold - floor)
 
+    def open_start_window(self):
+        """Opt-in lifecycle: preserve calibration, start a fresh bounded wait after cue."""
+        if not self.calibrated or self.speech_started or self.stop_reason:
+            raise ValueError("Cannot open speech window before valid calibration.")
+        self.start_window_origin = self.elapsed
+
     def feed(self, rms, seconds):
         if not math.isfinite(rms) or not 0 <= rms <= 1 or not math.isfinite(seconds) or seconds <= 0:
             raise ValueError("Capture VAD input must be normalized RMS and positive duration.")
@@ -91,7 +98,7 @@ class AdaptiveCaptureVAD:
             if was_calibrated:
                 self.max_wait_rms = max(self.max_wait_rms, rms)
             # Includes calibration and rejected bursts: no fresh waiting budget.
-            if self.elapsed + 1e-9 >= self.start_timeout_seconds and (
+            if self.elapsed - self.start_window_origin + 1e-9 >= self.start_timeout_seconds and (
                 self.adaptive or rms < self.start_threshold
             ):
                 self.stop_reason = "start_timeout"
@@ -160,3 +167,37 @@ class AdaptiveCaptureVAD:
             self.resume_duration = 0.0
             return "reset"
         return None
+
+
+class QuietCapturePreparation:
+    """Optional bounded preparation, shared by live capture and file replay.
+
+    Drain real warm-up frames, never insert silence. Sustained activity during
+    warm-up or a calibration median at/above the configured onset floor refuses
+    readiness; this is a conservative non-quiet gate, not a speech classifier.
+    No recalibration/retry, threshold lowering or suppression of a valid request.
+    """
+    def __init__(self, vad, warmup_seconds):
+        if not vad.adaptive or not math.isfinite(warmup_seconds) or warmup_seconds < 0:
+            raise ValueError("Calibrated readiness requires adaptive VAD and bounded warm-up.")
+        self.vad = vad
+        self.warmup_seconds = warmup_seconds
+        self.warmup_elapsed = 0.0
+        self.activity_seconds = 0.0
+
+    def warming_up(self):
+        return self.warmup_elapsed + 1e-9 < self.warmup_seconds
+
+    def consume_warmup(self, rms, seconds):
+        self.warmup_elapsed += seconds
+        self.activity_seconds = self.activity_seconds + seconds if rms >= self.vad.configured_start else 0.0
+        if self.activity_seconds + 1e-9 >= self.vad.min_speech_seconds:
+            self.vad.stop_reason = "preparation_activity"
+
+    def calibration_usable(self):
+        if not self.vad.calibrated or self.vad.stop_reason:
+            return False
+        if self.vad.noise_floor >= self.vad.configured_start:
+            self.vad.stop_reason = "calibration_unreliable"
+            return False
+        return True
