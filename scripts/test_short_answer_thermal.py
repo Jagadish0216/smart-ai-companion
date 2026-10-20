@@ -54,14 +54,14 @@ def classify(sample):
     return complete and sample["expected_answer_present"]
 
 
-def infer(host, digest, target, *, opener=None, clock=time.perf_counter):
+def infer(host, digest, target, *, opener=None, clock=time.perf_counter, question=QUESTION, gate=None):
     """Exactly one request; checkpoint every text event, including before cancellation."""
     quality.require_pi()
     models.verify_identity(MODEL, models.inventory(host)[MODEL], digest)
     resident = quality.resident(host, MODEL, digest)
     from scripts.benchmark_inference_ab import telemetry
-    preflight(telemetry(), models.inventory(host)[MODEL], resident)
-    payload = dict(model=MODEL, messages=[dict(role="user", content=QUESTION)],
+    (gate or preflight)(telemetry(), models.inventory(host)[MODEL], resident)
+    payload = dict(model=MODEL, messages=[dict(role="user", content=question)],
                    stream=True, options=dict(OPTIONS), think=False, keep_alive="60s")
     sample = dict(answer="", metrics={}, stream_done=False, request=payload)
     started = clock()
