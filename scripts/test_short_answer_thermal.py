@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import re
 import signal
+import socket
+import urllib.error
 import subprocess
 import sys
 import tempfile
@@ -54,8 +56,10 @@ def classify(sample):
     return complete and sample["expected_answer_present"]
 
 
-def infer(host, digest, target, *, opener=None, clock=time.perf_counter, question=QUESTION, gate=None):
+def infer(host, digest, target, *, opener=None, clock=time.perf_counter, question=QUESTION, gate=None, http_timeout=20, phase=None):
     """Exactly one request; checkpoint every text event, including before cancellation."""
+    if not 0 < http_timeout < RUNTIME_SECONDS:
+        raise ValueError("HTTP timeout must be positive and below the monitored request limit")
     quality.require_pi()
     models.verify_identity(MODEL, models.inventory(host)[MODEL], digest)
     resident = quality.resident(host, MODEL, digest)
@@ -63,13 +67,14 @@ def infer(host, digest, target, *, opener=None, clock=time.perf_counter, questio
     (gate or preflight)(telemetry(), models.inventory(host)[MODEL], resident)
     payload = dict(model=MODEL, messages=[dict(role="user", content=question)],
                    stream=True, options=dict(OPTIONS), think=False, keep_alive="60s")
-    sample = dict(answer="", metrics={}, stream_done=False, request=payload)
+    sample = dict(answer="", metrics={}, stream_done=False, request=payload,
+                  http_timeout_seconds=http_timeout, phase=phase)
     started = clock()
     opener = opener or urllib.request.build_opener(urllib.request.ProxyHandler({}), models.NoRedirect())
     save(target, sample)
     try:
         request = urllib.request.Request(host + "/api/chat", data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
-        with opener.open(request, timeout=20) as response:
+        with opener.open(request, timeout=http_timeout) as response:
             for raw in response:
                 if len(raw) > 1_000_000:
                     raise models.TrialRefused("oversized_stream_event")
@@ -87,12 +92,51 @@ def infer(host, digest, target, *, opener=None, clock=time.perf_counter, questio
                 save(target, sample)
                 if sample["stream_done"]:
                     break
+    except BaseException as exc:
+        cause = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+        if isinstance(cause, (TimeoutError, socket.timeout)):
+            # A socket timeout during a cold request does not prove loading was the cause.
+            sample["abort_reason"] = "cold_load_timeout" if phase == "cold" else "http_socket_timeout"
+            sample["timeout_scope"] = "HTTP socket inactivity; underlying backend stage unproven"
+        elif isinstance(exc, models.TrialRefused):
+            sample["abort_reason"] = exc.reason
+        else:
+            sample["abort_reason"] = "worker_cancelled" if isinstance(exc, (KeyboardInterrupt, SystemExit)) else "worker_failure"
+        sample["error_type"] = type(exc).__name__
+        sample["error_detail"] = str(exc)
+        raise
     finally:
         sample["total_response_seconds"] = clock() - started
         classify(sample)
         save(target, sample)
     return 0 if sample["complete"] else 2
 
+
+
+def read_sample(target):
+    """Missing/malformed checkpoints cannot turn a failed request into expiry."""
+    try:
+        sample = json.loads(target.read_text(encoding="utf-8"))
+        if not isinstance(sample, dict):
+            raise ValueError("Expected checkpoint object")
+        return sample
+    except (OSError, ValueError) as exc:
+        return dict(abort_reason="worker_failure", error_type=type(exc).__name__,
+                    error_detail="Missing or unreadable worker checkpoint")
+
+
+def request_failure(sample, returncode):
+    """Inspect worker evidence before considering post-completion residency."""
+    if sample.get("abort_reason"):
+        return sample["abort_reason"]
+    classify(sample)
+    if returncode not in (0, 2):
+        return "worker_failure"
+    if not sample["complete"]:
+        return "incomplete_answer"
+    if returncode:
+        return "worker_failure"
+    return None
 
 def run(args):
     output = Path(args.output).resolve()
@@ -125,6 +169,10 @@ def run(args):
                 try:
                     monitor(process, telemetry, lambda: quality.resident(args.host, MODEL, digest),
                             report, timeout=RUNTIME_SECONDS)
+                    outcome = read_sample(target)
+                    reason = request_failure(outcome, process.returncode)
+                    if reason:
+                        raise models.TrialRefused(reason)
                     final = telemetry()
                     report["telemetry"].append(final)
                     reason = models.pressure_reason(final)
@@ -132,13 +180,11 @@ def run(args):
                         raise models.TrialRefused(reason)
                     models.verify_identity(MODEL, models.inventory(args.host)[MODEL], digest)
                     quality.resident(args.host, MODEL, digest, "warm")
-                    if process.returncode:
-                        raise models.TrialRefused("child_incomplete_or_failed")
                     report["status"] = "finished"
                 finally:
                     models.terminate(process)
                     if target.is_file():
-                        report["sample"] = json.loads(target.read_text(encoding="utf-8"))
+                        report["sample"] = read_sample(target)
     except BaseException as exc:
         report.update(status="aborted", abort_reason=exc.reason if isinstance(exc, models.TrialRefused) else "failed_or_cancelled")
     finally:

@@ -17,6 +17,7 @@ models, quality = short.models, short.quality
 QUESTIONS = (short.QUESTION, "What is RAM in a computer? Answer in one short sentence.")
 PREFIX = "a80c4f17acd5"
 SESSION_SECONDS = 60
+HTTP_TIMEOUTS = {"cold": 25, "warm": 20}
 
 
 def gate(point, installed, residents, phase):
@@ -57,7 +58,8 @@ def worker(args):
         if point["temperature_c"] >= 50:
             raise models.TrialRefused("warm_deferred_thermal")
     return short.infer(args.host, args.digest, args.child_result,
-                       question=QUESTIONS[phase == "warm"], gate=check)
+                       question=QUESTIONS[phase == "warm"], gate=check,
+                       http_timeout=HTTP_TIMEOUTS[phase], phase=phase)
 
 
 def run(args, *, clock=time.monotonic):
@@ -65,7 +67,7 @@ def run(args, *, clock=time.monotonic):
     output.mkdir(parents=True, exist_ok=False)
     report = dict(schema_version=1, status="aborted", phases=[], telemetry=[],
                   manual_quality_review_required=True, session_limit_seconds=SESSION_SECONDS,
-                  request_limit_seconds=short.RUNTIME_SECONDS, ratios=None)
+                  request_limit_seconds=short.RUNTIME_SECONDS, http_timeout_seconds=HTTP_TIMEOUTS, ratios=None)
     lock = None
     deadline = clock() + SESSION_SECONDS
     try:
@@ -94,31 +96,49 @@ def run(args, *, clock=time.monotonic):
                     "--child-result", str(target), "--digest", digest, "--phase", phase],
                     cwd=ROOT, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 try:
-                    short.monitor(process, telemetry, lambda: quality.resident(args.host, short.MODEL, digest,
-                        "warm" if phase == "warm" else None), entry, timeout=remaining)
-                    final = telemetry()
+                    try:
+                        short.monitor(process, telemetry, lambda: quality.resident(args.host, short.MODEL, digest,
+                            "warm" if phase == "warm" else None), entry, timeout=remaining)
+                    except models.TrialRefused as exc:
+                        if exc.reason == "bounded_cycle_timeout":
+                            raise models.TrialRefused("session_deadline" if clock() >= deadline else "request_deadline") from exc
+                        raise
+                    # Load the actual child outcome before any post-request warm assertion.
+                    entry["sample"] = short.read_sample(target)
+                    entry["worker_returncode"] = process.returncode
+                    failure = short.request_failure(entry["sample"], process.returncode)
+                    try:
+                        final = telemetry()
+                    except Exception as exc:
+                        entry["final_telemetry_error"] = type(exc).__name__
+                        if failure:
+                            raise models.TrialRefused(failure) from exc
+                        raise
                     entry["telemetry"].append(final)
                     reason = models.pressure_reason(final)
+                    if reason:
+                        entry["final_pressure_reason"] = reason
+                    if failure:
+                        raise models.TrialRefused(failure)
                     if reason:
                         raise models.TrialRefused(reason)
                     if clock() >= deadline:
                         raise models.TrialRefused("session_deadline")
                     models.verify_identity(short.MODEL, models.inventory(args.host)[short.MODEL], digest)
                     entry["resident_after"] = quality.resident(args.host, short.MODEL, digest, "warm")
-                    if process.returncode:
-                        reason = json.loads(target.read_text()).get("abort_reason") if target.is_file() else None
-                        raise models.TrialRefused(reason or "child_incomplete_or_failed")
                     entry["status"] = "finished"
                 finally:
                     models.terminate(process)
                     if target.is_file():
-                        entry["sample"] = json.loads(target.read_text(encoding="utf-8"))
+                        entry["sample"] = short.read_sample(target)
                     summarize(entry["sample"], phase)
                 if not entry["sample"]["complete"] or not entry["sample"]["factual_screen_passed"]:
-                    raise models.TrialRefused("incomplete_or_truncated")
+                    raise models.TrialRefused("factual_screen_failed")
             report["status"] = "complete_manual_review_pending"
     except BaseException as exc:
         report["abort_reason"] = exc.reason if isinstance(exc, models.TrialRefused) else "failed_or_cancelled"
+        if report["phases"]:
+            report["phases"][-1].update(status="aborted", abort_reason=report["abort_reason"])
         if report["abort_reason"] == "warm_deferred_thermal":
             report["status"] = "warm_deferred_thermal"
     finally:
@@ -157,8 +177,11 @@ def main():
             try:
                 return worker(args)
             except BaseException as exc:
-                sample = json.loads(args.child_result.read_text()) if args.child_result.is_file() else {}
-                sample["abort_reason"] = exc.reason if isinstance(exc, models.TrialRefused) else "worker_failed_or_cancelled"
+                sample = short.read_sample(args.child_result) if args.child_result.is_file() else {}
+                sample.setdefault("abort_reason", exc.reason if isinstance(exc, models.TrialRefused) else
+                                  "worker_cancelled" if isinstance(exc, (KeyboardInterrupt, SystemExit)) else "worker_failure")
+                sample.setdefault("error_type", type(exc).__name__)
+                sample.setdefault("error_detail", str(exc))
                 short.save(args.child_result, sample)
                 return 2
     if not args.output:

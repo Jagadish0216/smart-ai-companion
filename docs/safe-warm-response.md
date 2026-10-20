@@ -6,7 +6,8 @@ Run once on the uncooled Raspberry Pi 5, from this checkout with its Python envi
 python scripts/compare_safe_warm_response.py --output "benchmarks/safe-warm-$(date +%Y%m%d-%H%M%S)"
 ```
 
-No Pi results are included in this change. Windows tests use mocked inference only.
+No new Pi trial was run for this repair. Windows tests use mocked inference only.
+The operator-reported failed trial is analyzed in [cold-warm-failure-analysis.md](cold-warm-failure-analysis.md).
 The operator must let any resident model expire naturally and cool the Pi before starting.
 The diagnostic lock excludes other accepted diagnostic sessions. No downloads, retries,
 eviction, restart, production setting changes or benchmark-bank changes occur.
@@ -16,6 +17,9 @@ Each worker also starts below 50 C (including the warm worker, a conservative ad
 restriction). The parent refuses the warm phase at 55 C or above without waiting or retrying.
 A worker thermal refusal is preserved as `warm_deferred_thermal`. Both requests use the
 existing 30-second monitored bound; the session has a 60-second budget, including setup.
+The cold HTTP socket timeout is 25 seconds; warm remains 20 seconds. These are socket
+inactivity limits, not full-request deadlines. The parent monitor enforces elapsed limits
+even if socket activity continues. Neither timeout is automatically extended or retried.
 Existing monitoring samples every 0.5 seconds and terminates the process group on
 70 C, current power/throttle flags, insufficient RAM, unknown telemetry, identity/context
 changes or deadlines. Sampling is observational and cannot guarantee instantaneous cutoff.
@@ -30,12 +34,16 @@ request two. Factual screens are simple heuristics, and do not replace manual re
 `report.json` is the version 1 report schema:
 
 - `status`, `abort_reason`, `installed`, `verified_digest`, request/session limits,
-  `manual_quality_review_required`, `ratios`, and `interpretation` describe the session.
+  `http_timeout_seconds`, `manual_quality_review_required`, `ratios`, and `interpretation` describe the session.
 - `phases` contains separate cold/warm records: `resident_before`, `resident_after`,
-  initial/maximum observed temperature, full `telemetry`, `status`, `load`, and `sample`.
+  initial/maximum observed temperature, full `telemetry`, `status`, `abort_reason`,
+  `worker_returncode` when observed after monitor completion, `load`, and `sample`.
+  Optional `final_pressure_reason` or `final_telemetry_error` retain secondary observations.
 - Installed metadata retains exact quantization and artifact bytes; resident metadata
   retains backend size/size_vram allocation and context. Telemetry retains available RAM,
   temperature, clock and current power/throttle observations.
+- Failed samples additionally retain `abort_reason`, `error_type`, `error_detail`, and
+  `timeout_scope` for socket timeouts. Both sample and report record the timeout policy.
 - Each sample retains the exact request, raw answer, completion reason, truncation,
   prompt/generation counts, load/prompt/decode durations, first meaningful text latency,
   complete-answer duration, throughput, prompt cache counters, hashes and factual review.
