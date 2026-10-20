@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from assistant import latency_trace as latency
 import logging
 import re
 import time
@@ -85,6 +86,7 @@ class QueryRouter:
     def __init__(self, retriever: KnowledgeRetriever | None = None):
         self._retriever = retriever
 
+    @latency.span("routing")
     def decide(
         self,
         query: str,

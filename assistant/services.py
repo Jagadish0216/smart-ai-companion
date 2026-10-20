@@ -6,6 +6,7 @@ This is the single entry point that views use — views never call
 AI engines directly.
 """
 
+from assistant import latency_trace as latency
 import logging
 import math
 import time
@@ -209,6 +210,7 @@ class AssistantService:
                 )
             raise
         except Exception as exc:
+            latency.mark("stream_error", outcome=latency.failure_kind(exc))
             _log_generation_exception(exc)
             _log_failed_request(prepared)
             yield _stream_error(
@@ -218,6 +220,7 @@ class AssistantService:
             )
 
 
+@latency.span("service_prepare")
 def _prepare_message(
     query: str,
     *,
@@ -227,6 +230,7 @@ def _prepare_message(
     response_plan: ResponsePlan | None,
 ) -> PreparedAssistantRequest | tuple:
     execution_started = time.perf_counter()
+    latency.mark("conversation_prepare_start")
     if conversation_id:
         try:
             conversation = Conversation.objects.get(id=conversation_id)
@@ -235,8 +239,10 @@ def _prepare_message(
     else:
         conversation = Conversation.objects.create(title=query[:50])
 
+    latency.mark("conversation_prepare_end")
     policy_started = time.perf_counter()
     execution_plan = get_ai_execution_plan()
+    latency.mark("resource_policy", profile=execution_plan.resource_profile, generation_allowed=execution_plan.generation_allowed)
     if response_plan is not None and response_plan.is_voice:
         execution_plan = select_voice_budget(execution_plan)
     policy_ms = round((time.perf_counter() - policy_started) * 1000)
@@ -249,7 +255,9 @@ def _prepare_message(
     recent = _get_conversation_history(conversation, recent_limit, include_ids=True)
     history = [{"role": item["role"], "content": item["content"]} for item in recent]
     history_ms = round((time.perf_counter() - history_started) * 1000)
+    latency.mark("user_persist_start")
     current_message = Message.objects.create(conversation=conversation, sender="USER", text=query)
+    latency.mark("user_persist_end")
 
     effective_instruction = system_instruction
     effective_num_predict = num_predict
@@ -280,6 +288,7 @@ def _prepare_message(
         ),
         allow_implicit_rag=response_plan.allow_implicit_rag if response_plan is not None else True,
     )
+    latency.mark("route", route=route_decision.route.value)
     routing_ms = round((time.perf_counter() - routing_started) * 1000)
     stage_ms = {
         "history_ms": history_ms,
@@ -518,6 +527,7 @@ def _apply_resource_status(text: str, execution_plan: AIExecutionPlan) -> str:
     return _resource_status_prefix(execution_plan) + text
 
 
+@latency.span("response_persist")
 def _persist_generated_response(
     conversation: Conversation,
     text: str,
@@ -902,6 +912,7 @@ def _combine_instructions(*instructions: str | None) -> str:
     )
 
 
+@latency.span("history")
 def _get_conversation_history(conversation: Conversation, limit: int = 10,
                               *, include_ids: bool = False) -> list[dict]:
     """

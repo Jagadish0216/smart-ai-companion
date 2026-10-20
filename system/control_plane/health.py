@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from assistant import latency_trace as latency
 import math
 import socket
 import time
@@ -114,6 +115,7 @@ def _guarded_check(check: Any, service_name: str) -> dict[str, Any]:
         return _result("UNKNOWN", started, f"{service_name} health could not be determined.")
 
 
+@latency.span("ancillary_checks")
 def get_service_health() -> dict[str, dict[str, Any]]:
     """Check configured local services; one failure never aborts other checks."""
     ollama = _guarded_check(

@@ -1,5 +1,6 @@
 """Post-wake request recording: retain audio unconditionally, endpoint optionally."""
 
+from assistant import latency_trace as latency
 from collections import deque
 from dataclasses import dataclass
 import math
@@ -115,6 +116,7 @@ class NativeRequestReader:
         self.selector = None
         self.deadline = None
 
+    @latency.span("capture_open")
     def start(self):
         try:
             self.process = subprocess.Popen(
@@ -146,9 +148,11 @@ class NativeRequestReader:
                 continue
             if not chunk:
                 raise HandsFreeCaptureError("Request arecord closed its PCM stream; check the ALSA capture device.")
+            latency.mark("capture_first_frame", once=True)
             pending.extend(chunk)
         return bytes(pending)
 
+    @latency.span("capture_cleanup")
     def close(self):
         process, self.process = self.process, None
         try:
@@ -174,6 +178,7 @@ class NativeRequestReader:
                 process.stdout.close()
 
 
+@latency.span("capture")
 def record_audio_hands_free(output_path: Path, device: str, config: HandsFreeCaptureConfig,
                            *, on_capture_ready=None, on_amplitude=None):
     """Drain, calibrate, then write every post-ready frame to a bounded WAV.
@@ -201,7 +206,9 @@ def record_audio_hands_free(output_path: Path, device: str, config: HandsFreeCap
         for _chunk in phase(config.warmup_seconds):
             pass  # Actively drain exact native frames; never retain warm-up PCM.
         noise = [normalized_left_rms(chunk) for chunk in phase(config.calibration_seconds)]
+        latency.mark("calibration_end", once=True)
         detector = HandsFreeEndpointDetector(median(noise), config.end_silence_seconds)
+        latency.mark("capture_ready", once=True)
         print("Speak now...")
         if on_capture_ready is not None:
             on_capture_ready()
@@ -217,6 +224,8 @@ def record_audio_hands_free(output_path: Path, device: str, config: HandsFreeCap
                 captured_frames += count
                 rms = normalized_left_rms(chunk)
                 ended = detector.feed(rms, count / SAMPLE_RATE)
+                if detector.speech_seen:
+                    latency.mark("speech_detected", once=True)
                 observe(on_amplitude, rms)
                 if captured_frames >= max_frames:
                     stop_reason = "max_duration"
@@ -229,6 +238,8 @@ def record_audio_hands_free(output_path: Path, device: str, config: HandsFreeCap
     except Exception as exc:
         raise HandsFreeCaptureError(f"Hands-free recording failed: {exc}") from exc
     finally:
+        if stop_reason is not None:
+            latency.mark("endpoint_detected", once=True, reason=stop_reason)
         reader.close()
         if stop_reason is not None:
             print(

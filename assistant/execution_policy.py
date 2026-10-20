@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from assistant import latency_trace as latency
 from dataclasses import asdict, dataclass, replace
 from typing import Callable, Iterable
 
@@ -155,6 +156,7 @@ def build_execution_plan(
     )
 
 
+@latency.span("policy")
 def get_ai_execution_plan(
     *,
     model_inventory_provider: Callable[[], Iterable[str]] | None = None,

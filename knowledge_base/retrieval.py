@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from assistant import latency_trace as latency
 import heapq
 import re
 from abc import ABC, abstractmethod
@@ -65,6 +66,7 @@ class KnowledgeRetriever(ABC):
 class LexicalRetriever(KnowledgeRetriever):
     """Term-coverage retrieval with no model or external service dependency."""
 
+    @latency.span("rag")
     def retrieve(
         self,
         query: str,

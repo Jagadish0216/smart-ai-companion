@@ -22,6 +22,7 @@ Why Ollama:
     - Clean separation: Django handles web, Ollama handles inference
 """
 
+from assistant import latency_trace as latency
 import json
 import logging
 import socket
@@ -226,6 +227,7 @@ class LocalLLMEngine(AIEngine):
             model=selected_model,
         )
         timeout = self._timeout if timeout_seconds is None else float(timeout_seconds)
+        latency.mark("ollama_request_ready")
         request_started = time.perf_counter()
         first_content_at = None
         complete_text = ""
@@ -254,6 +256,7 @@ class LocalLLMEngine(AIEngine):
                     message = event.get("message")
                     content = message.get("content", "") if isinstance(message, dict) else ""
                     if content:
+                        latency.first_text(content)
                         if first_content_at is None:
                             first_content_at = time.perf_counter()
                         complete_text += content
@@ -404,6 +407,7 @@ class LocalLLMEngine(AIEngine):
             ):
                 metrics[metric_name] = round(count / (duration_ns / 1e9), 1)
 
+        latency.mark("ollama_complete", **metrics)
         if metrics:
             logger.info(
                 "Ollama inference metrics: %s",

@@ -30,6 +30,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
+from assistant import latency_trace as latency  # noqa: E402
+
 import django  # noqa: E402
 
 django.setup()
@@ -60,6 +62,7 @@ ALSA_CHANNELS = 2
 logger = logging.getLogger(__name__)
 
 
+@latency.span("display_callback")
 def _set_display_state(display, state):
     """Keep even unexpected display-provider failures out of the voice path."""
     if display is not None:
@@ -71,6 +74,7 @@ def _set_display_state(display, state):
     _set_display_level(display, 0)
 
 
+@latency.span("display_callback")
 def _set_display_level(display, level):
     try:
         observe(getattr(display, "set_level", None), level)
@@ -84,6 +88,7 @@ def route_to_display_mode(route):
             "online": DisplayMode.WEB}.get(route) if isinstance(route, str) else None
 
 
+@latency.span("display_callback")
 def _set_display_query(display, text):
     if display is not None:
         try:
@@ -92,6 +97,7 @@ def _set_display_query(display, text):
             logger.warning("Companion display query update failed; voice interaction continues")
 
 
+@latency.span("display_callback")
 def _set_display_route(display, event):
     if display is not None:
         try:
@@ -104,6 +110,7 @@ def _set_display_route(display, event):
             logger.warning("Companion display mode update failed; voice interaction continues")
 
 
+@latency.span("display_callback")
 def _set_display_text(display, text):
     """Keep answer-text display failures out of the voice path and logs."""
     if display is not None:
@@ -282,6 +289,7 @@ def _stderr_text(stderr: bytes | str | None) -> str:
     return (stderr or "").strip()
 
 
+@latency.span("capture_cleanup")
 def _terminate_and_reap(process: subprocess.Popen) -> tuple[bytes, bytes]:
     """Stop a child process and ensure it is reaped, killing as a fallback."""
     try:
@@ -299,6 +307,7 @@ def _terminate_and_reap(process: subprocess.Popen) -> tuple[bytes, bytes]:
         return process.communicate()
 
 
+@latency.span("capture")
 def record_audio(
     output_path: Path,
     source: str,
@@ -315,6 +324,7 @@ def record_audio(
     _record_audio_command(command, output_path, duration_seconds, warmup_seconds)
 
 
+@latency.span("capture")
 def record_audio_alsa(
     output_path: Path, device: str, duration_seconds: float,
     warmup_seconds: float = 1.0,
@@ -331,11 +341,13 @@ def _record_audio_command(
     binary = command[0]
 
     try:
+        latency.mark("capture_open_start")
         process = subprocess.Popen(
             command,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
+        latency.mark("capture_open_end")
     except FileNotFoundError as exc:
         raise VoiceLoopError(
             f"Recording failed: {binary} was not found on PATH."
@@ -345,6 +357,7 @@ def _record_audio_command(
 
     try:
         time.sleep(warmup_seconds)
+        latency.mark("capture_ready", once=True)
         print("Speak now...")
         _, stderr = process.communicate(timeout=duration_seconds)
     except subprocess.TimeoutExpired:
@@ -397,6 +410,7 @@ def _normalized_alsa_left_rms(chunk: bytes) -> float:
     return math.sqrt(squares / (length // frame_bytes)) / 2147483648.0
 
 
+@latency.span("capture")
 def record_audio_with_capture_vad(
     output_path: Path,
     source: str,
@@ -442,11 +456,13 @@ def record_audio_with_capture_vad(
         raise VoiceLoopError("Unsupported capture audio backend.")
     binary = command[0]
     try:
+        latency.mark("capture_open_start")
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
+        latency.mark("capture_open_end")
     except FileNotFoundError as exc:
         raise VoiceLoopError(
             f"Recording failed: {binary} was not found on PATH."
@@ -487,6 +503,7 @@ def record_audio_with_capture_vad(
         if adaptive:
             print(f"Keep quiet: calibrating capture noise for {noise_calibration_seconds:g}s...")
         else:
+            latency.mark("capture_ready", once=True)
             print("Speak now...")
             if on_capture_ready is not None:
                 on_capture_ready()
@@ -499,6 +516,7 @@ def record_audio_with_capture_vad(
                 raise VoiceLoopError(
                     f"Recording failed: {binary} stopped before capture completed or timed out."
                 )
+            latency.mark("capture_first_frame", once=True)
             chunk_duration = (
                 len(chunk) / (sample_width * channels) / sample_rate
             )
@@ -510,7 +528,14 @@ def record_audio_with_capture_vad(
             event = vad.feed(rms, chunk_duration)
             if was_calibrated:
                 observe(on_amplitude, rms)
+            if not was_calibrated and vad.calibrated:
+                latency.mark("calibration_end", once=True)
+            if event == "start":
+                latency.mark("speech_detected", once=True)
+            if vad.stop_reason is not None:
+                latency.mark("endpoint_detected", once=True, reason=vad.stop_reason)
             if not was_calibrated and vad.calibrated and vad.stop_reason is None:
+                latency.mark("capture_ready", once=True)
                 print("Speak now...")
                 if on_capture_ready is not None:
                     on_capture_ready()
@@ -586,6 +611,7 @@ def record_audio_with_capture_vad(
     print(f"Capture complete: {captured_audio_seconds:.1f}s audio.")
 
 
+@latency.span("normalize")
 def normalize_audio(input_path: Path, output_path: Path, *, left_channel: bool = False) -> None:
     """Convert the recording to the mono 16 kHz PCM format whisper.cpp expects."""
     command = [
@@ -890,6 +916,8 @@ class StreamingSpeechBuffer:
                     if not self._outside_groups(match.end(), protected):
                         continue
                     sentences.append((match.end(), len(sanitize_text_for_speech(self.pending[:match.end()]))))
+                    if sentences[-1][1] > 0:
+                        latency.mark("first_complete_sentence", once=True)
             # Keep punctuation inside Piper input. Hold tiny completed sentences
             # for their neighbours, with a bounded size-based (not timed) wait.
             lower = max(1, self.target_chars - 60)
@@ -1092,7 +1120,9 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
         number = 0
         try:
             while not stopped.is_set():
+                latency.mark("text_queue_wait_start")
                 text = receive(pending)
+                latency.mark("text_queue_wait_end")
                 if stopped.is_set():
                     return
                 if text is finish:
@@ -1117,6 +1147,7 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                 except Exception as exc:
                     raise VoiceLoopError(f"Audio preparation failed on streaming chunk {number}: {exc}") from exc
                 if number == 1:
+                    latency.mark("first_audio_ready", once=True)
                     timings["first_audio_ready"] = time.perf_counter() - stream_started
                 enqueue(ready_audio, prepared)
         except BaseException as exc:
@@ -1145,6 +1176,7 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                 # An already-ready item costs zero starvation. Time only a real
                 # queue miss; do not include PCM pauses or the final EOF marker.
                 wait_started = None
+                latency.mark("audio_queue_wait_start")
                 try:
                     prepared = ready_audio.get_nowait()
                 except Empty:
@@ -1160,6 +1192,7 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                             pass
                     else:
                         return
+                latency.mark("audio_queue_wait_end")
                 if prepared is finish or stopped.is_set():
                     if player is not None and not stopped.is_set():
                         player.finish()
@@ -1248,6 +1281,7 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
         for unit in buffer.feed(answer, final=final, omit_incomplete_tail=final and complete_sentence_played):
             first_ready = time.perf_counter() - stream_started if "first_tts_text_ready" not in timings else None
             if first_ready is not None:
+                latency.mark("first_speech_unit", once=True)
                 timings["first_tts_text_ready"] = first_ready
                 timings["first_tts_unit_ready"] = first_ready
             enqueue(pending, unit)
@@ -1266,8 +1300,8 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
     start = None
     canonical_parts = []
     try:
-        workers.append(executor.submit(preparation_worker))
-        workers.append(executor.submit(playback_worker))
+        workers.append(latency.submit(executor, preparation_worker, "audio_prepare"))
+        workers.append(latency.submit(executor, playback_worker, "audio_playback"))
         for event in iterator:
             if stopped.is_set():
                 raise errors[0] if errors else VoiceLoopError("Voice stream cancelled.")
@@ -1275,6 +1309,7 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                 raise VoiceLoopError("AI response failed: malformed stream event.")
             kind = event.get("type")
             if kind == "error":
+                latency.mark("stream_error")
                 raise VoiceLoopError(f"AI response failed: {event.get('detail') or event.get('error') or 'stream interrupted.'}")
             if kind == "start":
                 if start is not None:
@@ -1357,9 +1392,13 @@ def is_no_speech_transcription(text: str) -> bool:
 
 def _timed_call(timings: dict[str, float], stage: str, operation, *args, **kwargs):
     started = time.perf_counter()
+    if stage in ("tts", "audio_prepare"):
+        latency.mark(stage + "_start")
     try:
         return operation(*args, **kwargs)
     finally:
+        if stage in ("tts", "audio_prepare"):
+            latency.mark(stage + "_end")
         elapsed = time.perf_counter() - started
         timings[stage] = timings.get(stage, 0.0) + elapsed
 
@@ -1401,6 +1440,7 @@ def play_audio(audio_path: Path, *, cancel_event=None) -> None:
         )
 
 
+@latency.span("playback_conversion")
 def prepare_alsa_playback(input_path: Path, output_path: Path, gain: float, *, cancel_event=None, raw_pcm=False) -> None:
     """Convert Piper WAV to native speaker WAV (batch) or headerless PCM (stream)."""
     command = ["ffmpeg", "-y", "-i", str(input_path), "-af",
@@ -1530,21 +1570,22 @@ def run_voice_cycle(
     hands_free_capture: HandsFreeCaptureConfig | None = None,
 ) -> int | None:
     """Run a cycle; hardware display failures are isolated from voice failures."""
-    try:
-        return _run_voice_cycle(
-            config, conversation_id, display, audio_file=audio_file, text=text,
-            hands_free_capture=hands_free_capture,
-        )
-    except NoSpeechDetected:
-        _set_display_state(display, DisplayState.READY)
-        raise
-    except (Exception, KeyboardInterrupt):
-        _set_display_state(display, DisplayState.ERROR)
+    with latency.cycle():
         try:
-            close_tts_provider()
-        except Exception:
-            logger.warning("Piper cleanup after voice failure failed")
-        raise
+            return _run_voice_cycle(
+                config, conversation_id, display, audio_file=audio_file, text=text,
+                hands_free_capture=hands_free_capture,
+            )
+        except NoSpeechDetected:
+            _set_display_state(display, DisplayState.READY)
+            raise
+        except (Exception, KeyboardInterrupt):
+            _set_display_state(display, DisplayState.ERROR)
+            try:
+                close_tts_provider()
+            except Exception:
+                logger.warning("Piper cleanup after voice failure failed")
+            raise
 
 
 def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=None,
@@ -1553,6 +1594,9 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
     if audio_file is not None and text is not None:
         raise VoiceLoopError("Choose either audio-file or text input, not both.")
     hands_free_request = hands_free_capture is not None and audio_file is None and text is None
+    latency.mark("cycle_config", audio_backend=config.audio_backend,
+                 input_mode="text" if text is not None else "audio_file" if audio_file is not None else
+                 "hands_free" if hands_free_request else "vad" if config.capture_vad_enabled else "fixed")
     meter = AudioLevelMeter(lambda level: _set_display_level(display, level))
     amplitude = meter.feed if display is not None and getattr(display, "enabled", True) else None
     cycle_started = time.perf_counter()
@@ -1732,6 +1776,7 @@ def run_hands_free(config, wake_config, provider, display, *, capture_config=Non
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Production voice loop with optional development input injection.")
+    parser.add_argument("--latency-trace-dir", type=Path, help="Opt-in content-free timing reports in a dedicated bounded directory.")
     inputs = parser.add_mutually_exclusive_group()
     inputs.add_argument("--audio-file", type=Path, help="Run once using an audio file instead of microphone capture.")
     inputs.add_argument("--text", help="Run once using text, bypassing capture, normalization and STT.")
@@ -1765,6 +1810,8 @@ def main(argv=None) -> int:
         print(f"Input source: {config.alsa_capture_device if config.audio_backend == 'alsa' else config.input_source}")
         if not args.hands_free:
             print("Press Enter to record, or type q and press Enter to quit.")
+    if args.latency_trace_dir is not None:
+        latency.configure(args.latency_trace_dir)
     conversation_id = None
     display = get_companion_display()
     tts_provider = None
@@ -1852,6 +1899,11 @@ def main(argv=None) -> int:
                     display.close()
                 except Exception:
                     logger.warning("Companion display cleanup failed")
+                finally:
+                    if args.latency_trace_dir is not None:
+                        store = latency.configure(None)
+                        if store is not None:
+                            store.flush(timeout=1)
 
 
 if __name__ == "__main__":
