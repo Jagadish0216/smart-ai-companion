@@ -182,6 +182,18 @@ class WakeWordProviderTests(SimpleTestCase):
         self.assertEqual(order, ["logging", "engine"])
         self.capture_factory.assert_not_called()
 
+    def test_handoff_is_bounded_private_and_released_before_return(self):
+        chunks=[native_pcm(left=10000000+i) for i in range(20)]
+        self.capture.chunks.return_value=iter(chunks)
+        self.model.predict.side_effect=[{"hey_jarvis":.1}]*19+[{"hey_jarvis":.9}]
+        result=self.provider.wait_for_wake_word("hw:test")
+        self.assertIsNone(self.provider.capture)
+        self.capture.close.assert_called_once()
+        self.assertEqual(result.audio_preroll,b"".join(chunks[-4:]))
+        self.assertIsNotNone(result.background_rms)
+        self.assertNotIn("audio_preroll",repr(result))
+        self.assertLessEqual(len(result.audio_preroll),122880)
+
     def test_custom_model_warm_passes_path(self):
         self.provider.config = WakeWordConfig(enabled=True, model="ignored", model_path="custom.onnx")
         self.provider.warm()
@@ -411,6 +423,16 @@ class WakeModelSetupTests(SimpleTestCase):
         self.assertIn("model=hey_jarvis", output.getvalue())
         self.assertEqual(prepare.call_args.args[0].selected_model, "hey_jarvis")
 
+    def test_offline_check_only_never_calls_download_or_preparation(self):
+        with patch("assistant.management.commands.prepare_wake_word_model.load_engine") as engine, \
+             patch("assistant.management.commands.prepare_wake_word_model.validate_installed_assets") as validate, \
+             patch("assistant.management.commands.prepare_wake_word_model.prepare_model") as prepare, \
+             patch("assistant.voice.wakeword.models.urllib.request.urlopen") as network:
+            call_command("prepare_wake_word_model",model="hey_jarvis",check_only=True,stdout=io.StringIO())
+        validate.assert_called_once()
+        self.assertEqual(validate.call_args.args[0].selected_model,"hey_jarvis")
+        prepare.assert_not_called();network.assert_not_called()
+
     @override_settings(VOICE_WAKE_WORD_MODEL_PATH="custom.onnx")
     def test_command_override_does_not_mutate_settings(self):
         with patch("assistant.management.commands.prepare_wake_word_model.prepare_model") as prepare:
@@ -428,7 +450,7 @@ class WakeModelSetupTests(SimpleTestCase):
 @override_settings(**{**WAKE_WORD_TEST_SETTINGS, "VOICE_WAKE_WORD_ENABLED": True})
 class HandsFreeRuntimeTests(SimpleTestCase):
     def setUp(self):
-        self.config = voice_loop.VoiceLoopConfig("", audio_backend="alsa", capture_vad_enabled=True)
+        self.config = voice_loop.VoiceLoopConfig("", audio_backend="alsa", capture_vad_enabled=True,stream_first_sentence_min_chars=20)
         self.provider = MagicMock()
         self.display = MagicMock()
         self.tts = MagicMock()
@@ -458,7 +480,8 @@ class HandsFreeRuntimeTests(SimpleTestCase):
 
         def cycle(config, conversation_id, display, **kwargs):
             self.assertFalse(listening[0])
-            self.assertEqual(kwargs, {"hands_free_capture": voice_loop.HandsFreeCaptureConfig()})
+            self.assertEqual(kwargs, {"hands_free_capture": voice_loop.HandsFreeCaptureConfig(),
+                                      "hands_free_preroll":b"", "hands_free_background":None})
             events.extend(["request_capture", "thinking", "tts", "playback", "drained"])
             return 42
 
@@ -486,6 +509,46 @@ class HandsFreeRuntimeTests(SimpleTestCase):
         self.assertIn("ERROR", states)
         self.assertIn(call(0.75), self.mocks["time.sleep"].call_args_list)
         self.assertEqual(self.provider.reset.call_count, 3)
+
+    def test_persistent_device_contention_stops_after_three_owned_attempts(self):
+        self.provider.wait_for_wake_word.side_effect=WakeWordError("ALSA device busy")
+        with patch("sys.stderr",new_callable=io.StringIO) as errors:
+            self.assertEqual(voice_loop.main(["--hands-free"]),1)
+        self.assertEqual(self.provider.wait_for_wake_word.call_count,3)
+        self.assertEqual(self.mocks["time.sleep"].call_args_list,[call(1.0),call(2.0)])
+        self.mocks["run_voice_cycle"].assert_not_called()
+        self.provider.close.assert_called_once()
+        self.assertTrue(any("Three consecutive" in str(c.args[0]) for c in self.mocks["builtins.print"].call_args_list if c.args))
+
+    def test_repeated_request_capture_errors_are_not_replayed_without_fresh_wakes(self):
+        from assistant.voice.hands_free import HandsFreeCaptureError
+        self.provider.wait_for_wake_word.side_effect=[self.detection]*3
+        self.mocks["run_voice_cycle"].side_effect=HandsFreeCaptureError("request microphone busy")
+        self.assertEqual(voice_loop.main(["--hands-free"]),1)
+        self.assertEqual(self.provider.wait_for_wake_word.call_count,3)
+        self.assertEqual(self.mocks["run_voice_cycle"].call_count,3)
+        self.assertEqual(self.mocks["time.sleep"].call_args_list,[call(1.0),call(2.0)])
+        self.provider.close.assert_called_once()
+
+    def test_first_sentence_policy_does_not_mutate_normal_voice_configuration(self):
+        original=replace(self.config,stream_first_sentence_min_chars=None)
+        self.mocks["VoiceLoopConfig.from_settings"].return_value=original
+        self.assertEqual(voice_loop.main(["--hands-free"]),130)
+        self.assertIsNone(original.stream_first_sentence_min_chars)
+        self.assertEqual(self.mocks["run_voice_cycle"].call_args.args[0].stream_first_sentence_min_chars,20)
+
+    def test_handoff_and_visible_acknowledgement_precede_request_capture(self):
+        self.detection=WakeWordDetection(True,"hey_jarvis",.9,audio_preroll=b"\0"*8,background_rms=.009)
+        self.provider.wait_for_wake_word.side_effect=[self.detection,KeyboardInterrupt()]
+        def cycle(config,context,display,**kwargs):
+            display.set_text.assert_any_call("Wake heard")
+            self.assertEqual(kwargs["hands_free_preroll"],b"\0"*8)
+            self.assertEqual(kwargs["hands_free_background"],.009)
+            self.assertEqual(config.stream_first_sentence_min_chars,20)
+            return 42
+        self.mocks["run_voice_cycle"].side_effect=cycle
+        self.assertEqual(voice_loop.main(["--hands-free"]),130)
+        self.display.set_text.assert_any_call("Say Hey Jarvis")
 
     def test_capture_failure_and_timeout_resume_with_bounded_cooldown(self):
         self.provider.wait_for_wake_word.side_effect = [WakeWordError("mic busy"), WakeWordDetection(False), self.detection, KeyboardInterrupt()]
@@ -530,6 +593,7 @@ class HandsFreeRuntimeTests(SimpleTestCase):
         self.assertEqual(voice_loop.main(["--hands-free"]), 130)
         self.mocks["run_voice_cycle"].assert_called_once_with(
             self.config, None, display=self.display, hands_free_capture=voice_loop.HandsFreeCaptureConfig(warmup_seconds=0.08),
+            hands_free_preroll=b"", hands_free_background=None,
         )
 
     def test_interrupt_during_cycle_cleans_all_providers(self):
@@ -675,6 +739,8 @@ class HandsFreeProductionCycleTests(SimpleTestCase):
             self.assertEqual(display.set_state.call_args.args[0].value, "READY")
             events.extend(["warmup", "calibration"])
             self.assertEqual(args[1], voice_loop.HandsFreeCaptureConfig())
+            self.assertTrue(kwargs["immediate"])
+            self.assertLessEqual(len(kwargs["initial_audio"]),122880)
             kwargs["on_capture_ready"]()
             self.assertEqual(display.set_state.call_args.args[0].value, "LISTENING")
             events.append("capture_ready")
@@ -690,6 +756,7 @@ class HandsFreeProductionCycleTests(SimpleTestCase):
                                  resource_profile="ECO")
 
         def prepare(source, destination, *args, **kwargs):
+            self.assertEqual(kwargs["profile"],"approved_loudness")
             stage("audio_prepare")
             destination.write_bytes(struct.pack("<ii", 1000000, 1000000) * 4800)
 
@@ -701,7 +768,7 @@ class HandsFreeProductionCycleTests(SimpleTestCase):
         engine = MagicMock()
         engine.Model.return_value.predict.return_value = {"hey_jarvis": 0.8}
         engine.Model.return_value.reset.side_effect = lambda: events.append("reset")
-        config = voice_loop.VoiceLoopConfig("", audio_backend="alsa", capture_vad_enabled=True)
+        config = voice_loop.VoiceLoopConfig("", audio_backend="alsa", capture_vad_enabled=False,playback_profile="approved_loudness")
         display = MagicMock()
         tts = MagicMock()
         tts.synthesize.side_effect = synthesize

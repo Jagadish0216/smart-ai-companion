@@ -156,6 +156,40 @@ class HandsFreeRecordingTests(SimpleTestCase):
         self.assertIn("stop_reason=max_duration", self.diagnostic())
         self.assertIn("noise_floor=0.0620", self.diagnostic())
 
+    def test_immediate_handoff_keeps_every_first_word_frame_without_calibration(self):
+        from assistant.voice.hands_free import MAX_PREROLL_BYTES
+        prefix=pcm(.01,frames=480)
+        post=[pcm(.02,right=i) for i in range(10)]
+        self.reader.read_frames.side_effect=post
+        def ready():
+            self.reader.read_frames.assert_not_called()
+            self.reader.start.assert_called_once()
+        record_audio_hands_free(self.path,"hw:test",self.config,immediate=True,
+                               initial_audio=prefix,on_capture_ready=ready)
+        self.assertEqual(self.audio(),prefix+b"".join(post))
+        self.assertEqual(self.reader.read_frames.call_count,10)
+        self.assertIn("background=unknown",self.diagnostic())
+        self.reader.close.assert_called_once()
+        with self.assertRaises(HandsFreeCaptureError):
+            record_audio_hands_free(self.path,"hw:test",self.config,immediate=True,initial_audio=b"x"*(MAX_PREROLL_BYTES+8))
+
+    def test_immediate_soft_speech_endpoint_and_unknown_floor_fixed_fallback(self):
+        config=replace(self.config,max_seconds=2,end_silence_seconds=.3)
+        post=[pcm(.02)]*20+[pcm(.005)]*15
+        self.reader.read_frames.side_effect=post
+        record_audio_hands_free(self.path,"hw:test",config,immediate=True,background_rms=.005)
+        self.assertEqual(self.audio(),b"".join(post))
+        self.assertIn("stop_reason=silence",self.diagnostic())
+        self.assertLess(self.reader.read_frames.call_count,100)
+
+    def test_immediate_single_peak_cannot_cut_off_later_question(self):
+        config=replace(self.config,max_seconds=2,end_silence_seconds=.3)
+        post=[pcm(.1)]+[pcm(.005)]*99
+        self.reader.read_frames.side_effect=post
+        record_audio_hands_free(self.path,"hw:test",config,immediate=True,background_rms=.005)
+        self.assertEqual(self.audio(),b"".join(post))
+        self.assertIn("stop_reason=max_duration",self.diagnostic())
+
     def test_weak_fluctuating_request_is_retained_without_any_speech_classification(self):
         post = [pcm(value, right=i) for i, value in enumerate([0.06, 0.065, 0.0668, 0.073, 0.063] * 2)]
         self.feed(post)
@@ -339,7 +373,7 @@ class HandsFreeVoiceCycleTests(SimpleTestCase):
             self.mocks[name] = patcher.start()
             self.addCleanup(patcher.stop)
 
-        def record(path, device, config, *, on_capture_ready, on_amplitude=None):
+        def record(path, device, config, *, on_capture_ready, on_amplitude=None, **unused):
             self.assertEqual(self.states[-1], "READY")
             on_capture_ready()
             with wave.open(str(path), "wb") as wav:
@@ -370,6 +404,15 @@ class HandsFreeVoiceCycleTests(SimpleTestCase):
 
     def cycle(self):
         return voice_loop.run_voice_cycle(self.config, 12, display=self.display, hands_free_capture=self.capture)
+
+    def test_retained_wake_phrase_alone_does_not_dispatch_to_qwen(self):
+        self.mocks["get_stt_provider"].return_value.transcribe.return_value="Hey, Jarvis!"
+        with self.assertRaises(voice_loop.NoSpeechDetected):
+            voice_loop.run_voice_cycle(self.config,12,display=self.display,hands_free_capture=self.capture,
+                                       hands_free_preroll=b"",hands_free_background=.005)
+        self.mocks["AssistantService.process_message_stream"].assert_not_called()
+        self.mocks["speak_stream_response"].assert_not_called()
+        self.assertEqual(self.states[-1],"READY")
 
     def test_successful_display_lifecycle_and_thinking_during_normalization_and_stt(self):
         self.mocks["normalize_audio"].side_effect = lambda *args, **kwargs: self.assertEqual(self.states[-1], "THINKING")

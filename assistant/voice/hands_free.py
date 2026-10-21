@@ -20,6 +20,7 @@ CHANNELS = 2
 SAMPLE_WIDTH = 4
 FRAME_BYTES = CHANNELS * SAMPLE_WIDTH
 CHUNK_FRAMES = 960  # 20 ms of native stereo S32_LE.
+MAX_PREROLL_BYTES = 15360 * FRAME_BYTES  # 320 ms, memory only until request WAV.
 
 
 class HandsFreeCaptureError(Exception):
@@ -73,7 +74,7 @@ class HandsFreeEndpointDetector:
     after that evidence can stop capture early. No reset or start timeout.
     """
 
-    def __init__(self, noise_floor, end_silence_seconds):
+    def __init__(self, noise_floor, end_silence_seconds, *, relative=False):
         if not math.isfinite(noise_floor) or not 0 <= noise_floor <= 1:
             raise ValueError("Endpoint noise floor must be normalized RMS.")
         if not math.isfinite(end_silence_seconds) or end_silence_seconds <= 0:
@@ -82,6 +83,12 @@ class HandsFreeEndpointDetector:
         self.speech_threshold = min(0.08, max(0.035, noise_floor * 1.15 + 0.003))
         self.continue_threshold = min(self.speech_threshold * 0.95, max(0.015, noise_floor * 1.05 + 0.001))
         self.strong_threshold = min(1.0, max(self.speech_threshold * 1.4, noise_floor * 1.6 + 0.005))
+        if relative:
+            self.speech_threshold = min(.08, max(.012, noise_floor * 1.6 + .002))
+            self.continue_threshold = min(self.speech_threshold * .95, max(.008, noise_floor * 1.2 + .001))
+            self.strong_threshold = min(1.0, max(self.speech_threshold * 1.4, noise_floor * 1.6 + .005))
+        self.minimum_voice_seconds = .3 if relative else 0.0
+        self.voiced_seconds = 0.0
         self.end_silence_seconds = end_silence_seconds
         self.window = deque(maxlen=5)
         self.speech_seen = False
@@ -91,6 +98,8 @@ class HandsFreeEndpointDetector:
         if not math.isfinite(rms) or not 0 <= rms <= 1 or not math.isfinite(seconds) or seconds <= 0:
             raise ValueError("Endpoint input must be normalized RMS and positive duration.")
         self.window.append(rms >= self.speech_threshold)
+        if rms >= self.speech_threshold or self.speech_seen and rms >= self.continue_threshold:
+            self.voiced_seconds += seconds
         if not self.speech_seen:
             if sum(self.window) >= 2 or rms >= self.strong_threshold:
                 self.speech_seen = True
@@ -99,7 +108,8 @@ class HandsFreeEndpointDetector:
             self.quiet_seconds = 0.0
         else:
             self.quiet_seconds += seconds
-        return self.quiet_seconds + 1e-9 >= self.end_silence_seconds
+        return (self.quiet_seconds + 1e-9 >= self.end_silence_seconds and
+                self.voiced_seconds + 1e-9 >= self.minimum_voice_seconds)
 
 
 class NativeRequestReader:
@@ -180,15 +190,19 @@ class NativeRequestReader:
 
 @latency.span("capture")
 def record_audio_hands_free(output_path: Path, device: str, config: HandsFreeCaptureConfig,
-                           *, on_capture_ready=None, on_amplitude=None):
-    """Drain, calibrate, then write every post-ready frame to a bounded WAV.
+                           *, on_capture_ready=None, on_amplitude=None,
+                           immediate=False, initial_audio=b"", background_rms=None):
+    """Retain native request PCM with bounded endpoint/fixed-duration capture.
 
-    No classification result can remove/reset audio or stop a waiting budget.
+    CLI immediate mode skips the legacy caller's drain/calibration phases and
+    prepends the bounded wake tail. No classification result removes/reset audio.
     The detector can only shorten the recording after speech followed by quiet.
     """
     config.validate()
     if not device:
         raise HandsFreeCaptureError("An ALSA device is required for hands-free request capture.")
+    if len(initial_audio) > MAX_PREROLL_BYTES or len(initial_audio) % FRAME_BYTES:
+        raise HandsFreeCaptureError("Invalid bounded native wake handoff PCM.")
     reader = NativeRequestReader(device, config.warmup_seconds + config.calibration_seconds + config.max_seconds + 5)
     captured_frames = 0
     detector = None
@@ -203,11 +217,17 @@ def record_audio_hands_free(output_path: Path, device: str, config: HandsFreeCap
 
     try:
         reader.start()
-        for _chunk in phase(config.warmup_seconds):
-            pass  # Actively drain exact native frames; never retain warm-up PCM.
-        noise = [normalized_left_rms(chunk) for chunk in phase(config.calibration_seconds)]
-        latency.mark("calibration_end", once=True)
-        detector = HandsFreeEndpointDetector(median(noise), config.end_silence_seconds)
+        if immediate:
+            # Wake standby already supplied background; never discard a question
+            # to calibrate on the user's opening words. Unknown floor => fixed cap.
+            if background_rms is not None and math.isfinite(background_rms) and .0001 <= background_rms <= 1:
+                detector = HandsFreeEndpointDetector(background_rms, config.end_silence_seconds, relative=True)
+        else:
+            for _chunk in phase(config.warmup_seconds):
+                pass
+            noise = [normalized_left_rms(chunk) for chunk in phase(config.calibration_seconds)]
+            latency.mark("calibration_end", once=True)
+            detector = HandsFreeEndpointDetector(median(noise), config.end_silence_seconds)
         latency.mark("capture_ready", once=True)
         print("Speak now...")
         if on_capture_ready is not None:
@@ -217,14 +237,15 @@ def record_audio_hands_free(output_path: Path, device: str, config: HandsFreeCap
             output.setnchannels(CHANNELS)
             output.setsampwidth(SAMPLE_WIDTH)
             output.setframerate(SAMPLE_RATE)
+            output.writeframesraw(initial_audio)
             while captured_frames < max_frames:
                 count = min(CHUNK_FRAMES, max_frames - captured_frames)
                 chunk = reader.read_frames(count)
                 output.writeframesraw(chunk)  # Always retain before consulting the endpoint.
                 captured_frames += count
                 rms = normalized_left_rms(chunk)
-                ended = detector.feed(rms, count / SAMPLE_RATE)
-                if detector.speech_seen:
+                ended = detector.feed(rms, count / SAMPLE_RATE) if detector else False
+                if detector and detector.speech_seen:
                     latency.mark("speech_detected", once=True)
                 observe(on_amplitude, rms)
                 if captured_frames >= max_frames:
@@ -239,9 +260,13 @@ def record_audio_hands_free(output_path: Path, device: str, config: HandsFreeCap
         raise HandsFreeCaptureError(f"Hands-free recording failed: {exc}") from exc
     finally:
         if stop_reason is not None:
-            latency.mark("endpoint_detected", once=True, reason=stop_reason)
+            latency.mark("capture_stopped", once=True, reason=stop_reason)
+            if stop_reason == "silence":
+                latency.mark("endpoint_detected", once=True, reason=stop_reason)
         reader.close()
-        if stop_reason is not None:
+        if stop_reason is not None and detector is None:
+            print(f"Hands-free capture: background=unknown capture_duration={captured_frames / SAMPLE_RATE:.2f}s stop_reason={stop_reason}")
+        elif stop_reason is not None:
             print(
                 f"Hands-free capture: noise_floor={detector.noise_floor:.4f} "
                 f"speech_threshold={detector.speech_threshold:.4f} "

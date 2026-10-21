@@ -12,7 +12,7 @@ import re
 import struct
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from queue import Empty, Full, Queue
 import subprocess
@@ -1670,6 +1670,8 @@ def run_voice_cycle(
     audio_file: Path | None = None,
     text: str | None = None,
     hands_free_capture: HandsFreeCaptureConfig | None = None,
+    hands_free_preroll: bytes | None = None,
+    hands_free_background: float | None = None,
 ) -> int | None:
     """Run a cycle; hardware display failures are isolated from voice failures."""
     with latency.cycle():
@@ -1677,6 +1679,7 @@ def run_voice_cycle(
             return _run_voice_cycle(
                 config, conversation_id, display, audio_file=audio_file, text=text,
                 hands_free_capture=hands_free_capture,
+                hands_free_preroll=hands_free_preroll, hands_free_background=hands_free_background,
             )
         except NoSpeechDetected:
             _set_display_state(display, DisplayState.READY)
@@ -1691,7 +1694,7 @@ def run_voice_cycle(
 
 
 def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=None,
-                     hands_free_capture=None):
+                     hands_free_capture=None, hands_free_preroll=None, hands_free_background=None):
     """Select an input, then reuse the production respond/speak cycle."""
     if audio_file is not None and text is not None:
         raise VoiceLoopError("Choose either audio-file or text input, not both.")
@@ -1727,7 +1730,10 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
                     _timed_call(
                         timings, "record", record_audio_hands_free, recorded_path,
                         config.alsa_capture_device, hands_free_capture,
-                        on_capture_ready=lambda: _set_display_state(display, DisplayState.LISTENING),
+                        **(dict(immediate=True, initial_audio=hands_free_preroll, background_rms=hands_free_background)
+                           if hands_free_preroll is not None else {}),
+                        on_capture_ready=lambda: (_set_display_state(display, DisplayState.LISTENING),
+                                                  _set_display_text(display, "Listening...")),
                         **({"on_amplitude": amplitude} if amplitude is not None else {}),
                     )
                     _set_display_state(display, DisplayState.THINKING)
@@ -1798,7 +1804,9 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
                 ).strip()
             except Exception as exc:
                 raise VoiceLoopError(f"Transcription failed: {exc}") from exc
-            if not transcript or is_no_speech_transcription(transcript):
+            wake_only = (hands_free_request and hands_free_preroll is not None and
+                         re.fullmatch(r"(?:hey[\s,]+)?jarvis[\s.!?,]*", transcript, re.IGNORECASE))
+            if not transcript or is_no_speech_transcription(transcript) or wake_only:
                 if hands_free_request:
                     raise NoSpeechDetected("No request speech recognized; returning to wake listening.")
                 raise VoiceLoopError("Transcription failed: no speech was recognized.")
@@ -1861,8 +1869,10 @@ def run_hands_free(config, wake_config, provider, display, *, capture_config=Non
     print(f"  threshold={wake_config.threshold:.2f}")
     provider.warm()
     _set_display_state(display, DisplayState.READY)
+    failures = 0
     while True:
         try:
+            _set_display_text(display, "Say Hey Jarvis" if wake_config.model == "hey_jarvis" and not wake_config.model_path else "Wake standby")
             detection = provider.wait_for_wake_word(config.alsa_capture_device)
             if not detection.detected:
                 provider.reset()
@@ -1871,15 +1881,23 @@ def run_hands_free(config, wake_config, provider, display, *, capture_config=Non
                 continue
             print(f"Wake detected: model={detection.model} score={detection.score:.3f} latency={detection.elapsed_seconds:.3f}s")
             _set_display_state(display, DisplayState.READY)
-            conversation_id = run_voice_cycle(
-                config, conversation_id, display=display,
-                hands_free_capture=capture_config,
-            )
+            _set_display_text(display, "Wake heard")
+            try:
+                conversation_id = run_voice_cycle(
+                    config, conversation_id, display=display,
+                    hands_free_capture=capture_config,
+                    hands_free_preroll=detection.audio_preroll,
+                    hands_free_background=detection.background_rms,
+                )
+            finally:
+                detection = None  # Do not retain request PCM while back in standby.
+            failures = 0
             time.sleep(wake_config.cooldown_seconds)
             provider.reset()
         except KeyboardInterrupt:
             raise
         except NoSpeechDetected as exc:
+            failures = 0
             _set_display_state(display, DisplayState.READY)
             print(str(exc))
             time.sleep(max(0.1, wake_config.cooldown_seconds))
@@ -1887,7 +1905,11 @@ def run_hands_free(config, wake_config, provider, display, *, capture_config=Non
         except Exception as exc:
             _set_display_state(display, DisplayState.ERROR)
             print(f"Hands-free cycle error: {exc}", file=sys.stderr)
-            time.sleep(max(0.5, wake_config.cooldown_seconds))
+            failures += 1
+            if failures >= 3:
+                _set_display_text(display, "Microphone/voice unavailable")
+                raise VoiceLoopError("Three consecutive hands-free failures; check ALSA ownership/device and use Enter-to-record fallback.") from exc
+            time.sleep(max(1.0, wake_config.cooldown_seconds) * 2 ** (failures - 1))
             provider.reset()
             _set_display_state(display, DisplayState.READY)
 
@@ -1918,6 +1940,8 @@ def main(argv=None) -> int:
             if config.audio_backend != "alsa":
                 raise WakeWordError("--hands-free requires VOICE_AUDIO_BACKEND=alsa.")
             hands_free_capture = HandsFreeCaptureConfig.from_settings()
+            if config.stream_first_sentence_min_chars is None:
+                config = replace(config, stream_first_sentence_min_chars=20)
     except (TypeError, ValueError, VoiceLoopError, WakeWordError) as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 1

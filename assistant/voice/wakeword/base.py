@@ -1,7 +1,7 @@
 """Engine-independent wake-word contract and validated runtime configuration."""
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 from pathlib import Path
 
@@ -18,6 +18,9 @@ class WakeWordDetection:
     model: str = ""
     score: float = 0.0
     elapsed_seconds: float = 0.0
+    # Native request handoff only; never include microphone bytes in repr/logs.
+    audio_preroll: bytes = field(default=b"", repr=False, compare=False)
+    background_rms: float | None = None
 
 
 @dataclass(frozen=True)

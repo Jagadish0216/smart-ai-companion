@@ -1,11 +1,14 @@
 """Persistent openWakeWord inference, with capture scoped to each wait."""
 
+from collections import deque
+from statistics import median
 import logging
 import time
 
 from .audio import AlsaWakeCapture, KWS_FRAME_SAMPLES, LeftChannelConverter
 from .base import WakeWordDetection, WakeWordError, WakeWordProvider
 from .models import load_engine, validate_installed_assets
+from ..hands_free import MAX_PREROLL_BYTES, normalized_left_rms
 from ..onnx_logging import configure_cpu_onnx_logging
 
 logger = logging.getLogger(__name__)
@@ -46,8 +49,14 @@ class OpenWakeWordProvider(WakeWordProvider):
         try:
             converter = LeftChannelConverter()
             pending = bytearray()
+            native_tail = bytearray()
+            background = deque(maxlen=64)  # At most ~5 seconds of numeric RMS.
             self.capture.start()
             for chunk in self.capture.chunks(deadline):
+                native_tail.extend(chunk)
+                excess = len(native_tail) - MAX_PREROLL_BYTES
+                if excess > 0:
+                    del native_tail[:((excess + 7) // 8) * 8]
                 pending.extend(converter.convert(chunk))
                 while len(pending) >= KWS_FRAME_SAMPLES * 2:
                     frame = bytes(pending[:KWS_FRAME_SAMPLES * 2])
@@ -56,7 +65,13 @@ class OpenWakeWordProvider(WakeWordProvider):
                     logger.debug("Wake scores: %s", scores)
                     for model, score in scores.items():
                         if float(score) >= self.config.threshold:
-                            return WakeWordDetection(True, model, float(score), time.monotonic() - started)
+                            ordered = sorted(background)
+                            floor = median(ordered[:max(1,len(ordered)//2)]) if len(ordered) >= 5 else None
+                            length = len(native_tail) - len(native_tail) % 8
+                            return WakeWordDetection(True, model, float(score), time.monotonic() - started,
+                                                     bytes(native_tail[:length]), floor)
+                if chunk and len(chunk) % 8 == 0:
+                    background.append(normalized_left_rms(chunk))
             return WakeWordDetection(False, self.config.selected_model, elapsed_seconds=time.monotonic() - started)
         except (WakeWordError, KeyboardInterrupt):
             raise
