@@ -15,7 +15,7 @@ MAX_EVENTS = 512
 MAX_BYTES = 128 * 1024
 MAX_FILES = 8
 SPANS = frozenset('rag playback_conversion capture capture_open capture_cleanup normalize stt_cli service_prepare conversation_prepare policy history user_persist routing memory response_persist resource_snapshot resource_metrics network_checks ancillary_checks provisioning_check piper_ready piper_exchange tts audio_prepare text_queue_wait audio_queue_wait player_start leading_silence speech_file drain display_callback serial_write'.split())
-MARKS = frozenset('cycle_start cycle_end capture_first_frame calibration_end speech_detected endpoint_detected capture_ready ollama_request_ready llm_first_alphanumeric ollama_complete first_complete_sentence first_speech_unit piper_state first_audio_ready first_speech_pcm_accepted resource_cache_hit resource_cache_miss resource_state resource_policy cycle_config route stream_error'.split())
+MARKS = frozenset('cycle_start cycle_end capture_first_frame calibration_end speech_detected capture_stopped endpoint_detected capture_ready ollama_request_ready llm_first_alphanumeric ollama_complete first_complete_sentence first_speech_unit piper_state first_audio_ready first_speech_pcm_accepted resource_cache_hit resource_cache_miss resource_state resource_policy cycle_config route stream_error'.split())
 EVENT_NAMES = MARKS | {s + suffix for s in SPANS for suffix in ('_start', '_end')}
 EVENT_NAMES = EVENT_NAMES | frozenset(("capture_warmup_start", "capture_warmup_end", "calibration_start",
                                     "speech_start_window_open", "minimum_speech_accepted"))

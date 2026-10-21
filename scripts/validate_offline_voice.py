@@ -231,7 +231,7 @@ def observe_pipeline(voice, trace, expected, synthetic=False, ready_fd=None):
             key: value for key, value in timings.items() if type(value) in (int, float)}
     original_mark = voice.latency.mark
     def mark(name, **values):
-        if name in ("capture_ready", "calibration_start", "calibration_end", "speech_detected", "endpoint_detected",
+        if name in ("capture_ready", "calibration_start", "calibration_end", "speech_detected", "endpoint_detected", "capture_stopped",
                     "capture_open_start", "capture_open_end", "capture_first_frame", "capture_warmup_start",
                     "capture_warmup_end", "speech_start_window_open", "minimum_speech_accepted"):
             trace.mark(name)
@@ -240,7 +240,7 @@ def observe_pipeline(voice, trace, expected, synthetic=False, ready_fd=None):
                 trace.update(ready_emitted_before_speech_window=("microphone_ready_emitted" in events and
                     events["microphone_ready_emitted"] <= events[name]),
                     ready_display_evidence="callback_only_physical_visibility_unobserved")
-            if name == "endpoint_detected" and values.get("reason") in ("start_timeout", "silence", "max_duration", "preparation_activity", "calibration_unreliable"):
+            if name == "capture_stopped" and values.get("reason") in ("start_timeout", "silence", "max_duration", "preparation_activity", "calibration_unreliable"):
                 trace.update(capture_stop_reason=values["reason"])
         return original_mark(name, **values)
     with ExitStack() as stack:

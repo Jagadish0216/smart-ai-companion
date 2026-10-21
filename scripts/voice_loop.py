@@ -539,6 +539,8 @@ def record_audio_with_capture_vad(
                 raise VoiceLoopError(
                     f"Recording failed: {binary} stopped before capture completed or timed out."
                 )
+            if preparation and preparation.first_pcm_monotonic is None:
+                preparation.first_pcm_monotonic = time.monotonic()
             latency.mark("capture_first_frame", once=True)
             chunk_duration = (
                 len(chunk) / (sample_width * channels) / sample_rate
@@ -550,12 +552,15 @@ def record_audio_with_capture_vad(
             if preparation and preparation.warming_up():
                 preparation.consume_warmup(rms, chunk_duration)
                 if vad.stop_reason:
-                    latency.mark("endpoint_detected", once=True, reason=vad.stop_reason)
+                    preparation.refusal_monotonic = time.monotonic()
+                    latency.mark("capture_stopped", once=True, reason=vad.stop_reason)
                     raise VoiceLoopError("Capture preparation has sustained audio activity; remain quiet until ready.")
                 if not preparation.warming_up():
                     latency.mark("capture_warmup_end", once=True)
                     latency.mark("calibration_start", once=True)
                 continue  # Explicit preparation samples, never fabricated silence or request PCM.
+            if preparation and not vad.calibrated:
+                preparation.calibration_started = True
             was_started, was_calibrated = vad.speech_started, vad.calibrated
             event = vad.feed(rms, chunk_duration)
             if was_calibrated:
@@ -565,10 +570,12 @@ def record_audio_with_capture_vad(
             if event == "start":
                 latency.mark("speech_detected", once=True)
             if vad.stop_reason is not None:
-                latency.mark("endpoint_detected", once=True, reason=vad.stop_reason)
+                latency.mark("capture_stopped", once=True, reason=vad.stop_reason)
+                if vad.stop_reason == "silence" and vad.accepted:
+                    latency.mark("endpoint_detected", once=True, reason=vad.stop_reason)
             if not was_calibrated and vad.calibrated and vad.stop_reason is None:
                 if preparation and not preparation.calibration_usable():
-                    latency.mark("endpoint_detected", once=True, reason=vad.stop_reason)
+                    latency.mark("capture_stopped", once=True, reason=vad.stop_reason)
                     raise VoiceLoopError("Calibration is not quiet enough to signal microphone ready.")
                 latency.mark("capture_ready", once=True)
                 if not ready_lifecycle:
@@ -600,18 +607,24 @@ def record_audio_with_capture_vad(
                     raise VoiceLoopError("Recording stopped: insufficient voiced speech before maximum duration.")
                 break
     except KeyboardInterrupt:
+        if preparation:
+            preparation.interruption = "cancelled"
         try:
             _terminate_and_reap(process)
         except Exception:
             pass
         raise
     except VoiceLoopError:
+        if preparation:
+            preparation.interruption = "capture_error"
         try:
             _terminate_and_reap(process)
         except Exception:
             pass
         raise
     except Exception as exc:
+        if preparation:
+            preparation.interruption = "capture_error"
         try:
             _terminate_and_reap(process)
         except Exception:
@@ -631,6 +644,7 @@ def record_audio_with_capture_vad(
                     "noise_floor", "start_threshold", "continue_threshold", "max_wait_rms",
                     "speech_duration", "capture_duration", "elapsed", "stop_reason")}
                     | (dict(accepted=vad.accepted, ready_lifecycle=True,
+                            preparation=preparation.diagnostics(),
                             warmup_audio_seconds=preparation.warmup_elapsed,
                             start_window_origin_vad_seconds=vad.start_window_origin) if preparation else {}))
             except Exception:

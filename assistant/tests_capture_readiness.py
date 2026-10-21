@@ -78,6 +78,46 @@ class ReadinessStateTests(SimpleTestCase):
         self.assertFalse(vad.accepted)
 
 
+class PreparationDiagnosticsTests(SimpleTestCase):
+    def test_startup_burst_intermittent_and_sustained_aggregates(self):
+        for levels, stopped, longest in (
+            ([.06]*3+[.001]*47, False, .06),
+            (([.06]*2+[.001])*16, False, .04),
+            ([.06]*15, True, .30),
+            ([.001]*17+[.06]*15, True, .30),
+            ([.001]*50, False, 0),
+        ):
+            prep=QuietCapturePreparation(AdaptiveCaptureVAD(),1)
+            for level in levels:
+                prep.consume_warmup(level,.02)
+            d=prep.diagnostics()
+            self.assertEqual(d["warmup_frames"],len(levels))
+            self.assertEqual(d["above_threshold_frames"],levels.count(.06))
+            self.assertAlmostEqual(d["above_threshold_audio_seconds"],levels.count(.06)*.02)
+            self.assertAlmostEqual(d["longest_above_threshold_audio_seconds"],longest)
+            self.assertEqual(d["warmup_rms_min"],min(levels))
+            self.assertEqual(d["warmup_rms_max"],max(levels))
+            from statistics import median
+            import math
+            self.assertEqual(d["warmup_rms_median"],median(levels))
+            self.assertEqual(d["warmup_rms_p90"],sorted(levels)[math.ceil(.9*len(levels))-1])
+            self.assertEqual(d["activity_threshold"],.02)
+            self.assertEqual(d["refusal_reason"],"preparation_activity" if stopped else None)
+            self.assertFalse(d["calibration_started"])
+            self.assertEqual(d["startup_frames_before_activity_decision"],len(levels)-1 if stopped else None)
+
+    def test_bounded_statistics_do_not_change_detection(self):
+        prep=QuietCapturePreparation(AdaptiveCaptureVAD(),1000)
+        for _ in range(5000): prep.consume_warmup(.001,.02)
+        d=prep.diagnostics()
+        self.assertEqual(len(prep._rms),4096)
+        self.assertEqual(d["warmup_frames"],5000)
+        self.assertFalse(d["rms_statistics_complete"])
+        self.assertIsNone(d["warmup_rms_median"])
+        self.assertIsNone(d["warmup_rms_p90"])
+        self.assertIsNone(prep.vad.stop_reason)
+
+
 class NativeCaptureReadinessTests(SimpleTestCase):
     def test_lifecycle_refuses_unbounded_backend_before_opening_capture(self):
         with patch.object(voice.subprocess,"Popen") as capture:
@@ -160,6 +200,35 @@ class NativeCaptureReadinessTests(SimpleTestCase):
             self.assertLessEqual(events[a],events[b])
         self.assertTrue(trace.data["ready_emitted_before_speech_window"])
         self.assertIn("minimum_speech_accepted",events)
+        self.assertIn("endpoint_detected",events)
+        self.assertEqual(trace.data["capture_stop_reason"],"silence")
+
+    def test_refusal_and_cancellation_preserve_trace_without_endpoint(self):
+        for levels, failure, reason, calibrated in (
+            ([.06]*15, voice.VoiceLoopError, "preparation_activity", False),
+            ([.001]*17+[.06]*15, voice.VoiceLoopError, "preparation_activity", False),
+            ([.001]*50+[.06]*25, voice.VoiceLoopError, "calibration_unreliable", True),
+            ([.001]*3+[KeyboardInterrupt()], KeyboardInterrupt, "cancelled", False),
+        ):
+            case=self.case();trace=validation.Trace()
+            case.process.stdout.read.side_effect=[v if isinstance(v,BaseException) else case.pcm(v) for v in levels]
+            with patch.object(voice.time,"monotonic",side_effect=[10,10.28]), validation.observe_pipeline(voice,trace,"public",True):
+                with self.assertRaises(failure):
+                    voice._timed_call({},"record",voice.record_audio_with_capture_vad,
+                        case.output_path,"hw:test",1,.02,.04,10,2,backend="alsa",ready_lifecycle=True)
+            d=trace.data["capture_vad_summary"]["preparation"]
+            self.assertEqual(d["refusal_reason"],reason)
+            self.assertEqual(d["calibration_started"],calibrated)
+            self.assertNotIn("endpoint_detected",trace.data["events_ms"])
+            self.assertNotIn("capture_ready",trace.data["events_ms"])
+            if reason=="preparation_activity":
+                self.assertAlmostEqual(d["first_pcm_to_activity_refusal_ms"],280)
+                self.assertEqual(trace.data["capture_stop_reason"],reason)
+                self.assertEqual(validation.cycle_failure_reason(voice.VoiceLoopError("safe"),trace),"capture_preparation_activity")
+            else:
+                self.assertIsNone(d["first_pcm_to_activity_refusal_ms"])
+            self.assertFalse(case.output_path.exists())
+            case.doCleanups()
 
     def test_unavailable_cue_never_opens_window(self):
         case=self.case();trace=validation.Trace()
@@ -188,7 +257,8 @@ class NativeCaptureReadinessTests(SimpleTestCase):
                 self.assertEqual(kwargs["pass_fds"],(descriptor,))
                 os.fstat(descriptor)
                 child_dir=Path(command[command.index("--child-dir")+1])
-                (child_dir/"trace.json").write_text(json.dumps({"status":"aborted","reason":"capture_calibration_unreliable"}))
+                (child_dir/"trace.json").write_text(json.dumps({"status":"aborted","reason":"capture_calibration_unreliable",
+                    "capture_vad_summary":{"preparation":{"warmup_frames":50,"calibration_started":True}}}))
                 return process
             with patch("scripts.validate_pi_performance.isolated_database",return_value=nullcontext(root)), \
                  patch.object(validation.sys,"platform","linux"), \
@@ -206,5 +276,6 @@ class NativeCaptureReadinessTests(SimpleTestCase):
             popen.assert_called_once();terminate.assert_called_once_with(process)
             old_cue.assert_not_called()
             self.assertEqual(json.loads(output.read_text())["reason"],"capture_calibration_unreliable")
+            self.assertEqual(json.loads(output.read_text())["cycle"]["capture_vad_summary"]["preparation"]["warmup_frames"],50)
             terminal.seek(0)
             self.assertIn("Capture refused:",terminal.read())

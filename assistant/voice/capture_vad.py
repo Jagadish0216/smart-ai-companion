@@ -184,13 +184,53 @@ class QuietCapturePreparation:
         self.warmup_seconds = warmup_seconds
         self.warmup_elapsed = 0.0
         self.activity_seconds = 0.0
+        # Scalars plus at most 4096 frame RMS values; no PCM or per-frame export.
+        self.frame_count = self.above_count = 0
+        self.above_seconds = self.longest_activity_seconds = 0.0
+        self.rms_min = self.rms_max = None
+        self._rms = []
+        self.first_pcm_monotonic = self.refusal_monotonic = None
+        self.calibration_started = False
+        self.interruption = None
+
+    def diagnostics(self):
+        values = sorted(self._rms)
+        complete = self.frame_count == len(values)
+        return dict(
+            warmup_frames=self.frame_count,
+            warmup_rms_min=self.rms_min, warmup_rms_max=self.rms_max,
+            warmup_rms_median=median(values) if values and complete else None,
+            warmup_rms_p90=values[math.ceil(.9 * len(values)) - 1] if values and complete else None,
+            rms_statistics_complete=complete, rms_statistics_capacity=4096,
+            above_threshold_frames=self.above_count,
+            above_threshold_audio_seconds=self.above_seconds,
+            longest_above_threshold_audio_seconds=self.longest_activity_seconds,
+            activity_threshold=self.vad.configured_start,
+            first_pcm_to_activity_refusal_ms=(
+                (self.refusal_monotonic - self.first_pcm_monotonic) * 1000
+                if self.refusal_monotonic is not None and self.first_pcm_monotonic is not None else None),
+            startup_frames_before_activity_decision=(self.frame_count - 1
+                if self.vad.stop_reason == "preparation_activity" else None),
+            calibration_started=self.calibration_started,
+            refusal_reason=(self.vad.stop_reason if self.vad.stop_reason in
+                ("preparation_activity", "calibration_unreliable") else self.interruption),
+        )
 
     def warming_up(self):
         return self.warmup_elapsed + 1e-9 < self.warmup_seconds
 
     def consume_warmup(self, rms, seconds):
+        self.frame_count += 1
+        self.rms_min = rms if self.rms_min is None else min(self.rms_min, rms)
+        self.rms_max = rms if self.rms_max is None else max(self.rms_max, rms)
+        if len(self._rms) < 4096:
+            self._rms.append(rms)
+        if rms >= self.vad.configured_start:
+            self.above_count += 1
+            self.above_seconds += seconds
         self.warmup_elapsed += seconds
         self.activity_seconds = self.activity_seconds + seconds if rms >= self.vad.configured_start else 0.0
+        self.longest_activity_seconds = max(self.longest_activity_seconds, self.activity_seconds)
         if self.activity_seconds + 1e-9 >= self.vad.min_speech_seconds:
             self.vad.stop_reason = "preparation_activity"
 
