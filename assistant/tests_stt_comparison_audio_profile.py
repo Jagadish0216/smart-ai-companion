@@ -246,6 +246,9 @@ class VADSummaryTests(SimpleTestCase):
                 self.assertAlmostEqual(result["noise_floor"],.05,places=5)
                 self.assertAlmostEqual(result["start_threshold"],.127,places=5)
                 self.assertAlmostEqual(result["max_wait_rms"],.07,places=5)
-                self.assertTrue(all(type(v) in (float,str) for v in result.values()))
+                self.assertTrue(all(type(v) in (float,int,str) for v in result.values()))
+                for name in ("candidates_started","candidates_rejected","candidates_accepted"):
+                    self.assertEqual(result[name],0)
+                    self.assertIs(type(result[name]),int)
                 case.process.terminate.assert_called_once()
             finally: case.doCleanups()

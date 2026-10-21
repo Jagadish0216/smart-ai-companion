@@ -636,7 +636,9 @@ def record_audio_with_capture_vad(
         raise
     except VoiceLoopError:
         if preparation:
-            preparation.interruption = "capture_error"
+            # Ordinary VAD refusal is not an I/O/worker error. Preserve the
+            # categorical stop reason without exception text or private content.
+            preparation.interruption = vad.stop_reason or "capture_error"
         try:
             _terminate_and_reap(process)
         except Exception:
@@ -662,7 +664,8 @@ def record_audio_with_capture_vad(
             try:
                 on_vad_summary({key: getattr(vad, key) for key in (
                     "noise_floor", "start_threshold", "continue_threshold", "max_wait_rms",
-                    "speech_duration", "capture_duration", "elapsed", "stop_reason")}
+                    "speech_duration", "capture_duration", "elapsed", "stop_reason",
+                    "candidates_started", "candidates_rejected", "candidates_accepted")}
                     | (dict(accepted=vad.accepted, ready_lifecycle=True,
                             preparation=preparation.diagnostics(),
                             **(dict(speech_onset=spectral.diagnostics(),

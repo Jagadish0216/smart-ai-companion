@@ -177,3 +177,125 @@ class NativeSpeechOnsetTests(SimpleTestCase):
             # retaining the unchanged 15-frame native pre-roll.
             self.assertEqual(wav.readframes(wav.getnframes()),b"".join(chunks[148:]))
         case.process.terminate.assert_called_once()
+
+
+class CandidateContinuityTests(SimpleTestCase):
+    """Envelope/evidence fixtures are not reconstructed Pi speech recordings."""
+    def vad(self, **kwargs):
+        vad=AdaptiveCaptureVAD(**kwargs)
+        for _ in range(25): vad.feed(.0055126,.02)
+        vad.enable_relative_onset();vad.open_start_window()
+        self.assertEqual(vad.relative_start_threshold,.01)
+        self.assertEqual(vad.relative_continue_threshold,.008)
+        return vad
+
+    def feed(self,vad,envelope):
+        events=[]
+        for rms,evidence in envelope:
+            event=vad.feed(rms,.02,speech_evidence=evidence)
+            if event: events.append(event)
+            if vad.stop_reason: break
+        return events
+
+    def test_confirmed_onset_retains_vowels_without_repeated_spectral_novelty(self):
+        vad=self.vad()
+        events=self.feed(vad,[(.0055126,False)]*120+[(.0197114,True)]*3+
+                         [(.012,False)]*30+[(.0055126,False)]*40)
+        self.assertIn("start",events)
+        self.assertNotIn("reset",events)
+        self.assertTrue(vad.accepted)
+        self.assertEqual(vad.stop_reason,"silence")
+        self.assertAlmostEqual(vad.speech_duration,.66)
+        self.assertEqual((vad.candidates_started,vad.candidates_rejected,vad.candidates_accepted),(1,0,1))
+
+    def test_connected_consonants_vowels_and_brief_dips_keep_one_candidate(self):
+        vad=self.vad()
+        phrase=([(.011,False)]*2+[(.0055126,False)]+[(.015,True)])*15
+        events=self.feed(vad,[(.015,True)]*3+phrase+[(.0055126,False)]*40)
+        self.assertNotIn("reset",events)
+        self.assertEqual(events.count("start"),1)
+        self.assertTrue(vad.accepted)
+        self.assertEqual(vad.stop_reason,"silence")
+        self.assertAlmostEqual(vad.speech_duration,.96)
+
+    def test_quiet_speech_and_hysteresis_resume_preserve_minimum_voiced_time(self):
+        vad=self.vad()
+        self.feed(vad,[(.0102,True)]*3+[(.0102,False)]*8)
+        self.assertFalse(vad.accepted) # 220 ms, never accept on elapsed gap time.
+        self.feed(vad,[(.0055126,False)]*15+[(.0085,False)]*10+[(.0055126,False)]*40)
+        self.assertTrue(vad.accepted)
+        self.assertAlmostEqual(vad.speech_duration,.42)
+        self.assertEqual(vad.stop_reason,"silence")
+
+    def test_fan_only_noise_and_unconfirmed_short_bursts_never_become_candidates(self):
+        for envelope in ([(.0055126,False)]*250,
+                         ([(.0055126,False)]*8+[(.019,True)]*2)*25,
+                         [(.014,False)]*250):
+            vad=self.vad();self.feed(vad,envelope)
+            self.assertFalse(vad.accepted)
+            self.assertEqual(vad.stop_reason,"start_timeout")
+            self.assertEqual((vad.candidates_started,vad.candidates_rejected,vad.candidates_accepted),(0,0,0))
+
+    def test_false_confirmed_onset_rejects_and_original_deadline_remains(self):
+        vad=self.vad()
+        events=self.feed(vad,[(.015,True)]*3+[(.0055126,False)]*40)
+        self.assertIn("reset",events)
+        self.assertFalse(vad.speech_started)
+        self.assertEqual(vad.speech_duration,0)
+        self.feed(vad,[(.0055126,False)]*250)
+        self.assertEqual(vad.stop_reason,"start_timeout")
+        self.assertAlmostEqual(vad.elapsed-vad.start_window_origin,5)
+        self.assertEqual((vad.candidates_started,vad.candidates_rejected,vad.candidates_accepted),(1,1,0))
+
+    def test_rejected_candidate_can_be_followed_by_real_speech_within_deadline(self):
+        vad=self.vad()
+        events=self.feed(vad,[(.015,True)]*3+[(.0055126,False)]*40+
+                         [(.0055126,False)]*50+[(.015,True)]*3+[(.011,False)]*25+
+                         [(.0055126,False)]*40)
+        self.assertEqual(events.count("start"),2)
+        self.assertEqual(events.count("reset"),1)
+        self.assertEqual(vad.stop_reason,"silence")
+        self.assertEqual((vad.candidates_started,vad.candidates_rejected,vad.candidates_accepted),(2,1,1))
+
+    def test_unaccepted_and_accepted_candidates_cannot_exceed_maximum_duration(self):
+        for maximum,accepted in ((.2,False),(.6,True)):
+            vad=self.vad(max_seconds=maximum)
+            self.feed(vad,[(.015,True)]*3+[(.011,False)]*100)
+            self.assertEqual(vad.stop_reason,"max_duration")
+            self.assertAlmostEqual(vad.capture_duration,maximum)
+            self.assertEqual(vad.accepted,accepted)
+            self.assertEqual(vad.candidates_rejected,int(not accepted))
+            self.assertEqual(vad.candidates_accepted,int(accepted))
+
+    def test_native_candidate_continuity_preroll_and_refusal_classification(self):
+        from assistant.tests_capture_readiness import NativeCaptureReadinessTests
+        import wave
+        for genuine in (False,True):
+            helper=NativeCaptureReadinessTests();case=helper.case();self.addCleanup(helper.doCleanups)
+            summary=[]
+            chunks=[pcm(.08)]*75+[pcm(.0055126)]*75+[pcm(.0055126)]*10+[pcm(.0197114,True)]*3
+            if genuine:
+                # Deliberately no spectral change in continuation: must retain it
+                # as energy-supported speech after the confirmed multiband onset.
+                chunks += [pcm(.011)]*30+[pcm(.0055126)]*40
+            else:
+                chunks += [pcm(.0055126)]*250
+            case.process.stdout.read.side_effect=chunks
+            kwargs=dict(backend="alsa",ready_lifecycle=True,preparation_policy="settled_fan",on_vad_summary=summary.append)
+            if genuine:
+                voice.record_audio_with_capture_vad(case.output_path,"hw:test",1,.02,.8,10,5,**kwargs)
+                self.assertEqual(summary[0]["candidates_accepted"],1)
+                self.assertEqual(summary[0]["candidates_rejected"],0)
+                self.assertEqual(summary[0]["preparation"]["refusal_reason"],None)
+                with wave.open(str(case.output_path),"rb") as wav:
+                    self.assertEqual(wav.readframes(wav.getnframes()),b"".join(chunks[148:]))
+            else:
+                with self.assertRaises(voice.VoiceLoopError):
+                    voice.record_audio_with_capture_vad(case.output_path,"hw:test",1,.02,.8,10,5,**kwargs)
+                self.assertEqual(summary[0]["candidates_started"],1)
+                self.assertEqual(summary[0]["candidates_rejected"],1)
+                self.assertEqual(summary[0]["candidates_accepted"],0)
+                self.assertEqual(summary[0]["preparation"]["refusal_reason"],"start_timeout")
+                self.assertFalse(case.output_path.exists())
+            case.process.terminate.assert_called_once()
+            case.doCleanups()

@@ -61,6 +61,10 @@ class AdaptiveCaptureVAD:
         self.start_window_origin = 0.0
         self.relative_start_threshold = None
         self.relative_continue_threshold = None
+        self.candidates_started = 0
+        self.candidates_rejected = 0
+        self.candidates_accepted = 0
+        self._candidate_accepted_counted = False
         if adaptive:
             self._thresholds()
 
@@ -73,6 +77,11 @@ class AdaptiveCaptureVAD:
         return self.speech_started and (
             not self.adaptive or self.speech_duration + 1e-9 >= self.min_speech_seconds
         )
+
+    def _count_acceptance(self):
+        if self.accepted and not self._candidate_accepted_counted:
+            self.candidates_accepted += 1
+            self._candidate_accepted_counted = True
 
     def _thresholds(self, *, background_floor=None):
         self.noise_floor = (background_floor if background_floor is not None else
@@ -106,8 +115,11 @@ class AdaptiveCaptureVAD:
         was_calibrated = self.calibrated
         self.elapsed += seconds
         if self.relative_start_threshold is not None:
-            above_start = speech_evidence and rms >= self.relative_start_threshold
-            above_continue = speech_evidence and rms >= self.relative_continue_threshold
+            above_start = (speech_evidence or self.speech_started) and rms >= self.relative_start_threshold
+            # Spectral novelty confirms ONSET, not every subsequent vowel.
+            # After onset, calibrated energy + the existing 60 ms resume and
+            # 0.8 s endpoint hold maintain continuity without counting quiet gaps.
+            above_continue = rms >= self.relative_continue_threshold
         else:
             above_start = rms >= self.start_threshold
             above_continue = rms >= self.continue_threshold
@@ -137,10 +149,14 @@ class AdaptiveCaptureVAD:
                     return "stop"
                 if not self.adaptive or self.candidate_duration + 1e-9 >= self.confirm_seconds:
                     self.speech_started = True
+                    self.candidates_started += 1
                     self.capture_duration = self.candidate_duration
                     self.speech_duration = self.candidate_duration
+                    self._count_acceptance()
                     if self.capture_duration + 1e-9 >= self.max_seconds:
                         self.stop_reason = "max_duration"
+                        if not self.accepted:
+                            self.candidates_rejected += 1
                     return "start"
             else:
                 self.candidate_duration = 0.0
@@ -167,9 +183,12 @@ class AdaptiveCaptureVAD:
         else:
             self.silence_duration += seconds
             self.resume_duration = 0.0
+        self._count_acceptance()
         # A minimum speech guard can never extend the maximum duration.
         if self.capture_duration + 1e-9 >= self.max_seconds:
             self.stop_reason = "max_duration"
+            if not self.accepted:
+                self.candidates_rejected += 1
             return "stop"
         # Allow an in-flight resume confirmation at the silence boundary, at
         # most 60 ms. Maximum duration above still wins without any extension.
@@ -178,6 +197,8 @@ class AdaptiveCaptureVAD:
                 self.stop_reason = "silence"
                 return "stop"
             # Reject a short burst and return to waiting within the original bound.
+            self.candidates_rejected += 1
+            self._candidate_accepted_counted = False
             self.speech_started = False
             self.capture_duration = self.speech_duration = 0.0
             self.candidate_duration = self.silence_duration = 0.0

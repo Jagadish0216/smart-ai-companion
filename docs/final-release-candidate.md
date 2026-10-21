@@ -1,7 +1,78 @@
 # Offline companion final release candidate
 
-Speech-detection correction baseline: `8f02894745b9574180402ad7bfad6b9df0959513`.
+Speech-candidate acceptance baseline: `9d825fe9322de97321f712233a3eeae84c11f603`.
 Feature branch only: `codex/offline-model-selection`. Hardware acceptance pending.
+
+## Candidate continuity correction
+
+The latest Pi trial reached ready at 4903.657 ms and confirmed a candidate at
+8001.647 ms, but ended at 9878.206 ms with `start_timeout`, `accepted=false` and
+zero final speech duration. Its floor was 0.0055126, relative onset 0.01,
+continuation 0.008, waiting maximum 0.0197114 and spectral evidence count 27.
+These are aggregate observations, not a waveform or a per-frame speech label.
+Do not add all evidence frames across candidates and infer a valid utterance.
+
+`AdaptiveCaptureVAD.feed` previously required spectral novelty both for onset and
+continuation. `SpectralOnset.evidence` is a current/smoothed multiband change
+heuristic, not a detector guaranteed to stay true during every vowel. Frames
+above calibrated continuation energy could therefore count as silence whenever
+spectral evidence was false. After 0.8 seconds of such gaps, a candidate with less
+than 300 ms counted voice reset to waiting and zeroed per-candidate duration.
+The original start deadline then remained active. This reset path explains the
+combination of a lone `speech_detected`, zero final duration and start timeout;
+the aggregate data cannot establish exactly which real syllables or intervals
+lost evidence, or rule out other acoustic difficulties.
+
+The correction changes only the opt-in relative candidate's continuation:
+
+- A waiting candidate still requires consecutive multiband spectral evidence and
+  energy above the relative start threshold for the existing onset confirmation.
+  Stationary fan energy alone cannot start it.
+- Once confirmed, energy >= the same relative start threshold counts as voiced
+  without requiring renewed spectral novelty. Lower energy >= the existing
+  relative continuation threshold still uses the unchanged 60 ms resume
+  confirmation. This retains sustained vowels and connected speech while keeping
+  isolated weak resumption spikes from accumulating voice.
+- Dips below continuation do not count as voiced; the existing 0.8-second endpoint
+  holds the candidate through brief syllable gaps and pauses. The minimum remains
+  300 ms actually counted voice, not elapsed duration or time spent in pauses.
+- An insufficient candidate resets and must pass spectral onset again. The
+  original five-second start deadline is never renewed. Confirmed capture remains
+  bounded by its configured maximum utterance duration, existing watchdog and
+  guarded session deadline. No retries or duplicate assistant dispatch are added.
+
+Preparation, spectral extraction/evidence, thresholds, native pre-roll, WAV bytes,
+Whisper/Qwen/Piper, display protocol, speaker profile, resource guards and public
+fixture matching are unchanged. Continuation after a false but confirmed onset
+can still be fooled by sufficiently strong speech-like interference; this is not
+semantic speech classification. The onset guard, voiced minimum, endpoint,
+duration limits and strict validation fixture continue to limit that risk.
+Physical recognition and audibility still require the supervised assembled Pi run.
+
+### Privacy-safe candidate accounting
+
+Existing child `capture_vad_summary` and the parent report's nested `cycle` summary
+now include integer `candidates_started`, `candidates_rejected` and
+`candidates_accepted`. Started means a confirmed onset (not every tentative spike).
+Rejected means a confirmed candidate reset or reached maximum duration without
+meeting the voiced minimum. Accepted increments once when a candidate crosses
+that minimum. A pending/cancelled candidate can be started but neither rejected
+nor accepted; counters never manufacture an acceptance on cancellation.
+Final `speech_duration` still describes the current candidate, so a reset may
+leave it zero while the aggregate rejection count remains available.
+
+A lone `speech_detected` event is candidate onset, not success. Check accepted
+capture, `minimum_speech_accepted`, the accepted silence endpoint, the full event
+chain, model completion and software release checks. The existing validator still
+requires human review before physical acceptance.
+
+The capture exception path previously labelled every `VoiceLoopError` as
+`capture_error` in preparation diagnostics, including ordinary `start_timeout`.
+It now preserves an actual VAD stop category in `preparation.refusal_reason`
+(the existing field name also covers post-ready capture refusal). Genuine capture
+I/O/callback failures remain `capture_error`, and cancellation remains `cancelled`.
+No exception text, transcript, waveform or per-frame speech/evidence history is
+added to diagnostics. Counter storage is constant and capture bounds are unchanged.
 
 ## Implementation
 
@@ -111,8 +182,10 @@ no new package, model, service or cloud inference:
   `max(0.5*configured_start, sqrt(1.5)*background)`; continuation uses
   `max(0.4*configured_start, sqrt(1.2)*background)`. These are relative POWER
   margins, corroborated by spectral shape, not a blind global threshold change.
-  The original VAD still requires consecutive onset confirmation (normally 60 ms),
-  300 ms minimum voiced duration, existing hysteresis/resume confirmation,
+  Spectral corroboration is required for onset, not continuously after a confirmed
+  candidate (see the correction above). The original VAD still requires consecutive
+  onset confirmation (normally 60 ms), 300 ms minimum voiced duration and existing
+  hysteresis/resume confirmation,
   300 ms native pre-roll, natural pauses, configured endpoint and duration limits.
   No waiting budget is renewed and no phrase is force-accepted.
 
@@ -169,9 +242,14 @@ conversion cost; no unverified audio algorithm change was introduced.
 
 ## Validation and limits
 
-Speech correction focused Windows suite: **296 tests passed**. Full suite:
-**1303 tests, OK, one skipped**. Full results are retained in `speech-onset-windows-tests.log`; focused output is in
-`speech-onset-focused-tests.log`. Earlier fan-fix and release logs are historical.
+Candidate correction focused Windows suite: **304 tests passed**. Full suite:
+**1311 tests, OK, one skipped**. Full results are retained in `candidate-continuity-windows-tests.log`; focused output is in
+`candidate-continuity-focused-tests.log`. Earlier speech-onset/fan-fix/release logs
+remain historical. New deterministic envelopes cover continuous vowels without
+spectral novelty, consonant/vowel alternation, quiet speech, natural gaps, fan-only
+input, short bursts, false onset/rejection, later valid onset inside the original
+deadline, accepted silence endpoint, maximum-duration refusal and exact native
+pre-roll bytes. Existing tests cover cancellation and single STT/service dispatch.
 Both use mocks/synthetic signals and local temporary test data, not hardware,
 cloud inference or installed model execution. Coverage includes startup decay,
 fan-only variation, valid/short/interrupted speech, natural pauses and endpoint,
@@ -204,7 +282,7 @@ With fan running and operator present, run exactly once. The report path must no
 already exist. Do not restart services, unload Qwen, or automatically retry.
 
 ```sh
-cd "$HOME/apps/smart-ai-companion" && test "$(git branch --show-current)" = codex/offline-model-selection && git diff --quiet && git diff --cached --quiet && OLLAMA_HOST=http://127.0.0.1:11434 VOICE_PLAYBACK_PROFILE=approved_loudness ./venv/bin/python scripts/validate_offline_voice.py --operator-live-trial --production-qwen --settled-fan --fixture fact --output "$HOME/speech-detection-acceptance.json"
+cd "$HOME/apps/smart-ai-companion" && test "$(git branch --show-current)" = codex/offline-model-selection && git diff --quiet && git diff --cached --quiet && OLLAMA_HOST=http://127.0.0.1:11434 VOICE_PLAYBACK_PROFILE=approved_loudness ./venv/bin/python scripts/validate_offline_voice.py --operator-live-trial --production-qwen --settled-fan --fixture fact --output "$HOME/candidate-acceptance.json"
 ```
 
 Remain silent throughout PREPARING. After MICROPHONE READY, from approximately one
@@ -216,7 +294,7 @@ Extract content-free stage evidence (the complete isolated report also retains t
 approved public fixture answer for human quality review):
 
 ```sh
-./venv/bin/python -c 'import json, pathlib; r=json.loads((pathlib.Path.home()/"speech-detection-acceptance.json").read_text()); c=r.get("cycle",{}); print(json.dumps({"status":r.get("status"),"reason":r.get("reason",c.get("reason")),"telemetry":r.get("telemetry"),"cycle":{k:c.get(k) for k in ("release_checks","capture_vad_summary","events_ms","durations_ms","display_calls","residency_label","ollama_metrics","voice_config","missing_events")}},indent=2))'
+./venv/bin/python -c 'import json, pathlib; r=json.loads((pathlib.Path.home()/"candidate-acceptance.json").read_text()); c=r.get("cycle",{}); print(json.dumps({"status":r.get("status"),"reason":r.get("reason",c.get("reason")),"telemetry":r.get("telemetry"),"cycle":{k:c.get(k) for k in ("release_checks","capture_vad_summary","events_ms","durations_ms","display_calls","residency_label","ollama_metrics","voice_config","missing_events")}},indent=2))'
 ```
 
 Required software result: `sample_complete_quality_pending`, every `release_checks`
@@ -246,16 +324,14 @@ To restore the exact preceding release code, revert this correction's commit on
 `codex/offline-model-selection` and fast-forward the Pi to that reviewed revert;
 no model/service restart, database change or persistent environment edit is needed.
 
-## Speech correction changed files
+## Candidate correction changed files
 
-- `assistant/voice/capture_vad.py`: opt-in corroborated relative onset/continuation;
-  existing confirmation, duration, reset and endpoint state machine retained.
-- `assistant/voice/spectral_onset.py`: bounded LEFT-channel spectral corroboration.
-- `scripts/voice_loop.py`: calibration, frozen detector and content-free summaries.
-- `assistant/tests_speech_onset.py`: measured scalar constraints, synthetic modest
-  speech, tonal/broadband fan noise, gain changes, bursts, hysteresis, native PCM
-  and exact pre-roll regressions.
-- `assistant/tests_release_candidate.py`: explicit single STT/service dispatch checks.
-- `docs/final-release-candidate.md`: implementation, limitations and acceptance.
-- `docs/speech-onset-focused-tests.log`, `docs/speech-onset-windows-tests.log`:
-  Windows verification; no Pi timing/physical acceptance claim.
+- `assistant/voice/capture_vad.py`: post-confirmation energy continuity and
+  constant-memory candidate counters; original timing and acceptance bounds.
+- `scripts/voice_loop.py`: categorical VAD refusal and aggregate counters in summaries.
+- `assistant/tests_speech_onset.py`: candidate continuity, rejection, deadlines,
+  quiet/connected speech and native PCM regressions.
+- `assistant/tests_stt_comparison_audio_profile.py`: integer counter/schema assertions.
+- `docs/final-release-candidate.md`: source-based diagnosis and acceptance procedure.
+- `docs/candidate-continuity-focused-tests.log`,
+  `docs/candidate-continuity-windows-tests.log`: Windows evidence.
