@@ -38,7 +38,7 @@ class SettledFanTests(SimpleTestCase):
         for _ in range(25): vad.feed(.009,.02)
         self.assertTrue(prep.calibration_usable())
         self.assertLess(vad.start_threshold,.03134)
-        self.assertEqual(prep.diagnostics()["policy"],"settled_fan_v1")
+        self.assertEqual(prep.diagnostics()["policy"],"settled_fan_v2")
 
     def test_continuous_fan_and_moderate_variation_never_trigger_speech(self):
         vad,prep=self.calibrated()
@@ -82,7 +82,7 @@ class SettledFanTests(SimpleTestCase):
     def test_early_activity_can_finish_before_background_calibration(self):
         vad,prep=self.prepare([.08]*75+[.04]*50+[.008]*175)
         self.assertTrue(prep._settled)
-        self.assertGreaterEqual(prep.warmup_elapsed,3.4)
+        self.assertGreaterEqual(prep.warmup_elapsed,3.1)  # Majority background follows early activity.
         self.assertFalse(vad.speech_started)
 
     def test_calibration_change_refuses_and_budget_configuration_fails_closed(self):
@@ -102,6 +102,93 @@ class SettledFanTests(SimpleTestCase):
             self.assertFalse(voice.VoiceLoopConfig.from_settings().capture_ready_lifecycle)
         with self.assertRaises(voice.VoiceLoopError):
             replace(config,capture_preparation_policy="unknown").validate()
+
+
+class FanToleranceCorrectionTests(SimpleTestCase):
+    prepare = SettledFanTests.prepare
+    calibrated = SettledFanTests.calibrated
+    def test_supplied_distribution_is_not_a_reconstructed_microphone_recording(self):
+        from statistics import median
+        import random
+        # Synthetic distribution matches the supplied aggregate numbers only;
+        # temporal arrangement and the physical cause are unknown.
+        population=[.001562]+[.004]*100+[.005698]*100+[.009]*52+[.029225]*46+[.165333]
+        self.assertEqual(len(population),300)
+        self.assertAlmostEqual(min(population),.001562)
+        self.assertAlmostEqual(median(population),.005698)
+        self.assertAlmostEqual(sorted(population)[269],.029225)
+        self.assertEqual(sum(v>.02 for v in population),47)
+        for seed in range(6):
+            levels=list(population)
+            random.Random(seed).shuffle(levels)
+            vad,prep=self.prepare(levels)
+            self.assertTrue(prep._settled,seed)
+            self.assertIsNone(vad.stop_reason)
+            self.assertLess(prep.settled_floor,.01)
+            # Peaks also occur during real post-drain calibration.
+            for level in ([.005698]*4+[.029225])*5: vad.feed(level,.02)
+            self.assertTrue(prep.calibration_usable())
+            self.assertLessEqual(vad.start_threshold,.027)
+
+    def test_intermittent_peak_fan_does_not_require_a_flat_window(self):
+        levels=[.003,.009,.0057,.029225,.0057]*60
+        vad,prep=self.prepare(levels)
+        self.assertTrue(prep._settled)
+        self.assertAlmostEqual(prep.settled_floor,.0057)
+        self.assertLess(prep.warmup_elapsed,6)
+
+    def test_noisy_calibration_does_not_install_an_inflated_raw_median(self):
+        from statistics import median
+        vad,prep=self.prepare([.005698]*300)
+        calibration=([.006]*3+[.04]*2)*4+[.04]*5
+        for level in calibration: vad.feed(level,.02)
+        self.assertEqual(median(vad.noise_samples),.04)
+        self.assertGreater(vad.start_threshold,.1)  # Generic pre-cue value only.
+        original=list(vad.noise_samples)
+        self.assertTrue(prep.calibration_usable())
+        self.assertEqual(list(vad.noise_samples),original)
+        self.assertAlmostEqual(vad.noise_floor,.006)
+        self.assertAlmostEqual(vad.start_threshold,.02)
+        self.assertAlmostEqual(vad.continue_threshold,.0095)
+        vad.open_start_window()
+        for level in [.03134]*25+[.006]*40: vad.feed(level,.02)
+        self.assertTrue(vad.accepted)
+        self.assertEqual(vad.stop_reason,"silence")
+
+    def test_genuinely_unusable_calibration_has_no_ready_floor(self):
+        for calibration in ([.04]*25,[0]*25,[.006]*10+[.04]*15,[.015]*25):
+            vad,prep=self.prepare([.005698]*300)
+            for level in calibration: vad.feed(level,.02)
+            self.assertFalse(prep.calibration_usable())
+            self.assertEqual(vad.stop_reason,"calibration_unreliable")
+            self.assertFalse(vad.accepted)
+
+    def test_zero_near_zero_and_continuously_excessive_input_refuse_boundedly(self):
+        for level in (0,.00001,.03,1):
+            vad,prep=self.prepare([level]*300)
+            self.assertFalse(prep._settled)
+            self.assertEqual(vad.stop_reason,"preparation_unstable")
+            self.assertAlmostEqual(prep.warmup_elapsed,6)
+        for level in (float("nan"),float("inf"),-.1,1.1):
+            vad,prep=self.prepare([level])
+            self.assertEqual(vad.stop_reason,"preparation_unstable")
+            self.assertIsNone(prep.settled_floor)
+
+    def test_isolated_low_interval_cannot_hide_sustained_speech_like_activity(self):
+        for levels in ([.005]*5+[.04]*45,[.005]*25+[.04]*25):
+            vad=AdaptiveCaptureVAD();prep=SettledFanPreparation(vad,1)
+            self.assertIsNone(prep.background_estimate(levels))
+        vad,prep=self.prepare([.03]*75+([.005]*5+[.04]*5)*23)
+        self.assertEqual(vad.stop_reason,"preparation_unstable")
+
+    def test_fan_peaks_after_ready_do_not_accumulate_into_speech(self):
+        vad,prep=self.calibrated()
+        for level in ([.008]*9+[.04])*25:
+            vad.feed(level,.02)
+            if vad.stop_reason: break
+        self.assertFalse(vad.accepted)
+        self.assertEqual(vad.stop_reason,"start_timeout")
+
 
 
 class NativeSettledFanTests(SimpleTestCase):
@@ -135,6 +222,23 @@ class NativeSettledFanTests(SimpleTestCase):
         self.assertIn("endpoint_detected",trace.data["events_ms"])
         self.assertLessEqual(trace.data["events_ms"]["microphone_ready_emitted"],trace.data["events_ms"]["speech_start_window_open"])
         self.assertAlmostEqual(case.mocks["Timer"].call_args.args[0],19.5)
+        case.process.terminate.assert_called_once()
+
+    def test_noisy_calibration_installs_robust_floor_before_ready_callback(self):
+        from unittest.mock import MagicMock
+        case=self.case();summary=MagicMock();ready=[]
+        calibration=([.006]*3+[.04]*2)*4+[.04]*5
+        levels=[.08]*75+[.005698]*50+calibration+[.03134]*20+[.006]*2
+        case.process.stdout.read.side_effect=[case.pcm(v) for v in levels]
+        def cue():
+            self.assertAlmostEqual(case.vads[0].noise_floor,.006,places=6)
+            self.assertEqual(case.vads[0].start_threshold,.02)
+            ready.append(case.process.stdout.read.call_count)
+        case.record(ready_lifecycle=True,preparation_policy="settled_fan",on_capture_ready=cue,on_vad_summary=summary)
+        self.assertEqual(ready,[150])
+        self.assertTrue(summary.call_args.args[0]["accepted"])
+        self.assertEqual(summary.call_args.args[0]["stop_reason"],"silence")
+        self.assertTrue(case.output_path.exists())
         case.process.terminate.assert_called_once()
 
     def test_cancel_and_unstable_preparation_never_emit_ready_or_endpoint(self):

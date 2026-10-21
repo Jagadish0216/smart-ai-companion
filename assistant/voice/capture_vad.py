@@ -72,8 +72,9 @@ class AdaptiveCaptureVAD:
             not self.adaptive or self.speech_duration + 1e-9 >= self.min_speech_seconds
         )
 
-    def _thresholds(self):
-        self.noise_floor = median(self.noise_samples) if self.noise_samples else 0.0
+    def _thresholds(self, *, background_floor=None):
+        self.noise_floor = (background_floor if background_floor is not None else
+                            median(self.noise_samples) if self.noise_samples else 0.0)
         self.calibrated_noise_floor = self.noise_floor
         self.start_threshold = max(self.configured_start, min(1.0, self.noise_floor * 2.5 + 0.002))
         if self.max_start_threshold is not None:
@@ -246,18 +247,20 @@ class QuietCapturePreparation:
 
 
 class SettledFanPreparation(QuietCapturePreparation):
-    """Opt-in startup drain followed by stable fan-background calibration.
+    """Opt-in bounded startup drain with robust low-energy interval estimation.
 
-    Energy alone cannot identify steady speech. Require operator silence before
-    ready; reject observable modulation/drift instead of pretending to classify it.
-    Reuse the existing adaptive thresholds, onset confirmation and hysteresis.
+    A majority of representative background intervals is required; isolated peaks
+    neither dominate the floor nor require an unrealistically flat fan signal.
+    Energy alone cannot distinguish perfectly steady speech from ambient noise.
     """
     ABSOLUTE_ACTIVITY_REFUSAL = False
     MIN_DRAIN_SECONDS = 1.5
     WINDOW_SECONDS = 1.0
     MAX_PREPARATION_SECONDS = 6.0
-    MAX_SPREAD_RATIO = 1.8
-    MAX_DRIFT_RATIO = 1.35
+    INTERVAL_FRAMES = 5  # 100 ms at the existing 20 ms native capture cadence.
+    MIN_BACKGROUND_FRACTION = 0.7
+    MIN_BACKGROUND_RMS = 0.0001  # Reject digital-zero/near-zero unusable input.
+    MAX_BACKGROUND_RISE_RATIO = 2.0
 
     def __init__(self, vad, warmup_seconds):
         super().__init__(vad, warmup_seconds)
@@ -271,54 +274,67 @@ class SettledFanPreparation(QuietCapturePreparation):
         return not self._settled and self.vad.stop_reason is None
 
     def consume_warmup(self, rms, seconds):
-        # Retain the shared numeric diagnostics but replace only this opt-in
-        # policy's absolute sustained-activity refusal. No PCM is retained here.
+        if (not math.isfinite(rms) or not 0 <= rms <= 1 or
+                not math.isfinite(seconds) or seconds <= 0):
+            self.vad.stop_reason = "preparation_unstable"
+            return
         super().consume_warmup(rms, seconds)
         if self.warmup_elapsed - seconds + 1e-9 >= max(self.MIN_DRAIN_SECONDS, self.warmup_seconds):
             self._window.append((rms, seconds))
         duration = sum(dt for _, dt in self._window)
         if duration + 1e-9 >= self.WINDOW_SECONDS:
-            levels = [level for level, _ in self._window]
-            if self.stable(levels):
-                self.settled_floor = median(levels)
+            estimate = self.background_estimate([level for level, _ in self._window])
+            if estimate is not None:
+                self.settled_floor = estimate
                 self._settled = True
         if not self._settled and self.warmup_elapsed + 1e-9 >= self.MAX_PREPARATION_SECONDS:
             self.vad.stop_reason = "preparation_unstable"
 
-    def stable(self, levels):
-        if len(levels) < 2:
-            return False
-        ordered = sorted(levels)
-        floor = median(levels)
-        # Existing configured onset floor is an auditable calibration ceiling,
-        # not a requirement for silence or an altered speech-onset threshold.
-        if floor >= self.vad.configured_start:
-            return False
-        low = max(ordered[int(.1 * (len(ordered)-1))], .0001)
-        high = ordered[math.ceil(.9 * len(ordered))-1]
-        half = len(levels)//2
-        left, right = median(levels[:half]), median(levels[half:])
-        return (high <= low * self.MAX_SPREAD_RATIO and
-                max(left, right) <= max(min(left, right), .0001) * self.MAX_DRIFT_RATIO)
+    def background_estimate(self, levels):
+        # Complete short intervals only. A single low frame is not a baseline;
+        # multiple low intervals must support it. No peak maximum or p90/p10 gate.
+        if len(levels) < self.INTERVAL_FRAMES * 3 or any(
+                not math.isfinite(level) or not 0 <= level <= 1 for level in levels):
+            return None
+        intervals = [median(levels[i:i+self.INTERVAL_FRAMES])
+                     for i in range(0, len(levels)-self.INTERVAL_FRAMES+1, self.INTERVAL_FRAMES)]
+        ordered = sorted(intervals)
+        seed = median(ordered[:math.ceil(len(ordered)/2)])
+        if not self.MIN_BACKGROUND_RMS <= seed < self.vad.configured_start:
+            return None
+        # Relative spread around the lower-energy seed, with a small additive
+        # allowance for a quiet ADC floor. The configured ceiling is unchanged.
+        ceiling = max(seed * 2, seed + .002)
+        background = [level for level in intervals
+                      if self.MIN_BACKGROUND_RMS <= level < self.vad.configured_start and level <= ceiling]
+        if len(background) < math.ceil(self.MIN_BACKGROUND_FRACTION * len(intervals)):
+            return None
+        return median(background)
 
     def calibration_usable(self):
         if not self.vad.calibrated or self.vad.stop_reason:
             return False
-        levels = list(self.vad.noise_samples)
-        floor = self.vad.noise_floor
-        if (not self.stable(levels) or
-            max(floor, self.settled_floor) > max(min(floor, self.settled_floor), .0001) * self.MAX_DRIFT_RATIO):
+        floor = self.background_estimate(list(self.vad.noise_samples))
+        if (floor is None or self.settled_floor is None or
+                floor > self.settled_floor * self.MAX_BACKGROUND_RISE_RATIO):
             self.vad.stop_reason = "calibration_unreliable"
             return False
+        # The generic feed collected real calibration RMS values. Install the
+        # robust estimate using the existing onset/hysteresis formula; leave the
+        # samples intact and never invent silence or change legacy calibration.
+        self.vad._thresholds(background_floor=floor)
         return True
 
     def diagnostics(self):
         result = super().diagnostics()
-        result.update(policy="settled_fan_v1", settled_background_rms=self.settled_floor,
+        result.update(policy="settled_fan_v2", settled_background_rms=self.settled_floor,
                       startup_drain_seconds=max(self.MIN_DRAIN_SECONDS, self.warmup_seconds),
-                      stable_window_seconds=self.WINDOW_SECONDS,
+                      background_window_seconds=self.WINDOW_SECONDS,
                       preparation_limit_seconds=self.MAX_PREPARATION_SECONDS,
-                      max_spread_ratio=self.MAX_SPREAD_RATIO, max_drift_ratio=self.MAX_DRIFT_RATIO)
+                      interval_frames=self.INTERVAL_FRAMES,
+                      min_background_fraction=self.MIN_BACKGROUND_FRACTION,
+                      min_background_rms=self.MIN_BACKGROUND_RMS,
+                      max_background_rise_ratio=self.MAX_BACKGROUND_RISE_RATIO)
         if self.vad.stop_reason == "preparation_unstable":
             result["refusal_reason"] = self.vad.stop_reason
         return result
