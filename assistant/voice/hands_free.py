@@ -34,12 +34,15 @@ class HandsFreeCaptureConfig:
     calibration_seconds: float = 0.25
     max_seconds: float = 6.0
     end_silence_seconds: float = 0.9
+    noise_relative_endpoint: bool = False
 
     @classmethod
     def from_settings(cls):
         from django.conf import settings
         values = {}
         for field in cls.__dataclass_fields__.values():
+            if field.name == 'noise_relative_endpoint':
+                continue # CLI opt-in only, never change deployed settings.
             name = "VOICE_HANDS_FREE_" + field.name.upper()
             try:
                 values[field.name] = float(getattr(settings, name, field.default))
@@ -75,7 +78,7 @@ class HandsFreeEndpointDetector:
     after that evidence can stop capture early. No reset or start timeout.
     """
 
-    def __init__(self, noise_floor, end_silence_seconds, *, relative=False):
+    def __init__(self, noise_floor, end_silence_seconds, *, relative=False, noise_relative=False):
         if not math.isfinite(noise_floor) or not 0 <= noise_floor <= 1:
             raise ValueError("Endpoint noise floor must be normalized RMS.")
         if not math.isfinite(end_silence_seconds) or end_silence_seconds <= 0:
@@ -89,11 +92,19 @@ class HandsFreeEndpointDetector:
             self.continue_threshold = min(self.speech_threshold * .95, max(.008, noise_floor * 1.2 + .001))
             self.strong_threshold = min(1.0, max(self.speech_threshold * 1.4, noise_floor * 1.6 + .005))
         self.minimum_voice_seconds = .3 if relative else 0.0
+        if noise_relative:
+            # Never cap below the observed fan floor. Do not learn from speech.
+            self.speech_threshold = min(1., max(.002, noise_floor * 1.8 + .001))
+            self.continue_threshold = min(self.speech_threshold * .95, max(.001, noise_floor * 1.25 + .0005))
+            self.strong_threshold = min(1., self.speech_threshold * 1.4)
+            self.minimum_voice_seconds = .3
         self.voiced_seconds = 0.0
         self.end_silence_seconds = end_silence_seconds
         self.window = deque(maxlen=5)
         self.speech_seen = False
         self.quiet_seconds = 0.0
+        self.quiet_resets = 0
+        self.longest_quiet_seconds = 0.0
 
     def feed(self, rms, seconds):
         if not math.isfinite(rms) or not 0 <= rms <= 1 or not math.isfinite(seconds) or seconds <= 0:
@@ -106,9 +117,12 @@ class HandsFreeEndpointDetector:
                 self.speech_seen = True
             return False
         if rms >= self.continue_threshold:
+            if self.quiet_seconds:
+                self.quiet_resets += 1
             self.quiet_seconds = 0.0
         else:
             self.quiet_seconds += seconds
+            self.longest_quiet_seconds = max(self.longest_quiet_seconds, self.quiet_seconds)
         return (self.quiet_seconds + 1e-9 >= self.end_silence_seconds and
                 self.voiced_seconds + 1e-9 >= self.minimum_voice_seconds)
 
@@ -223,13 +237,15 @@ def record_audio_hands_free(output_path: Path, device: str, config: HandsFreeCap
             # Wake standby already supplied background; never discard a question
             # to calibrate on the user's opening words. Unknown floor => fixed cap.
             if background_rms is not None and math.isfinite(background_rms) and .0001 <= background_rms <= 1:
-                detector = HandsFreeEndpointDetector(background_rms, config.end_silence_seconds, relative=True)
+                detector = HandsFreeEndpointDetector(background_rms, config.end_silence_seconds, relative=True,
+                                                    noise_relative=config.noise_relative_endpoint)
         else:
             for _chunk in phase(config.warmup_seconds):
                 pass
             noise = [normalized_left_rms(chunk) for chunk in phase(config.calibration_seconds)]
             latency.mark("calibration_end", once=True)
-            detector = HandsFreeEndpointDetector(median(noise), config.end_silence_seconds)
+            detector = HandsFreeEndpointDetector(median(noise), config.end_silence_seconds,
+                                                noise_relative=config.noise_relative_endpoint)
         latency.mark("capture_ready", once=True)
         print("Speak now...")
         if on_capture_ready is not None:
@@ -269,6 +285,9 @@ def record_audio_hands_free(output_path: Path, device: str, config: HandsFreeCap
         if stop_reason is not None and detector is None:
             print(f"Hands-free capture: background=unknown capture_duration={captured_frames / SAMPLE_RATE:.2f}s stop_reason={stop_reason}")
         elif stop_reason is not None:
+            if config.noise_relative_endpoint:
+                print(f"Endpoint diagnostics: voiced_seconds={detector.voiced_seconds:.3f} "
+                      f"longest_quiet_seconds={detector.longest_quiet_seconds:.3f} quiet_resets={detector.quiet_resets}")
             print(
                 f"Hands-free capture: noise_floor={detector.noise_floor:.4f} "
                 f"speech_threshold={detector.speech_threshold:.4f} "

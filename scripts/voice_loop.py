@@ -150,6 +150,8 @@ class VoiceLoopConfig:
     playback_gain: float = 4.0
     stream_tts_target_chars: int = 180
     stream_eager_first_sentence: bool = False
+    voice_refinements: bool = False
+    voice_diagnostics: bool = False
     stream_inter_chunk_silence_seconds: float = 0.12
     stream_first_chunk_min_chars: int = 60
     stream_first_chunk_target_chars: int = 100
@@ -1016,6 +1018,8 @@ class StreamingSpeechBuffer:
             # Keep punctuation inside Piper input. Hold tiny completed sentences
             # for their neighbours, with a bounded size-based (not timed) wait.
             lower = max(1, self.target_chars - 60)
+            if getattr(self, 'release_complete_sentences', False):
+                lower = min(lower, 60)
             upper = self.target_chars + 40
             if not self.first_unit_emitted:
                 useful = [(end, length) for end, length in sentences if length >= self.first_sentence_min_chars]
@@ -1129,6 +1133,13 @@ class PreparedAudio:
     speech_text: str
     leading_silence_frames: int = 0
     trailing_silence_frames: int = 0
+    ready_at: float | None = None
+
+
+@dataclass(frozen=True)
+class QueuedSpeech:
+    text: str
+    queued_at: float
 
 
 def split_caption_pages(text):
@@ -1149,6 +1160,14 @@ def split_caption_pages(text):
         pages.append(remaining[:end])
         remaining = remaining[end:].lstrip()
     return pages
+
+
+def refined_pause_frames(previous_text, trailing_frames, leading_frames, queue_wait_seconds=0):
+    """Punctuation budget only; a queue miss already contributes real silence."""
+    punctuation = previous_text.rstrip().rstrip('"\u201d\u2019)')[-1:]
+    pause = .35 if punctuation in (',', ';', ':') else (.18 if punctuation in ('.', '?', '!') else 0)
+    return max(0, round(max(0, pause - queue_wait_seconds) * ALSA_SAMPLE_RATE)
+               - trailing_frames - leading_frames)
 
 
 def speak_stream_response(events, tts_provider, temp_path, config, timings, cycle_started,
@@ -1173,6 +1192,7 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
         first_target_chars=config.stream_first_chunk_target_chars,
         first_sentence_min_chars=config.stream_first_sentence_min_chars,
     )
+    buffer.release_complete_sentences = config.voice_refinements
     if config.stream_eager_first_sentence:
         # Complete short factual sentences need not wait for model EOF. Keep
         # later packing unchanged to avoid introducing tiny Piper jobs/gaps.
@@ -1232,22 +1252,41 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                 if text is finish:
                     enqueue(ready_audio, finish)
                     return
+                text_queue_age_ms = None
+                if isinstance(text, QueuedSpeech):
+                    text_queue_age_ms = (time.perf_counter() - text.queued_at) * 1000
+                    text = text.text
                 number += 1
                 if number == 1:
                     timings["first_tts_chars"] = len(text)
                 try:
+                    unit_started = time.perf_counter()
                     synthesize = (
                         tts_provider.synthesize_cancellable
                         if isinstance(tts_provider, TextToSpeechProvider) else tts_provider.synthesize
                     )
                     args = (text, stopped) if isinstance(tts_provider, TextToSpeechProvider) else (text,)
                     audio = _timed_call(timings, "tts", synthesize, *args)
+                    tts_ms = (time.perf_counter() - unit_started) * 1000
                 except Exception as exc:
                     raise VoiceLoopError(f"TTS failed on streaming chunk {number}: {exc}") from exc
                 if stopped.is_set():
                     return
                 try:
+                    prepare_started = time.perf_counter()
                     prepared = _timed_call(timings, "audio_prepare", prepare_audio, audio, number, text)
+                    if latency.enabled():
+                        metrics = dict(unit=number, chars=len(text), tts_ms=tts_ms,
+                                       prepare_ms=(time.perf_counter() - prepare_started) * 1000)
+                        if text_queue_age_ms is not None:
+                            metrics['text_queue_age_ms'] = text_queue_age_ms
+                        try:
+                            if config.audio_backend == 'alsa':
+                                metrics['audio_seconds'] = prepared.path.stat().st_size / (ALSA_SAMPLE_RATE * 8)
+                        except OSError:
+                            pass # Instrumentation cannot fail audio or mocked adapters.
+                        latency.mark('audio_unit_ready', **metrics)
+                        prepared = replace(prepared, ready_at=time.perf_counter())
                 except Exception as exc:
                     if control is not None and stopped.is_set() and isinstance(exc, subprocess.TimeoutExpired):
                         cleanup_errors.append(exc)
@@ -1265,6 +1304,8 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
         playback_started = None
         previous_trailing_frames = 0
         last_caption = None
+        previous_text = ''
+        cancel_output = None
 
         def caption(page):
             nonlocal last_caption
@@ -1303,11 +1344,20 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                     if player is not None and not stopped.is_set():
                         player.finish()
                     return
+                if prepared.ready_at is not None:
+                    latency.mark('audio_unit_dequeued', unit=prepared.number,
+                                 ready_queue_age_ms=(time.perf_counter() - prepared.ready_at) * 1000)
                 if wait_started is not None:
                     starvation = (time.perf_counter() - wait_started) * 1000
                     timings["playback_starvation_ms"] += starvation
                     timings["max_playback_starvation_ms"] = max(timings["max_playback_starvation_ms"], starvation)
                 if prepared.number == 1:
+                    if config.voice_refinements:
+                        # One bounded lookahead, never wait for the full answer.
+                        # Leave the second item in the bounded queue in playback order.
+                        until = time.monotonic() + .8
+                        while ready_audio.empty() and time.monotonic() < until and not stopped.is_set():
+                            stopped.wait(.02)
                     if control is not None:
                         control.start()
                     if on_playback_start is not None:
@@ -1346,16 +1396,33 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                                 **({"on_reference": control.reference} if control is not None and control.voice else {}),
                             )
                             player.start()
+                            if control is not None and config.voice_refinements:
+                                def cancel_output():
+                                    # Signal immediately from the cancelling thread; the sole
+                                    # playback worker still owns wait/kill/reap and descriptors.
+                                    process = player.process
+                                    if process is not None and process.poll() is None:
+                                        try: process.terminate()
+                                        except OSError: pass
+                                control.register(cancel_output, first=True)
                             player.write_silence(round(config.leading_silence_seconds * ALSA_SAMPLE_RATE))
                         else:
-                            gap_frames = max(0, round(config.stream_inter_chunk_silence_seconds * ALSA_SAMPLE_RATE)
-                                             - previous_trailing_frames - prepared.leading_silence_frames)
+                            pause = config.stream_inter_chunk_silence_seconds
+                            if config.voice_refinements:
+                                gap_frames = refined_pause_frames(previous_text, previous_trailing_frames,
+                                                                  prepared.leading_silence_frames,
+                                                                  starvation / 1000 if wait_started is not None else 0)
+                            else:
+                                gap_frames = max(0, round(pause * ALSA_SAMPLE_RATE)
+                                                 - previous_trailing_frames - prepared.leading_silence_frames)
+                            latency.mark('punctuation_pause', unit=prepared.number, pause_ms=gap_frames / ALSA_SAMPLE_RATE * 1000)
                             player.write_silence(gap_frames)
                         if len(pages) > 1:
                             player.write_file(prepared.path, on_progress=caption_progress)
                         else:
                             player.write_file(prepared.path)
                         previous_trailing_frames = prepared.trailing_silence_frames
+                        previous_text = prepared.speech_text
                     else:
                         _timed_call(timings, "playback", play_audio, prepared.path, cancel_event=stopped)
                 except Exception as exc:
@@ -1373,6 +1440,11 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                         cleanup_errors.append(exc)
                     fail(exc)
                 finally:
+                    if control is not None and cancel_output is not None:
+                        control.unregister(cancel_output)
+                        control.diagnostics.record('output_reaped', player.process.poll() is not None)
+                        if control.cancel_started is not None:
+                            control.diagnostics.elapsed('cancel_ack_ms', control.cancel_started)
                     timings["playback"] = time.perf_counter() - playback_started
 
     def present(text, *, final=False):
@@ -1392,12 +1464,13 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
         complete_sentence_played = (buffer.first_complete_unit is not None
                                     and spoken_count >= buffer.first_complete_unit)
         for unit in buffer.feed(answer, final=final, omit_incomplete_tail=final and complete_sentence_played):
+            latency.mark('text_unit_ready', chars=len(unit))
             first_ready = time.perf_counter() - stream_started if "first_tts_text_ready" not in timings else None
             if first_ready is not None:
                 latency.mark("first_speech_unit", once=True)
                 timings["first_tts_text_ready"] = first_ready
                 timings["first_tts_unit_ready"] = first_ready
-            enqueue(pending, unit)
+            enqueue(pending, QueuedSpeech(unit, time.perf_counter()) if latency.enabled() else unit)
 
     def finish_terminal_line():
         nonlocal terminal_open
@@ -1931,7 +2004,7 @@ def run_hands_free(config, wake_config, provider, display, *, capture_config=Non
             _set_display_state(display, DisplayState.READY)
             _set_display_text(display, "Wake heard")
             control = InterruptControl(provider=provider, device=config.alsa_capture_device,
-                                       voice=voice_barge_in) if barge_in or voice_barge_in else None
+                                       voice=voice_barge_in, diagnostics=config.voice_diagnostics) if barge_in or voice_barge_in else None
             try:
                 def respond():
                     return run_voice_cycle(
@@ -1997,6 +2070,8 @@ def main(argv=None) -> int:
     parser.add_argument("--barge-in", action="store_true", help="Opt-in keyboard cancellation: Enter/s stops; n then Enter captures a new request.")
     parser.add_argument("--voice-barge-in", action="store_true", help="Experimental concurrent wake monitoring with speaker-reference rejection; implies --barge-in.")
     parser.add_argument("--responsive", action="store_true", help="Release a complete short first sentence to Piper before model EOF; later packing stays unchanged.")
+    parser.add_argument('--voice-refinements', action='store_true', help='Opt-in noise-relative endpoint, earlier complete later sentences, bounded 0.8-second prebuffer and immediate owned-player cancellation.')
+    parser.add_argument('--voice-diagnostics', action='store_true', help='Numeric-only barge-in summary; combine with --latency-trace-dir for bounded per-unit pipeline timings.')
     inputs = parser.add_mutually_exclusive_group()
     inputs.add_argument("--audio-file", type=Path, help="Run once using an audio file instead of microphone capture.")
     inputs.add_argument("--text", help="Run once using text, bypassing capture, normalization and STT.")
@@ -2017,6 +2092,8 @@ def main(argv=None) -> int:
         )
         if args.responsive:
             config = replace(config, stream_eager_first_sentence=True)
+        if args.voice_refinements or args.voice_diagnostics:
+            config = replace(config, voice_refinements=args.voice_refinements, voice_diagnostics=args.voice_diagnostics)
         if args.hands_free:
             wake_config = WakeWordConfig.from_settings()
             if not wake_config.enabled:
@@ -2024,6 +2101,8 @@ def main(argv=None) -> int:
             if config.audio_backend != "alsa":
                 raise WakeWordError("--hands-free requires VOICE_AUDIO_BACKEND=alsa.")
             hands_free_capture = HandsFreeCaptureConfig.from_settings()
+            if args.voice_refinements:
+                hands_free_capture = replace(hands_free_capture, noise_relative_endpoint=True)
             if config.stream_first_sentence_min_chars is None:
                 config = replace(config, stream_first_sentence_min_chars=20)
     except (TypeError, ValueError, VoiceLoopError, WakeWordError) as exc:

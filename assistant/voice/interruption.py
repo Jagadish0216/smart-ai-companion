@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 from contextvars import ContextVar
 from threading import Event, Lock, Thread
+from .diagnostics import VoiceDiagnostics
 import socket
 import sys
 import time
@@ -62,7 +63,7 @@ def interruptible_response(response):
 
 class EchoGuard:
     """Bounded speaker-reference rejection, not acoustic echo cancellation."""
-    def __init__(self):
+    def __init__(self, diagnostics=None):
         import numpy as np
         self.np = np
         self.reference = np.empty(0)
@@ -70,6 +71,8 @@ class EchoGuard:
         self.unsafe_text = False
         self.block_until = 0.0
         self.partial = b""
+        self.diagnostics = diagnostics or VoiceDiagnostics()
+        self.last_reference = None
 
     def text(self, text):
         import re
@@ -89,6 +92,8 @@ class EchoGuard:
                 return
             mono = np.frombuffer(pcm[:size], dtype="<i4").reshape(-1, 2)[:, 0].astype(float)[::24]
             self.reference = np.concatenate((self.reference,mono))[-4000:] # 2 s at 2 kHz
+            self.last_reference = time.monotonic()
+            self.diagnostics.record('reference_ready', bool(len(self.reference) and np.max(np.abs(self.reference)) > 0))
 
     def permits(self, frame):
         np = self.np
@@ -99,18 +104,24 @@ class EchoGuard:
             reference = self.reference.copy()
             blocked = self.unsafe_text or time.monotonic() < self.block_until
         if blocked or len(reference) < len(incoming) or energy < 1:
+            reason = 'reference_text_blocked' if blocked else ('reference_missing' if len(reference) < len(incoming) else 'mic_silent')
+            self.diagnostics.increment(reason)
             return False
+        self.diagnostics.record('reference_age_ms', (time.monotonic() - self.last_reference) * 1000)
         reference -= reference.mean()
         window_energy = np.convolve(reference*reference,np.ones(len(incoming)),mode="valid")
         if window_energy.max(initial=0) < 1:
+            self.diagnostics.increment('reference_silent')
             return False # No valid playback reference: fail closed.
+        self.diagnostics.record('reference_ready', True)
         correlation = abs(np.correlate(reference,incoming,mode="valid"))
         score = (correlation/np.sqrt(np.maximum(window_energy*energy,1))).max(initial=0)
+        self.diagnostics.record('max_correlation', float(score), maximum=True)
         return bool(score < .35)
 
 
 class InterruptControl:
-    def __init__(self, *, provider=None, device=None, voice=False, keyboard=True):
+    def __init__(self, *, provider=None, device=None, voice=False, keyboard=True, diagnostics=False):
         self.stop_event = Event()
         self.interrupted = Event()
         self.monitor_stop = Event()
@@ -122,14 +133,17 @@ class InterruptControl:
         self.detection = None
         self.provider, self.device = provider, device
         self.voice, self.keyboard = voice, keyboard
-        self.guard = EchoGuard() if voice else None
+        self.diagnostics = VoiceDiagnostics(diagnostics)
+        self.guard = EchoGuard(self.diagnostics) if voice else None
+        self.cancel_started = None
+        self.reported = False
         self.threads = []
         self.started = self.voice_started = False
         self.cleanup_error = False
 
-    def register(self, callback):
+    def register(self, callback, *, first=False):
         with self.lock:
-            self.callbacks.append(callback)
+            self.callbacks.insert(0, callback) if first else self.callbacks.append(callback)
             cancelled = self.stop_event.is_set()
         if cancelled:
             try: callback()
@@ -144,6 +158,8 @@ class InterruptControl:
             if self.interrupted.is_set() or self.monitor_stop.is_set(): return
             self.mode, self.detection = mode, detection
             self.interrupted.set()
+            self.cancel_started = time.monotonic()
+            self.diagnostics.record('cancel_requested', True)
         self.abort_generation()
 
     def abort_generation(self):
@@ -186,22 +202,27 @@ class InterruptControl:
         self.guard.accept(pcm)
         if self.voice_started: return
         self.voice_started = True
+        self.diagnostics.record('monitor_started', True)
         def listen():
             from .wakeword.base import WakeWordCleanupError
             try:
                 self.provider.reset()
+                kwargs = {'diagnostics': self.diagnostics} if self.diagnostics.enabled else {}
                 result = self.provider.wait_for_wake_word(
                     self.device,cancel_event=self.monitor_stop,guard=self.guard.permits,
                     confirmations=2,threshold=.85,
-                    on_detection=lambda result: self.cancel("listen", result))
+                    on_detection=lambda result: self.cancel("listen", result), **kwargs)
                 if result.detected:
                     self.detection = result # Final retained PCM after microphone release.
             except WakeWordCleanupError:
                 self.cleanup_error = True
             except Exception:
+                self.diagnostics.record('monitor_failed', True)
                 if self.interrupted.is_set():
                     self.mode, self.detection = "stop", None
                 print("Voice barge-in unavailable: duplex capture/monitor failed; use Enter/s or Ctrl+C. Repeat after a fresh wake if handoff failed.",file=sys.stderr)
+            finally:
+                self.diagnostics.record('monitor_ended', True)
         self._thread(listen,"voice-interrupt-wake")
 
     def _thread(self, function, name):
@@ -214,12 +235,20 @@ class InterruptControl:
         for thread in self.threads:
             thread.join(timeout=8) # Includes owned arecord terminate/kill/reap bounds.
             if thread.is_alive():
+                self._report()
                 raise InterruptionCleanupError("Interruption monitor did not release capture; refusing another request.")
         if self.cleanup_error:
+            self._report()
             raise InterruptionCleanupError("Wake microphone release failed; refusing another request.")
         if self.guard is not None:
             self.guard.reference = self.guard.np.empty(0)
         self.detection = self.detection if self.interrupted.is_set() else None
+        self._report()
+
+    def _report(self):
+        if not self.reported:
+            self.diagnostics.report()
+            self.reported = True
 
     def commit(self):
         if self.interrupted.is_set(): return

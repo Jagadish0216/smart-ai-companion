@@ -41,7 +41,7 @@ class OpenWakeWordProvider(WakeWordProvider):
             raise WakeWordError(f"Wake model initialization failed: {exc}") from exc
 
     def wait_for_wake_word(self, device, *, cancel_event=None, guard=None, confirmations=1, threshold=None,
-                           on_detection=None):
+                           on_detection=None, diagnostics=None):
         if self.capture is not None:
             raise WakeWordError("Wake microphone is already owned by a listening attempt.")
         self.warm()
@@ -57,6 +57,10 @@ class OpenWakeWordProvider(WakeWordProvider):
             consecutive = {}
             chunks = self.capture.chunks(deadline, cancel_event=cancel_event) if cancel_event is not None else self.capture.chunks(deadline)
             for chunk in chunks:
+                if diagnostics is not None:
+                    diagnostics.record('monitor_ready', True) # First PCM proves more than Popen success.
+                    if 'monitor_start_ms' not in diagnostics.values:
+                        diagnostics.elapsed('monitor_start_ms', started)
                 native_tail.extend(chunk)
                 excess = len(native_tail) - MAX_PREROLL_BYTES
                 if excess > 0:
@@ -66,11 +70,18 @@ class OpenWakeWordProvider(WakeWordProvider):
                     frame = bytes(pending[:KWS_FRAME_SAMPLES * 2])
                     del pending[:KWS_FRAME_SAMPLES * 2]
                     scores = self.model.predict(converter.np.frombuffer(frame, dtype="<i2"))
+                    if diagnostics is not None:
+                        diagnostics.increment('frames')
                     logger.debug("Wake scores: %s", scores)
                     for model, score in scores.items():
-                        permitted = (float(score) >= max(self.config.threshold, threshold or 0)
-                                     and (guard is None or guard(frame)))
+                        above = float(score) >= max(self.config.threshold, threshold or 0)
+                        permitted = above and (guard is None or guard(frame))
+                        if diagnostics is not None:
+                            diagnostics.record('max_score', float(score), maximum=True)
+                            if above and not permitted: diagnostics.increment('echo_rejections')
                         consecutive[model] = consecutive.get(model,0)+1 if permitted else 0
+                        if diagnostics is not None:
+                            diagnostics.record('confirmations', consecutive[model], maximum=True)
                         if consecutive[model] >= confirmations:
                             ordered = sorted(background)
                             floor = median(ordered[:max(1,len(ordered)//2)]) if len(ordered) >= 5 else None
@@ -90,6 +101,8 @@ class OpenWakeWordProvider(WakeWordProvider):
                             return result
                 if chunk and len(chunk) % 8 == 0:
                     background.append(normalized_left_rms(chunk))
+                    if diagnostics is not None:
+                        diagnostics.record('max_mic_rms', background[-1], maximum=True)
             return WakeWordDetection(False, self.config.selected_model, elapsed_seconds=time.monotonic() - started)
         except (WakeWordError, KeyboardInterrupt):
             raise
