@@ -183,6 +183,7 @@
               "max_duration",
               "start_timeout",
               "preparation_activity",
+              "preparation_unstable",
               "calibration_unreliable"
             ]
           },

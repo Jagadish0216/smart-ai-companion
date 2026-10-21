@@ -47,7 +47,7 @@ from assistant.voice.factory import close_tts_provider, get_stt_provider, get_tt
 from assistant.voice.processes import run_cancellable  # noqa: E402
 from assistant.voice.tts import TextToSpeechProvider  # noqa: E402
 from assistant.voice.alsa_stream import PersistentAlsaPlayer, trim_pcm_edges  # noqa: E402
-from assistant.voice.capture_vad import AdaptiveCaptureVAD, QuietCapturePreparation  # noqa: E402
+from assistant.voice.capture_vad import AdaptiveCaptureVAD, QuietCapturePreparation, SettledFanPreparation  # noqa: E402
 from assistant.voice.hands_free import HandsFreeCaptureConfig, record_audio_hands_free  # noqa: E402
 from assistant.voice.wakeword.base import WakeWordConfig, WakeWordError  # noqa: E402
 from assistant.voice.wakeword.factory import get_wake_word_provider  # noqa: E402
@@ -155,6 +155,7 @@ class VoiceLoopConfig:
     capture_vad_start_confirm_ms: int = 60
     capture_vad_min_speech_ms: int = 300
     playback_profile: str = "legacy"
+    capture_preparation_policy: str = "legacy"
     capture_ready_lifecycle: bool = False
 
     @classmethod
@@ -207,7 +208,9 @@ class VoiceLoopConfig:
                 if getattr(settings, "VOICE_STREAM_FIRST_SENTENCE_MIN_CHARS", "") else None
             ),
             capture_vad_adaptive=_as_bool(getattr(settings, "VOICE_CAPTURE_VAD_ADAPTIVE", True)),
-            capture_ready_lifecycle=_as_bool(getattr(settings, "VOICE_CAPTURE_READY_LIFECYCLE", False)),
+            capture_preparation_policy=str(getattr(settings, "VOICE_CAPTURE_PREPARATION_POLICY", "legacy")),
+            capture_ready_lifecycle=(_as_bool(getattr(settings, "VOICE_CAPTURE_READY_LIFECYCLE", False)) or
+                                     getattr(settings, "VOICE_CAPTURE_PREPARATION_POLICY", "legacy") == "settled_fan"),
             capture_vad_noise_calibration_seconds=float(getattr(settings, "VOICE_CAPTURE_VAD_NOISE_CALIBRATION_SECONDS", 0.5)),
             capture_vad_start_confirm_ms=int(getattr(settings, "VOICE_CAPTURE_VAD_START_CONFIRM_MS", 60)),
             capture_vad_min_speech_ms=int(getattr(settings, "VOICE_CAPTURE_VAD_MIN_SPEECH_MS", 300)),
@@ -216,6 +219,10 @@ class VoiceLoopConfig:
         return config
 
     def validate(self, *, require_capture: bool = True) -> None:
+        if self.capture_preparation_policy not in {"legacy", "settled_fan"}:
+            raise VoiceLoopError("Unknown capture preparation policy.")
+        if self.capture_preparation_policy == "settled_fan" and not self.capture_ready_lifecycle:
+            raise VoiceLoopError("Settled fan preparation requires the ready lifecycle.")
         if self.capture_ready_lifecycle and (self.audio_backend != "alsa" or not self.capture_vad_enabled or not self.capture_vad_adaptive):
             raise VoiceLoopError("Calibrated readiness requires ALSA with enabled adaptive capture VAD.")
         if self.playback_profile not in {"legacy", "approved_loudness", "bounded_gain"}:
@@ -437,6 +444,7 @@ def record_audio_with_capture_vad(
     on_amplitude: Callable[[float], None] | None = None,
     on_vad_summary: Callable[[dict], None] | None = None,
     ready_lifecycle: bool = False,
+    preparation_policy: str = "legacy",
 ) -> None:
     """Record until speech ends; signal ready once after warm-up/calibration.
 
@@ -454,7 +462,10 @@ def record_audio_with_capture_vad(
         chunk_seconds=CAPTURE_CHUNK_SECONDS,
         max_start_threshold=max_start_threshold,
     )
-    preparation = QuietCapturePreparation(vad, warmup_seconds) if ready_lifecycle else None
+    if preparation_policy not in {"legacy", "settled_fan"} or (preparation_policy == "settled_fan" and not ready_lifecycle):
+        raise VoiceLoopError("Invalid capture preparation policy/lifecycle.")
+    preparation_type = SettledFanPreparation if preparation_policy == "settled_fan" else QuietCapturePreparation
+    preparation = preparation_type(vad, warmup_seconds) if ready_lifecycle else None
     sample_rate, sample_width, channels = CAPTURE_SAMPLE_RATE, CAPTURE_SAMPLE_WIDTH, 1
     command = [
         "parecord",
@@ -506,7 +517,8 @@ def record_audio_with_capture_vad(
             except OSError:
                 pass
         watchdog = Timer(
-            warmup_seconds + start_timeout_seconds + max_seconds + 1.0 + (noise_calibration_seconds if ready_lifecycle else 0),
+            (SettledFanPreparation.MAX_PREPARATION_SECONDS if preparation_policy == "settled_fan" else warmup_seconds)
+            + start_timeout_seconds + max_seconds + 1.0 + (noise_calibration_seconds if ready_lifecycle else 0),
             stop_stalled_capture,
         )
         watchdog.daemon = True
@@ -522,7 +534,7 @@ def record_audio_with_capture_vad(
                 latency.mark("capture_warmup_end", once=True)
                 latency.mark("calibration_start", once=True)
         if ready_lifecycle:
-            print("PREPARING - keep quiet during warm-up and calibration; early activity refuses this capture.")
+            print("PREPARING - keep quiet until background calibration completes.")
         elif adaptive:
             print(f"Keep quiet: calibrating capture noise for {noise_calibration_seconds:g}s...")
         else:
@@ -1694,7 +1706,7 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
                     raise VoiceLoopError(f"Input audio is not a file: {recorded_path}")
                 print(f"Input audio: {recorded_path}")
             else:
-                if not hands_free_request:
+                if not hands_free_request and not config.capture_ready_lifecycle:
                     _set_display_state(display, DisplayState.LISTENING)
                 source = config.alsa_capture_device if config.audio_backend == "alsa" else config.input_source
                 if hands_free_request:
@@ -1707,6 +1719,7 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
                     _set_display_state(display, DisplayState.THINKING)
                 elif config.capture_vad_enabled:
                     if config.capture_ready_lifecycle:
+                        _set_display_state(display, DisplayState.READY)
                         _set_display_text(display, "PREPARING - keep quiet")
                     print(
                         f"Preparing microphone ({config.input_warmup_seconds:g}s warm-up, "
@@ -1730,8 +1743,11 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
                         **({"on_amplitude": amplitude} if amplitude is not None else {}),
                         **({"backend": "alsa"} if config.audio_backend == "alsa" else {}),
                         **({"ready_lifecycle": True,
-                            "on_capture_ready": lambda: _set_display_text(display, "MICROPHONE READY")}
+                            "on_capture_ready": lambda: (_set_display_state(display, DisplayState.LISTENING),
+                                                         _set_display_text(display, "MICROPHONE READY"))}
                            if config.capture_ready_lifecycle else {}),
+                        **({"preparation_policy": config.capture_preparation_policy}
+                           if config.capture_preparation_policy != "legacy" else {}),
                     )
                 else:
                     print(
@@ -1747,6 +1763,9 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
                         config.record_seconds,
                         config.input_warmup_seconds,
                     )
+            if config.capture_ready_lifecycle and audio_file is None and not hands_free_request:
+                _set_display_state(display, DisplayState.THINKING)
+                _set_display_text(display, "THINKING")
             meter.reset(send=not hands_free_request)
             _timed_call(
                 timings,
@@ -1772,7 +1791,7 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
             print(f"You: {transcript}")
         response_plan = AssistantResponsePolicy.plan_voice_response(transcript)
 
-        if not hands_free_request:
+        if not hands_free_request and not (config.capture_ready_lifecycle and text is None and audio_file is None):
             _set_display_state(display, DisplayState.THINKING)
         # Hands-free already entered THINKING after capture. Supply validated
         # input after the state transition, without resetting that state again.
@@ -1781,6 +1800,8 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
         def on_playback_start(first_speech_text):
             meter.reset(send=False)  # The following STATE helper sends zero.
             _set_display_state(display, DisplayState.SPEAKING)
+            if config.capture_ready_lifecycle:
+                _set_display_text(display, "SPEAKING")
 
         try:
             events = AssistantService.process_message_stream(
@@ -1805,6 +1826,8 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
     profile = (metadata or {}).get("resource_profile")
     idle = {"ECO": DisplayState.ECO, "PROTECTIVE": DisplayState.PROTECTIVE}.get(profile, DisplayState.READY)
     _set_display_state(display, idle)
+    if config.capture_ready_lifecycle:
+        _set_display_text(display, idle.value)
     return next_conversation_id
 
 

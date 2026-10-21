@@ -133,7 +133,7 @@ def cycle_failure_reason(exc, trace):
             break
     if trace.data.get("capture_stop_reason") == "start_timeout":
         return "capture_start_timeout"
-    if trace.data.get("capture_stop_reason") in ("preparation_activity", "calibration_unreliable"):
+    if trace.data.get("capture_stop_reason") in ("preparation_activity", "preparation_unstable", "calibration_unreliable"):
         return "capture_" + trace.data["capture_stop_reason"]
     return "cycle_" + failure_kind(exc)
 
@@ -240,7 +240,7 @@ def observe_pipeline(voice, trace, expected, synthetic=False, ready_fd=None):
                 trace.update(ready_emitted_before_speech_window=("microphone_ready_emitted" in events and
                     events["microphone_ready_emitted"] <= events[name]),
                     ready_display_evidence="callback_only_physical_visibility_unobserved")
-            if name == "capture_stopped" and values.get("reason") in ("start_timeout", "silence", "max_duration", "preparation_activity", "calibration_unreliable"):
+            if name == "capture_stopped" and values.get("reason") in ("start_timeout", "silence", "max_duration", "preparation_activity", "preparation_unstable", "calibration_unreliable"):
                 trace.update(capture_stop_reason=values["reason"])
         return original_mark(name, **values)
     with ExitStack() as stack:
@@ -289,6 +289,24 @@ def configure(settings, host, production=False):
     settings.STT_TIMEOUT = settings.TTS_TIMEOUT = 15
 
 
+def release_completion_checks(trace, config):
+    """Software evidence only; acoustic audibility and TFT pixels need an operator."""
+    events = trace.data["events_ms"]
+    states = [call["state"] for call in trace.data["display_calls"]]
+    progression = ["LISTENING", "THINKING", "SPEAKING", "READY"]
+    position = 0
+    for state in states:
+        if position < len(progression) and state == progression[position]:
+            position += 1
+    return dict(
+        approved_playback_profile=config.playback_profile == "approved_loudness",
+        accepted_capture=trace.data.get("capture_vad_summary", {}).get("accepted") is True,
+        accepted_endpoint="endpoint_detected" in events,
+        ready_before_speech_window=trace.data.get("ready_emitted_before_speech_window") is True,
+        display_callback_progression=position == len(progression),
+    )
+
+
 def run_cycle(args, trace):
     from scripts import voice_loop as voice
     from assistant.ai_engine import get_engine, reset_engine
@@ -302,8 +320,11 @@ def run_cycle(args, trace):
                       public_question=expected, reference_criteria=reference,
                       synthetic_context=True, production_request_controls=production, model=model, model_digest=getattr(args, "digest", None))
     config = voice.VoiceLoopConfig.from_settings(require_capture=not args.synthetic)
+    if getattr(args, "settled_fan", False) and config.playback_profile != "approved_loudness":
+        raise models.TrialRefused("approved_playback_profile_required")
     if config.capture_ready_lifecycle:
-        trace.update(readiness_contract="quiet_preparation_then_direct_ready_then_full_start_window")
+        trace.update(readiness_contract=("settled_fan_then_direct_ready_then_full_start_window"
+            if config.capture_preparation_policy == "settled_fan" else "quiet_preparation_then_direct_ready_then_full_start_window"))
     if args.synthetic:
         from dataclasses import replace
         config = replace(config, audio_backend="alsa")
@@ -413,6 +434,11 @@ def run_cycle(args, trace):
             if display is not None:
                 display.close()
     result = trace.finish()
+    if getattr(args, "settled_fan", False):
+        checks = release_completion_checks(trace, config)
+        trace.update(release_checks=checks)
+        if not all(checks.values()):
+            trace.update(status="incomplete", reason="release_contract_incomplete")
     if not args.synthetic:
         metrics = trace.data.get("ollama_metrics", {})
         load = metrics.get("load_duration_ms")
@@ -449,6 +475,8 @@ def child(args):
         configure(settings, args.host, production=getattr(args, "production_qwen", False))
         if getattr(args,"ready_lifecycle",False):
             settings.VOICE_CAPTURE_READY_LIFECYCLE = True
+        if getattr(args,"settled_fan",False):
+            settings.VOICE_CAPTURE_PREPARATION_POLICY = "settled_fan"
         with open(os.devnull, "w") as quiet, redirect_stdout(quiet), redirect_stderr(quiet), loopback_only():
             if not args.synthetic:
                 call_command("migrate", verbosity=0, interactive=False)
@@ -543,6 +571,8 @@ def run(args):
                 command += ["--synthetic"] if args.synthetic else ["--digest", args.digest, "--operator-live-trial"]
                 if production:
                     command.append("--production-qwen")
+                if getattr(args,"settled_fan",False):
+                    command.append("--settled-fan")
                 ready_fd = None
                 try:
                     if getattr(args,"ready_lifecycle",False):
@@ -595,7 +625,7 @@ def run(args):
         json.dump(report, output, indent=2)
     if getattr(args,"ready_lifecycle",False) and report["status"] != "sample_complete_quality_pending":
         reason=report.get("reason")
-        if reason in ("capture_preparation_activity","capture_calibration_unreliable","capture_start_timeout"):
+        if reason in ("capture_preparation_activity","capture_preparation_unstable","capture_calibration_unreliable","capture_start_timeout"):
             print("Capture refused: " + reason + ". No automatic retry.",flush=True)
         else:
             print("Guarded cycle refused or failed; inspect the categorical report. No automatic retry.",flush=True)
@@ -609,6 +639,7 @@ def main():
     mode.add_argument("--operator-live-trial", action="store_true", help="ONE physical microphone/speaker cycle")
     parser.add_argument("--production-qwen", action="store_true", help="Opt-in production Qwen controls; physical single cycle only, below 50 C start, 120 s limit")
     parser.add_argument("--ready-lifecycle",action="store_true",help="Opt-in drained warm-up, quiet calibration and direct ready cue; requires production Qwen live mode")
+    parser.add_argument("--settled-fan",action="store_true",help="Opt-in bounded fan-background preparation; implies ready lifecycle")
     parser.add_argument("--ready-fd",type=int,help=argparse.SUPPRESS)
     parser.add_argument("--fixture", choices=FIXTURES, default="fact")
     parser.add_argument("--host", type=models.local_host, default="http://127.0.0.1:11434")
@@ -616,6 +647,8 @@ def main():
     parser.add_argument("--child-dir", help=argparse.SUPPRESS)
     parser.add_argument("--digest", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.settled_fan:
+        args.ready_lifecycle = True
     args.synthetic = not args.operator_live_trial
     if args.production_qwen and args.synthetic:
         parser.error("--production-qwen requires --operator-live-trial")

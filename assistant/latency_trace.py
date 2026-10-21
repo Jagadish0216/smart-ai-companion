@@ -84,7 +84,7 @@ class Trace:
                     event[key] = value
                 elif key == 'outcome' and value in ('ok', 'error', 'timeout', 'cancelled'):
                     event[key] = value
-                elif key == 'reason' and value in ('silence', 'max_duration', 'start_timeout', 'preparation_activity', 'calibration_unreliable'):
+                elif key == 'reason' and value in ('silence', 'max_duration', 'start_timeout', 'preparation_activity', 'preparation_unstable', 'calibration_unreliable'):
                     event[key] = value
             self.events.append(event)
             self.counts[name] = count + 1

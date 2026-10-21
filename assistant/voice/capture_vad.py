@@ -177,6 +177,8 @@ class QuietCapturePreparation:
     readiness; this is a conservative non-quiet gate, not a speech classifier.
     No recalibration/retry, threshold lowering or suppression of a valid request.
     """
+    ABSOLUTE_ACTIVITY_REFUSAL = True
+
     def __init__(self, vad, warmup_seconds):
         if not vad.adaptive or not math.isfinite(warmup_seconds) or warmup_seconds < 0:
             raise ValueError("Calibrated readiness requires adaptive VAD and bounded warm-up.")
@@ -231,7 +233,7 @@ class QuietCapturePreparation:
         self.warmup_elapsed += seconds
         self.activity_seconds = self.activity_seconds + seconds if rms >= self.vad.configured_start else 0.0
         self.longest_activity_seconds = max(self.longest_activity_seconds, self.activity_seconds)
-        if self.activity_seconds + 1e-9 >= self.vad.min_speech_seconds:
+        if self.ABSOLUTE_ACTIVITY_REFUSAL and self.activity_seconds + 1e-9 >= self.vad.min_speech_seconds:
             self.vad.stop_reason = "preparation_activity"
 
     def calibration_usable(self):
@@ -241,3 +243,82 @@ class QuietCapturePreparation:
             self.vad.stop_reason = "calibration_unreliable"
             return False
         return True
+
+
+class SettledFanPreparation(QuietCapturePreparation):
+    """Opt-in startup drain followed by stable fan-background calibration.
+
+    Energy alone cannot identify steady speech. Require operator silence before
+    ready; reject observable modulation/drift instead of pretending to classify it.
+    Reuse the existing adaptive thresholds, onset confirmation and hysteresis.
+    """
+    ABSOLUTE_ACTIVITY_REFUSAL = False
+    MIN_DRAIN_SECONDS = 1.5
+    WINDOW_SECONDS = 1.0
+    MAX_PREPARATION_SECONDS = 6.0
+    MAX_SPREAD_RATIO = 1.8
+    MAX_DRIFT_RATIO = 1.35
+
+    def __init__(self, vad, warmup_seconds):
+        super().__init__(vad, warmup_seconds)
+        if warmup_seconds > self.MAX_PREPARATION_SECONDS - self.WINDOW_SECONDS:
+            raise ValueError("Settled fan warm-up exceeds bounded preparation budget.")
+        self._window = deque(maxlen=50)
+        self._settled = False
+        self.settled_floor = None
+
+    def warming_up(self):
+        return not self._settled and self.vad.stop_reason is None
+
+    def consume_warmup(self, rms, seconds):
+        # Retain the shared numeric diagnostics but replace only this opt-in
+        # policy's absolute sustained-activity refusal. No PCM is retained here.
+        super().consume_warmup(rms, seconds)
+        if self.warmup_elapsed - seconds + 1e-9 >= max(self.MIN_DRAIN_SECONDS, self.warmup_seconds):
+            self._window.append((rms, seconds))
+        duration = sum(dt for _, dt in self._window)
+        if duration + 1e-9 >= self.WINDOW_SECONDS:
+            levels = [level for level, _ in self._window]
+            if self.stable(levels):
+                self.settled_floor = median(levels)
+                self._settled = True
+        if not self._settled and self.warmup_elapsed + 1e-9 >= self.MAX_PREPARATION_SECONDS:
+            self.vad.stop_reason = "preparation_unstable"
+
+    def stable(self, levels):
+        if len(levels) < 2:
+            return False
+        ordered = sorted(levels)
+        floor = median(levels)
+        # Existing configured onset floor is an auditable calibration ceiling,
+        # not a requirement for silence or an altered speech-onset threshold.
+        if floor >= self.vad.configured_start:
+            return False
+        low = max(ordered[int(.1 * (len(ordered)-1))], .0001)
+        high = ordered[math.ceil(.9 * len(ordered))-1]
+        half = len(levels)//2
+        left, right = median(levels[:half]), median(levels[half:])
+        return (high <= low * self.MAX_SPREAD_RATIO and
+                max(left, right) <= max(min(left, right), .0001) * self.MAX_DRIFT_RATIO)
+
+    def calibration_usable(self):
+        if not self.vad.calibrated or self.vad.stop_reason:
+            return False
+        levels = list(self.vad.noise_samples)
+        floor = self.vad.noise_floor
+        if (not self.stable(levels) or
+            max(floor, self.settled_floor) > max(min(floor, self.settled_floor), .0001) * self.MAX_DRIFT_RATIO):
+            self.vad.stop_reason = "calibration_unreliable"
+            return False
+        return True
+
+    def diagnostics(self):
+        result = super().diagnostics()
+        result.update(policy="settled_fan_v1", settled_background_rms=self.settled_floor,
+                      startup_drain_seconds=max(self.MIN_DRAIN_SECONDS, self.warmup_seconds),
+                      stable_window_seconds=self.WINDOW_SECONDS,
+                      preparation_limit_seconds=self.MAX_PREPARATION_SECONDS,
+                      max_spread_ratio=self.MAX_SPREAD_RATIO, max_drift_ratio=self.MAX_DRIFT_RATIO)
+        if self.vad.stop_reason == "preparation_unstable":
+            result["refusal_reason"] = self.vad.stop_reason
+        return result
