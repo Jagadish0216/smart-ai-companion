@@ -812,6 +812,9 @@ immediately attached to the wake phrase is not carried into request capture.
 The display initializes, Piper warms once, and the wake model warms once. See
 [the hands-free product acceptance guide](docs/hands-free-product.md) for the
 process-only Pi launch, offline asset check, two-wake demonstration and fallback.
+Optional keyboard/experimental voice interruption and earlier short first-sentence
+release are described in [the barge-in acceptance guide](docs/voice-barge-in.md).
+They are disabled by default and require supervised Pi duplex/echo verification.
 The initial pretrained phrase is **Hey Jarvis**; Hey Companion requires a compatible
 custom model and is not enabled by a label change.
 

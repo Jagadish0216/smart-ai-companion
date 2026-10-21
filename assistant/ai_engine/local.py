@@ -23,6 +23,7 @@ Why Ollama:
 """
 
 from assistant import latency_trace as latency
+from assistant.voice.interruption import interruptible_response
 import json
 import logging
 import socket
@@ -234,7 +235,7 @@ class LocalLLMEngine(AIEngine):
         final_payload = None
 
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response, interruptible_response(response):
                 for raw_line in response:
                     if not raw_line or not raw_line.strip():
                         continue

@@ -47,10 +47,12 @@ from assistant.voice.factory import close_tts_provider, get_stt_provider, get_tt
 from assistant.voice.processes import run_cancellable  # noqa: E402
 from assistant.voice.tts import TextToSpeechProvider  # noqa: E402
 from assistant.voice.alsa_stream import PersistentAlsaPlayer, trim_pcm_edges  # noqa: E402
+from assistant.voice.interruption import (InterruptControl, VoiceInterrupted, InterruptionCleanupError,
+                                         current as delivery_control, delivery)  # noqa: E402
 from assistant.voice.capture_vad import AdaptiveCaptureVAD, QuietCapturePreparation, SettledFanPreparation  # noqa: E402
 from assistant.voice.spectral_onset import SpectralOnset  # noqa: E402
 from assistant.voice.hands_free import HandsFreeCaptureConfig, record_audio_hands_free  # noqa: E402
-from assistant.voice.wakeword.base import WakeWordConfig, WakeWordError  # noqa: E402
+from assistant.voice.wakeword.base import WakeWordConfig, WakeWordError, WakeWordDetection  # noqa: E402
 from assistant.voice.wakeword.factory import get_wake_word_provider  # noqa: E402
 
 CAPTURE_SAMPLE_RATE = 16000
@@ -147,6 +149,7 @@ class VoiceLoopConfig:
     alsa_playback_device: str = "hw:CARD=sndrpigooglevoi,DEV=0"
     playback_gain: float = 4.0
     stream_tts_target_chars: int = 180
+    stream_eager_first_sentence: bool = False
     stream_inter_chunk_silence_seconds: float = 0.12
     stream_first_chunk_min_chars: int = 60
     stream_first_chunk_target_chars: int = 100
@@ -1157,9 +1160,11 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
     """Service producer -> bounded text -> one preparer -> bounded audio -> one player."""
     pending = Queue(maxsize=2)
     ready_audio = Queue(maxsize=2)
-    stopped = Event()
+    control = delivery_control()
+    stopped = control.stop_event if control is not None else Event()
     finish = object()
     errors = []
+    cleanup_errors = []
     error_lock = Lock()
     spoken_count = 0
     stream_started = time.perf_counter()
@@ -1168,6 +1173,10 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
         first_target_chars=config.stream_first_chunk_target_chars,
         first_sentence_min_chars=config.stream_first_sentence_min_chars,
     )
+    if config.stream_eager_first_sentence:
+        # Complete short factual sentences need not wait for model EOF. Keep
+        # later packing unchanged to avoid introducing tiny Piper jobs/gaps.
+        buffer.first_sentence_min_chars = 1
     notice_filter = LeadingResourceNoticeFilter()
     printed_notices = set()
     terminal_open = False
@@ -1177,6 +1186,8 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
             if not stopped.is_set():
                 errors.append(exc if isinstance(exc, VoiceLoopError) else VoiceLoopError(f"Streaming audio failed: {exc}"))
             stopped.set()
+        if control is not None:
+            control.abort_generation()
 
     def enqueue(queue, unit):
         while not stopped.is_set():
@@ -1238,6 +1249,8 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                 try:
                     prepared = _timed_call(timings, "audio_prepare", prepare_audio, audio, number, text)
                 except Exception as exc:
+                    if control is not None and stopped.is_set() and isinstance(exc, subprocess.TimeoutExpired):
+                        cleanup_errors.append(exc)
                     raise VoiceLoopError(f"Audio preparation failed on streaming chunk {number}: {exc}") from exc
                 if number == 1:
                     latency.mark("first_audio_ready", once=True)
@@ -1295,6 +1308,8 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                     timings["playback_starvation_ms"] += starvation
                     timings["max_playback_starvation_ms"] = max(timings["max_playback_starvation_ms"], starvation)
                 if prepared.number == 1:
+                    if control is not None:
+                        control.start()
                     if on_playback_start is not None:
                         try:
                             on_playback_start(prepared.speech_text)
@@ -1322,10 +1337,13 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
 
                 try:
                     if config.audio_backend == "alsa":
+                        if control is not None and control.guard is not None:
+                            control.guard.text(prepared.speech_text)
                         if player is None:
                             player = PersistentAlsaPlayer(
                                 config.alsa_playback_device, stopped, temp_path,
                                 **({"on_amplitude": on_amplitude} if on_amplitude is not None else {}),
+                                **({"on_reference": control.reference} if control is not None and control.voice else {}),
                             )
                             player.start()
                             player.write_silence(round(config.leading_silence_seconds * ALSA_SAMPLE_RATE))
@@ -1351,6 +1369,8 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                 try:
                     player.abort()
                 except Exception as exc:
+                    if control is not None:
+                        cleanup_errors.append(exc)
                     fail(exc)
                 finally:
                     timings["playback"] = time.perf_counter() - playback_started
@@ -1408,6 +1428,8 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                 if start is not None:
                     raise VoiceLoopError("AI response failed: duplicate stream start.")
                 start = event
+                if control is not None:
+                    control.conversation_id = event.get("conversation_id")
                 if on_stream_start is not None:
                     try:
                         on_stream_start(event)
@@ -1452,12 +1474,16 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                     pass
         if errors:
             raise errors[0]
+        if control is not None and control.interrupted.is_set():
+            raise VoiceInterrupted(control)
         if not spoken_count:
             raise VoiceLoopError("TTS failed: AI response contained no speakable text.")
         print(f"TTS chunks: {spoken_count}")
         return done.get("conversation_id") or (start or {}).get("conversation_id"), done
     except (Exception, KeyboardInterrupt):
         stopped.set()
+        if control is not None and control.interrupted.is_set():
+            raise VoiceInterrupted(control)
         raise
     finally:
         stopped.set()
@@ -1471,7 +1497,20 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                 if close is not None:
                     close()
         finally:
-            executor.shutdown(wait=True, cancel_futures=True)
+            try:
+                executor.shutdown(wait=True, cancel_futures=True)
+            finally:
+                if control is not None:
+                    try:
+                        if control.interrupted.is_set() and isinstance(tts_provider, TextToSpeechProvider):
+                            try:
+                                tts_provider.close()
+                            except Exception as exc:
+                                cleanup_errors.append(exc)
+                    finally:
+                        control.close()
+                    if cleanup_errors:
+                        raise InterruptionCleanupError("Owned audio cleanup failed; refusing another request.") from cleanup_errors[0]
 
 
 def is_no_speech_transcription(text: str) -> bool:
@@ -1681,7 +1720,7 @@ def run_voice_cycle(
                 hands_free_capture=hands_free_capture,
                 hands_free_preroll=hands_free_preroll, hands_free_background=hands_free_background,
             )
-        except NoSpeechDetected:
+        except (NoSpeechDetected, VoiceInterrupted):
             _set_display_state(display, DisplayState.READY)
             raise
         except (Exception, KeyboardInterrupt):
@@ -1732,6 +1771,7 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
                         config.alsa_capture_device, hands_free_capture,
                         **(dict(immediate=True, initial_audio=hands_free_preroll, background_rms=hands_free_background)
                            if hands_free_preroll is not None else {}),
+                        **({"interruption_handoff": True} if delivery_control() is not None else {}),
                         on_capture_ready=lambda: (_set_display_state(display, DisplayState.LISTENING),
                                                   _set_display_text(display, "Listening...")),
                         **({"on_amplitude": amplitude} if amplitude is not None else {}),
@@ -1806,7 +1846,10 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
                 raise VoiceLoopError(f"Transcription failed: {exc}") from exc
             wake_only = (hands_free_request and hands_free_preroll is not None and
                          re.fullmatch(r"(?:hey[\s,]+)?jarvis[\s.!?,]*", transcript, re.IGNORECASE))
-            if not transcript or is_no_speech_transcription(transcript) or wake_only:
+            stop_only = (hands_free_request and delivery_control() is not None and
+                         re.fullmatch(r"(?:(?:hey[\s,]+)?jarvis[\s,.!]+)?(?:stop|cancel)[\s.!?,]*",
+                                      transcript, re.IGNORECASE))
+            if not transcript or is_no_speech_transcription(transcript) or wake_only or stop_only:
                 if hands_free_request:
                     raise NoSpeechDetected("No request speech recognized; returning to wake listening.")
                 raise VoiceLoopError("Transcription failed: no speech was recognized.")
@@ -1837,7 +1880,7 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
                 on_stream_metadata=lambda event: _set_display_route(display, event),
                 **({"on_amplitude": amplitude} if amplitude is not None else {}),
             )
-        except VoiceLoopError:
+        except (VoiceLoopError, VoiceInterrupted, InterruptionCleanupError):
             raise
         except Exception as exc:
             raise VoiceLoopError(f"AI response failed: {exc}") from exc
@@ -1853,12 +1896,13 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
     return next_conversation_id
 
 
-def run_hands_free(config, wake_config, provider, display, *, capture_config=None):
+def run_hands_free(config, wake_config, provider, display, *, capture_config=None,
+                   barge_in=False, voice_barge_in=False):
     """Serialize wake capture, the complete production cycle and cooldown.
 
     The provider releases arecord before returning. run_voice_cycle returns
     only after playback drains (or its failure cleanup finishes). No detector
-    thread exists to hear request capture, inference, TTS or speaker output.
+    thread exists in original mode. The opt-in monitor is joined before reuse.
     """
     conversation_id = None
     capture_config = capture_config if capture_config is not None else HandsFreeCaptureConfig()
@@ -1870,10 +1914,14 @@ def run_hands_free(config, wake_config, provider, display, *, capture_config=Non
     provider.warm()
     _set_display_state(display, DisplayState.READY)
     failures = 0
+    pending_detection = None
     while True:
         try:
             _set_display_text(display, "Say Hey Jarvis" if wake_config.model == "hey_jarvis" and not wake_config.model_path else "Wake standby")
-            detection = provider.wait_for_wake_word(config.alsa_capture_device)
+            detection = pending_detection
+            pending_detection = None
+            if detection is None:
+                detection = provider.wait_for_wake_word(config.alsa_capture_device)
             if not detection.detected:
                 provider.reset()
                 # A tiny configured timeout must not create a rapid reopen loop.
@@ -1882,13 +1930,26 @@ def run_hands_free(config, wake_config, provider, display, *, capture_config=Non
             print(f"Wake detected: model={detection.model} score={detection.score:.3f} latency={detection.elapsed_seconds:.3f}s")
             _set_display_state(display, DisplayState.READY)
             _set_display_text(display, "Wake heard")
+            control = InterruptControl(provider=provider, device=config.alsa_capture_device,
+                                       voice=voice_barge_in) if barge_in or voice_barge_in else None
             try:
-                conversation_id = run_voice_cycle(
-                    config, conversation_id, display=display,
-                    hands_free_capture=capture_config,
-                    hands_free_preroll=detection.audio_preroll,
-                    hands_free_background=detection.background_rms,
-                )
+                def respond():
+                    return run_voice_cycle(
+                        config, conversation_id, display=display,
+                        hands_free_capture=capture_config,
+                        hands_free_preroll=detection.audio_preroll,
+                        hands_free_background=detection.background_rms,
+                    )
+                if control is None:
+                    conversation_id = respond()
+                else:
+                    try:
+                        with delivery(control):
+                            conversation_id = respond()
+                            control.close()
+                            control.commit()
+                    finally:
+                        control.close()
             finally:
                 detection = None  # Do not retain request PCM while back in standby.
             failures = 0
@@ -1896,6 +1957,22 @@ def run_hands_free(config, wake_config, provider, display, *, capture_config=Non
             provider.reset()
         except KeyboardInterrupt:
             raise
+        except InterruptionCleanupError:
+            raise
+        except VoiceInterrupted as exc:
+            control = exc.control
+            conversation_id = control.conversation_id or conversation_id
+            failures = 0
+            _set_display_state(display, DisplayState.READY)
+            _set_display_text(display, "INTERRUPTED")
+            provider.reset()
+            if control.mode == "listen":
+                pending_detection = control.detection or WakeWordDetection(True)
+                control.detection = None
+                _set_display_state(display, DisplayState.LISTENING)
+                print("Response interrupted; speak the new request now.")
+            else:
+                time.sleep(max(0.1, wake_config.cooldown_seconds))
         except NoSpeechDetected as exc:
             failures = 0
             _set_display_state(display, DisplayState.READY)
@@ -1917,12 +1994,17 @@ def run_hands_free(config, wake_config, provider, display, *, capture_config=Non
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Production voice loop with optional development input injection.")
     parser.add_argument("--latency-trace-dir", type=Path, help="Opt-in content-free timing reports in a dedicated bounded directory.")
+    parser.add_argument("--barge-in", action="store_true", help="Opt-in keyboard cancellation: Enter/s stops; n then Enter captures a new request.")
+    parser.add_argument("--voice-barge-in", action="store_true", help="Experimental concurrent wake monitoring with speaker-reference rejection; implies --barge-in.")
+    parser.add_argument("--responsive", action="store_true", help="Release a complete short first sentence to Piper before model EOF; later packing stays unchanged.")
     inputs = parser.add_mutually_exclusive_group()
     inputs.add_argument("--audio-file", type=Path, help="Run once using an audio file instead of microphone capture.")
     inputs.add_argument("--text", help="Run once using text, bypassing capture, normalization and STT.")
     inputs.add_argument("--text-mode", action="store_true", help="Interactively enter text while retaining the conversation.")
     inputs.add_argument("--hands-free", action="store_true", help="Continuously wait for the offline wake word, then retain a bounded microphone request (requires enabled wake word and ALSA).")
     args = parser.parse_args(argv)
+    if (args.barge_in or args.voice_barge_in) and not args.hands_free:
+        parser.error("Interruption flags require --hands-free")
     if args.text is not None and not args.text.strip():
         parser.error("--text must not be empty")
     single_input = args.audio_file is not None or args.text is not None
@@ -1933,6 +2015,8 @@ def main(argv=None) -> int:
             VoiceLoopConfig.from_settings(require_capture=False) if single_input or args.text_mode
             else VoiceLoopConfig.from_settings()
         )
+        if args.responsive:
+            config = replace(config, stream_eager_first_sentence=True)
         if args.hands_free:
             wake_config = WakeWordConfig.from_settings()
             if not wake_config.enabled:
@@ -1974,10 +2058,16 @@ def main(argv=None) -> int:
             return 1
         if args.hands_free:
             try:
+                if args.barge_in or args.voice_barge_in:
+                    print("Interruption: Enter/s stops; n then Enter captures a new request; Ctrl+C exits.")
+                if args.voice_barge_in:
+                    print("Experimental voice barge-in: Pi duplex/echo reliability unverified. Use keyboard fallback if unavailable.")
                 wake_provider = get_wake_word_provider(wake_config)
                 run_hands_free(
                     config, wake_config, wake_provider, display,
                     capture_config=hands_free_capture,
+                    **({"barge_in": True, "voice_barge_in": args.voice_barge_in}
+                       if args.barge_in or args.voice_barge_in else {}),
                 )
             except KeyboardInterrupt:
                 print("\nExiting hands-free voice loop.")

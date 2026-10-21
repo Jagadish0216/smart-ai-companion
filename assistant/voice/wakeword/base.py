@@ -12,6 +12,10 @@ class WakeWordError(Exception):
     """Configuration, model or capture failure in the wake-word subsystem."""
 
 
+class WakeWordCleanupError(WakeWordError):
+    """Owned microphone release could not be confirmed."""
+
+
 @dataclass(frozen=True)
 class WakeWordDetection:
     detected: bool

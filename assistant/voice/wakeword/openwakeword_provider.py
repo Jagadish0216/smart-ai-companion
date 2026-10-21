@@ -1,12 +1,13 @@
 """Persistent openWakeWord inference, with capture scoped to each wait."""
 
 from collections import deque
+from dataclasses import replace
 from statistics import median
 import logging
 import time
 
 from .audio import AlsaWakeCapture, KWS_FRAME_SAMPLES, LeftChannelConverter
-from .base import WakeWordDetection, WakeWordError, WakeWordProvider
+from .base import WakeWordDetection, WakeWordError, WakeWordProvider, WakeWordCleanupError
 from .models import load_engine, validate_installed_assets
 from ..hands_free import MAX_PREROLL_BYTES, normalized_left_rms
 from ..onnx_logging import configure_cpu_onnx_logging
@@ -39,7 +40,8 @@ class OpenWakeWordProvider(WakeWordProvider):
         except Exception as exc:
             raise WakeWordError(f"Wake model initialization failed: {exc}") from exc
 
-    def wait_for_wake_word(self, device):
+    def wait_for_wake_word(self, device, *, cancel_event=None, guard=None, confirmations=1, threshold=None,
+                           on_detection=None):
         if self.capture is not None:
             raise WakeWordError("Wake microphone is already owned by a listening attempt.")
         self.warm()
@@ -52,7 +54,9 @@ class OpenWakeWordProvider(WakeWordProvider):
             native_tail = bytearray()
             background = deque(maxlen=64)  # At most ~5 seconds of numeric RMS.
             self.capture.start()
-            for chunk in self.capture.chunks(deadline):
+            consecutive = {}
+            chunks = self.capture.chunks(deadline, cancel_event=cancel_event) if cancel_event is not None else self.capture.chunks(deadline)
+            for chunk in chunks:
                 native_tail.extend(chunk)
                 excess = len(native_tail) - MAX_PREROLL_BYTES
                 if excess > 0:
@@ -64,12 +68,26 @@ class OpenWakeWordProvider(WakeWordProvider):
                     scores = self.model.predict(converter.np.frombuffer(frame, dtype="<i2"))
                     logger.debug("Wake scores: %s", scores)
                     for model, score in scores.items():
-                        if float(score) >= self.config.threshold:
+                        permitted = (float(score) >= max(self.config.threshold, threshold or 0)
+                                     and (guard is None or guard(frame)))
+                        consecutive[model] = consecutive.get(model,0)+1 if permitted else 0
+                        if consecutive[model] >= confirmations:
                             ordered = sorted(background)
                             floor = median(ordered[:max(1,len(ordered)//2)]) if len(ordered) >= 5 else None
                             length = len(native_tail) - len(native_tail) % 8
-                            return WakeWordDetection(True, model, float(score), time.monotonic() - started,
-                                                     bytes(native_tail[:length]), floor)
+                            result = WakeWordDetection(True, model, float(score), time.monotonic() - started,
+                                                       bytes(native_tail[:length]), floor)
+                            if on_detection is not None:
+                                # Keep recording opening words while owned audio workers stop.
+                                # Refuse rather than silently drop the beginning on slow cleanup.
+                                on_detection(result)
+                                retained = bytearray(result.audio_preroll)
+                                for tail in chunks:
+                                    retained.extend(tail)
+                                    if len(retained) > 48000 * 8 * 2:
+                                        raise WakeWordError("Interruption handoff exceeded two seconds; repeat after a fresh wake.")
+                                result = replace(result, audio_preroll=bytes(retained))
+                            return result
                 if chunk and len(chunk) % 8 == 0:
                     background.append(normalized_left_rms(chunk))
             return WakeWordDetection(False, self.config.selected_model, elapsed_seconds=time.monotonic() - started)
@@ -83,7 +101,10 @@ class OpenWakeWordProvider(WakeWordProvider):
     def _release_capture(self):
         capture, self.capture = self.capture, None
         if capture is not None:
-            capture.close()
+            try:
+                capture.close()
+            except Exception as exc:
+                raise WakeWordCleanupError("Wake microphone cleanup failed; stop before reusing capture.") from exc
 
     def reset(self):
         if self.model is not None:

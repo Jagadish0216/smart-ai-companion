@@ -149,7 +149,7 @@ class PersistentAlsaPlayer:
     deadlock. One 300-second response-lifetime deadline also bounds final drain.
     """
 
-    def __init__(self, device, cancel_event, temp_path, timeout=300, *, on_amplitude=None):
+    def __init__(self, device, cancel_event, temp_path, timeout=300, *, on_amplitude=None, on_reference=None):
         self.device = device
         self.cancel_event = cancel_event
         self.temp_path = temp_path
@@ -158,6 +158,7 @@ class PersistentAlsaPlayer:
         self.stderr = None
         self.deadline = None
         self.fd = None
+        self.on_reference = on_reference
         self.amplitude = PlaybackAmplitudeObserver(on_amplitude) if on_amplitude is not None else None
 
     @latency.span("player_start")
@@ -212,6 +213,8 @@ class PersistentAlsaPlayer:
             if count <= 0:
                 raise AlsaStreamError("Persistent aplay accepted no PCM data.")
             latency.pcm_accepted()
+            if self.on_reference is not None:
+                self.on_reference(bytes(remaining[:count]))
             if self.amplitude is not None:
                 self.amplitude.accept(remaining[:count])
             remaining = remaining[count:]

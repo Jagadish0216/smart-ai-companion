@@ -7,6 +7,7 @@ AI engines directly.
 """
 
 from assistant import latency_trace as latency
+from assistant.voice.interruption import defer_response
 import logging
 import math
 import time
@@ -158,6 +159,7 @@ class AssistantService:
         result = None
         prefix = _resource_status_prefix(prepared.execution_plan)
         completed = False
+        engine_stream = None
         try:
             yield {
                 "type": "start",
@@ -170,10 +172,11 @@ class AssistantService:
             if prefix:
                 complete_text += prefix
                 yield {"type": "delta", "text": prefix}
-            for event in prepared.engine.generate_stream(
+            engine_stream = prepared.engine.generate_stream(
                 query,
                 **_generation_kwargs(prepared),
-            ):
+            )
+            for event in engine_stream:
                 if event.type == "delta" and event.text:
                     complete_text += event.text
                     yield {"type": "delta", "text": event.text}
@@ -218,6 +221,10 @@ class AssistantService:
                 conversation=prepared.conversation,
                 partial=bool(complete_text),
             )
+        finally:
+            close = getattr(engine_stream, "close", None)
+            if close is not None:
+                close()
 
 
 @latency.span("service_prepare")
@@ -533,6 +540,8 @@ def _persist_generated_response(
     text: str,
     latency_ms: int,
 ) -> None:
+    if defer_response(conversation, text, latency_ms):
+        return
     Message.objects.create(
         conversation=conversation,
         sender="AI",
@@ -706,13 +715,12 @@ def _persist_direct_response(
     execution_started: float | None = None,
     stage_ms: dict[str, int] | None = None,
 ) -> tuple:
-    Message.objects.create(
-        conversation=conversation,
-        sender="AI",
-        text=response_text,
-        processing_time_ms=latency_ms,
-    )
-    conversation.save(update_fields=["updated_at"])
+    if not defer_response(conversation, response_text, latency_ms):
+        Message.objects.create(
+            conversation=conversation, sender="AI", text=response_text,
+            processing_time_ms=latency_ms,
+        )
+        conversation.save(update_fields=["updated_at"])
     metadata = {
         "engine": engine,
         "model": None,

@@ -21,6 +21,7 @@ SAMPLE_WIDTH = 4
 FRAME_BYTES = CHANNELS * SAMPLE_WIDTH
 CHUNK_FRAMES = 960  # 20 ms of native stereo S32_LE.
 MAX_PREROLL_BYTES = 15360 * FRAME_BYTES  # 320 ms, memory only until request WAV.
+MAX_INTERRUPTION_HANDOFF_BYTES = 2 * SAMPLE_RATE * FRAME_BYTES
 
 
 class HandsFreeCaptureError(Exception):
@@ -191,7 +192,7 @@ class NativeRequestReader:
 @latency.span("capture")
 def record_audio_hands_free(output_path: Path, device: str, config: HandsFreeCaptureConfig,
                            *, on_capture_ready=None, on_amplitude=None,
-                           immediate=False, initial_audio=b"", background_rms=None):
+                           immediate=False, initial_audio=b"", background_rms=None, interruption_handoff=False):
     """Retain native request PCM with bounded endpoint/fixed-duration capture.
 
     CLI immediate mode skips the legacy caller's drain/calibration phases and
@@ -201,7 +202,8 @@ def record_audio_hands_free(output_path: Path, device: str, config: HandsFreeCap
     config.validate()
     if not device:
         raise HandsFreeCaptureError("An ALSA device is required for hands-free request capture.")
-    if len(initial_audio) > MAX_PREROLL_BYTES or len(initial_audio) % FRAME_BYTES:
+    limit = MAX_INTERRUPTION_HANDOFF_BYTES if interruption_handoff else MAX_PREROLL_BYTES
+    if len(initial_audio) > limit or len(initial_audio) % FRAME_BYTES:
         raise HandsFreeCaptureError("Invalid bounded native wake handoff PCM.")
     reader = NativeRequestReader(device, config.warmup_seconds + config.calibration_seconds + config.max_seconds + 5)
     captured_frames = 0
