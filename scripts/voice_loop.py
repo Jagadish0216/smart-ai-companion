@@ -48,6 +48,7 @@ from assistant.voice.processes import run_cancellable  # noqa: E402
 from assistant.voice.tts import TextToSpeechProvider  # noqa: E402
 from assistant.voice.alsa_stream import PersistentAlsaPlayer, trim_pcm_edges  # noqa: E402
 from assistant.voice.capture_vad import AdaptiveCaptureVAD, QuietCapturePreparation, SettledFanPreparation  # noqa: E402
+from assistant.voice.spectral_onset import SpectralOnset  # noqa: E402
 from assistant.voice.hands_free import HandsFreeCaptureConfig, record_audio_hands_free  # noqa: E402
 from assistant.voice.wakeword.base import WakeWordConfig, WakeWordError  # noqa: E402
 from assistant.voice.wakeword.factory import get_wake_word_provider  # noqa: E402
@@ -466,6 +467,7 @@ def record_audio_with_capture_vad(
         raise VoiceLoopError("Invalid capture preparation policy/lifecycle.")
     preparation_type = SettledFanPreparation if preparation_policy == "settled_fan" else QuietCapturePreparation
     preparation = preparation_type(vad, warmup_seconds) if ready_lifecycle else None
+    spectral = SpectralOnset() if preparation_policy == "settled_fan" else None
     sample_rate, sample_width, channels = CAPTURE_SAMPLE_RATE, CAPTURE_SAMPLE_WIDTH, 1
     command = [
         "parecord",
@@ -573,8 +575,12 @@ def record_audio_with_capture_vad(
                 continue  # Explicit preparation samples, never fabricated silence or request PCM.
             if preparation and not vad.calibrated:
                 preparation.calibration_started = True
+            features = spectral.features(chunk) if spectral else None
+            if spectral and not vad.calibrated:
+                spectral.observe_calibration(features, rms)
             was_started, was_calibrated = vad.speech_started, vad.calibrated
-            event = vad.feed(rms, chunk_duration)
+            event = vad.feed(rms, chunk_duration,
+                             **({"speech_evidence": spectral.evidence(features)} if spectral else {}))
             if was_calibrated:
                 observe(on_amplitude, rms)
             if not was_calibrated and vad.calibrated:
@@ -589,6 +595,8 @@ def record_audio_with_capture_vad(
                 if preparation and not preparation.calibration_usable():
                     latency.mark("capture_stopped", once=True, reason=vad.stop_reason)
                     raise VoiceLoopError("Calibration is not quiet enough to signal microphone ready.")
+                if spectral and spectral.freeze(vad.noise_floor):
+                    vad.enable_relative_onset()
                 latency.mark("capture_ready", once=True)
                 if not ready_lifecycle:
                     print("Speak now...")
@@ -657,6 +665,9 @@ def record_audio_with_capture_vad(
                     "speech_duration", "capture_duration", "elapsed", "stop_reason")}
                     | (dict(accepted=vad.accepted, ready_lifecycle=True,
                             preparation=preparation.diagnostics(),
+                            **(dict(speech_onset=spectral.diagnostics(),
+                                    relative_start_threshold=vad.relative_start_threshold,
+                                    relative_continue_threshold=vad.relative_continue_threshold) if spectral else {}),
                             warmup_audio_seconds=preparation.warmup_elapsed,
                             start_window_origin_vad_seconds=vad.start_window_origin) if preparation else {}))
             except Exception:

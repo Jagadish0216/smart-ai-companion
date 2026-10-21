@@ -59,6 +59,8 @@ class AdaptiveCaptureVAD:
         self.max_wait_rms = 0.0
         self.stop_reason = None
         self.start_window_origin = 0.0
+        self.relative_start_threshold = None
+        self.relative_continue_threshold = None
         if adaptive:
             self._thresholds()
 
@@ -88,13 +90,27 @@ class AdaptiveCaptureVAD:
             raise ValueError("Cannot open speech window before valid calibration.")
         self.start_window_origin = self.elapsed
 
-    def feed(self, rms, seconds):
+    def enable_relative_onset(self):
+        """Settled-fan only: a second gate requiring spectral corroboration."""
+        if not self.calibrated or self.noise_floor <= 0 or self.speech_started or self.stop_reason:
+            raise ValueError("Relative onset requires valid completed calibration.")
+        # Ratios are in power (not amplitude); spectral evidence is mandatory.
+        self.relative_start_threshold = max(self.configured_start * .5, self.noise_floor * math.sqrt(1.5))
+        self.relative_continue_threshold = max(self.configured_start * .4, self.noise_floor * math.sqrt(1.2))
+
+    def feed(self, rms, seconds, *, speech_evidence=False):
         if not math.isfinite(rms) or not 0 <= rms <= 1 or not math.isfinite(seconds) or seconds <= 0:
             raise ValueError("Capture VAD input must be normalized RMS and positive duration.")
         if self.stop_reason is not None:
             return "stop"
         was_calibrated = self.calibrated
         self.elapsed += seconds
+        if self.relative_start_threshold is not None:
+            above_start = speech_evidence and rms >= self.relative_start_threshold
+            above_continue = speech_evidence and rms >= self.relative_continue_threshold
+        else:
+            above_start = rms >= self.start_threshold
+            above_continue = rms >= self.continue_threshold
         if not self.speech_started:
             if was_calibrated:
                 self.max_wait_rms = max(self.max_wait_rms, rms)
@@ -109,7 +125,7 @@ class AdaptiveCaptureVAD:
                 if self.calibrated:
                     self._thresholds()
                 return None
-            if rms >= self.start_threshold:
+            if above_start:
                 self.candidate_duration += seconds
                 if (
                     self.adaptive
@@ -132,11 +148,11 @@ class AdaptiveCaptureVAD:
 
         self.capture_duration += seconds
         resume_pending = False
-        if rms >= self.start_threshold:
+        if above_start:
             self.speech_duration += seconds
             self.silence_duration = 0.0
             self.resume_duration = 0.0
-        elif self.adaptive and rms >= self.continue_threshold:
+        elif self.adaptive and above_continue:
             previous_resume = self.resume_duration
             self.resume_duration += seconds
             if self.resume_duration + 1e-9 >= 0.06:

@@ -281,6 +281,8 @@ class IntegratedReleaseTests(SimpleTestCase):
         with patch("builtins.input",side_effect=["","q"]):
             self.assertEqual(voice.main([]),0)
         self.assertEqual(helper.mocks["AssistantService.process_message_stream"].call_args.args,("How does an ESP32 work?",))
+        helper.mocks["AssistantService.process_message_stream"].assert_called_once()
+        helper.mocks["get_stt_provider"].return_value.transcribe.assert_called_once()
         self.assertEqual(helper.mocks["normalize_audio"].call_args.kwargs,{"left_channel":True})
         self.assertTrue(helper.mocks["prepare_alsa_playback"].called)
         for call in helper.mocks["prepare_alsa_playback"].call_args_list:

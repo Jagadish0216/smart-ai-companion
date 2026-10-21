@@ -1,6 +1,6 @@
 # Offline companion final release candidate
 
-Fan-tolerance correction baseline: `8eea902d998c248c475f66af1ca00705cad64c26`.
+Speech-detection correction baseline: `8f02894745b9574180402ad7bfad6b9df0959513`.
 Feature branch only: `codex/offline-model-selection`. Hardware acceptance pending.
 
 ## Implementation
@@ -77,15 +77,70 @@ in force. No additional model call, dependency, retry or unbounded data is added
 Diagnostics identify `settled_fan_v2` and its actual parameters in the existing
 bounded preparation summary; raw audio and per-frame RMS are not exported.
 
-The speech gate is reused without changing its onset, floor or resource settings:
-`start=max(configured, min(1, 2.5*median_background+0.002))`, existing optional ceiling,
-60 ms onset confirmation, hysteresis, 300 ms minimum speech, 300 ms native pre-roll,
-0.8-second default endpoint pause tolerance and configured maximum duration.
-For example, a robust 0.005698 background produces the existing minimum 0.02
-onset, below the previously supplied 0.03134 expected-speech RMS. These are formula examples, not Pi accuracy results.
-Frozen post-ready thresholds avoid learning speech as background. Modest fan
-variation below onset does not activate; sufficiently large fan changes may still
-look like speech to an energy gate.
+### Speech detection release correction
+
+The latest physical trial confirms preparation and MICROPHONE READY work, but
+speech was not detected within the full five-second start window. Settled floor
+was 0.00940344 and calibrated floor 0.01288575. The legacy formula
+`max(configured, 2.5*background+0.002)` yielded 0.034214375 start and 0.01821790625
+continuation; maximum waiting RMS was 0.020136. The onset inequality could never
+pass for those reported frames. No corresponding Pi waveform is available in
+this workspace or supplied attachments. The maximum RMS does not identify speech,
+its spectrum, or the duration of any above-background activity.
+
+A scalar RMS gate cannot reliably distinguish modest speech from a fan gain
+change. The settled-fan production capture path now uses an additional bounded
+spectral measure from existing NumPy (already a wake-word dependency). It needs
+no new package, model, service or cloud inference:
+
+- During post-drain calibration, analyze the native 20 ms/960-sample LEFT frame
+  using a Hann window and real FFT. Subtract DC for feature extraction only;
+  request PCM is unchanged. Accumulate six band powers with edges 200, 400, 800,
+  1400, 2200, 3200 and 4800 Hz plus total power over 50–8000 Hz.
+- Freeze the median background spectrum before ready. Select frames using the
+  already validated robust RMS estimate, excluding levels above
+  `max(2*background, background+0.002)` so loud calibration transients cannot
+  dominate this path either. Require at least ten usable calibration frames.
+- Require at least two bands to have >=2x background power AND >=1.8x their
+  calibrated fraction of total power, in both the current frame and a rolling
+  three-frame average. Per-band numerical floors are 0.5% of total background
+  power. This rejects tested uniform fan gain changes and suppresses broadband
+  FFT fluctuations. The current-frame requirement avoids prolonging speech into
+  silence just because the average still contains speech.
+- With valid spectral calibration, onset additionally requires RMS >=
+  `max(0.5*configured_start, sqrt(1.5)*background)`; continuation uses
+  `max(0.4*configured_start, sqrt(1.2)*background)`. These are relative POWER
+  margins, corroborated by spectral shape, not a blind global threshold change.
+  The original VAD still requires consecutive onset confirmation (normally 60 ms),
+  300 ms minimum voiced duration, existing hysteresis/resume confirmation,
+  300 ms native pre-roll, natural pauses, configured endpoint and duration limits.
+  No waiting budget is renewed and no phrase is force-accepted.
+
+For the supplied calibrated floor, the relative thresholds are approximately
+0.01578176 onset and 0.01411563 continuation. A frame at 0.020136 can therefore
+qualify only with the corroborating spectral and temporal evidence. The tests use
+both synthetic formant-bearing signals that qualify and stationary fan signals
+at that same RMS that do not. This is a regression constraint, not an inference
+that the supplied maximum was the operator's speech.
+
+The preparation estimator and ready lifecycle are unchanged. Legacy capture never
+constructs the FFT detector and keeps its original scalar behavior. Partial PCM
+reads do not invent spectral evidence. If calibration has insufficient non-DC
+spectral energy, the original gate remains active, explicitly reported as
+`speech_onset.available=false`; readiness itself is not fabricated or forcibly
+bypassed. `capture_vad_summary` retains legacy `start_threshold` and
+`continue_threshold` for compatibility and adds the actual relative thresholds
+when enabled, plus constant policy parameters and an aggregate evidence count.
+At most 128 seven-power calibration records plus RMS scalars and three current
+feature vectors are retained. No waveform, transcript, spectrum or per-frame
+feature data is exported. Error/cancellation summaries retain these aggregate
+fields through the existing child trace and parent report paths.
+
+This is a lightweight heuristic, not a trained speech classifier. Spectrally
+speech-like interference can still trigger it, and extremely weak speech or speech
+whose spectrum is indistinguishable from fan noise may be rejected. Working
+one-metre capture, recognition and acoustic quality must be confirmed on the
+assembled Pi. No Windows mock result establishes that physical success.
 
 No startup frames reach the request WAV. After readiness, native pre-roll and all
 accepted speech frames remain byte-for-byte intact. Normalization still selects
@@ -114,9 +169,9 @@ conversion cost; no unverified audio algorithm change was introduced.
 
 ## Validation and limits
 
-Correction focused Windows suite: **286 tests passed**. Full correction suite:
-**1293 tests, OK, one skipped**. Full results are retained in `fan-fix-windows-tests.log`; focused output is in
-`fan-fix-focused-tests.log`. The earlier release logs remain historical evidence.
+Speech correction focused Windows suite: **296 tests passed**. Full suite:
+**1303 tests, OK, one skipped**. Full results are retained in `speech-onset-windows-tests.log`; focused output is in
+`speech-onset-focused-tests.log`. Earlier fan-fix and release logs are historical.
 Both use mocks/synthetic signals and local temporary test data, not hardware,
 cloud inference or installed model execution. Coverage includes startup decay,
 fan-only variation, valid/short/interrupted speech, natural pauses and endpoint,
@@ -126,15 +181,15 @@ Whisper dispatch, streaming service/Piper, approved profile and display progress
 Existing tests retain public-fixture mismatch/empty/Whisper failure isolation,
 resource gates, ownership, memory/RAG and legacy behavior coverage.
 
-Energy statistics cannot reliably distinguish perfectly steady speech from steady
-fan noise. Operators must remain silent until ready. Large fan changes after ready
-can still activate an energy detector. Interval-support parameters and real one-metre recognition need the supervised
+Operators must remain silent until ready. Energy alone cannot reliably distinguish
+fan changes from speech; the corroborated path reduces this ambiguity but does
+not establish semantic speech detection in every acoustic environment. Interval-support parameters and real one-metre recognition need the supervised
 hardware acceptance below. A fan that dominates most intervals or an ambiguous
 steady speech-like signal remains a limitation of energy-only detection. The Whisper-side VAD runs after recording and cannot establish live readiness.
 The wake-word engine also supports optional VAD assets, but installation of those
 assets on the production Pi is not established by this evidence; introducing that
-engine into request capture would add a new inference/dependency path. This release
-reuses the existing lightweight capture gate instead. No new package or model was
+engine into request capture would add a new inference/dependency path. This release adds bounded NumPy spectral corroboration to the existing capture
+gate instead of introducing a new model inference path. No new package or model was
 downloaded. The physical source of elevated startup remains unknown.
 
 ## One supervised acceptance
@@ -149,7 +204,7 @@ With fan running and operator present, run exactly once. The report path must no
 already exist. Do not restart services, unload Qwen, or automatically retry.
 
 ```sh
-cd "$HOME/apps/smart-ai-companion" && test "$(git branch --show-current)" = codex/offline-model-selection && git diff --quiet && git diff --cached --quiet && OLLAMA_HOST=http://127.0.0.1:11434 VOICE_PLAYBACK_PROFILE=approved_loudness ./venv/bin/python scripts/validate_offline_voice.py --operator-live-trial --production-qwen --settled-fan --fixture fact --output "$HOME/fan-tolerance-acceptance.json"
+cd "$HOME/apps/smart-ai-companion" && test "$(git branch --show-current)" = codex/offline-model-selection && git diff --quiet && git diff --cached --quiet && OLLAMA_HOST=http://127.0.0.1:11434 VOICE_PLAYBACK_PROFILE=approved_loudness ./venv/bin/python scripts/validate_offline_voice.py --operator-live-trial --production-qwen --settled-fan --fixture fact --output "$HOME/speech-detection-acceptance.json"
 ```
 
 Remain silent throughout PREPARING. After MICROPHONE READY, from approximately one
@@ -161,7 +216,7 @@ Extract content-free stage evidence (the complete isolated report also retains t
 approved public fixture answer for human quality review):
 
 ```sh
-./venv/bin/python -c 'import json, pathlib; r=json.loads((pathlib.Path.home()/"fan-tolerance-acceptance.json").read_text()); c=r.get("cycle",{}); print(json.dumps({"status":r.get("status"),"reason":r.get("reason",c.get("reason")),"telemetry":r.get("telemetry"),"cycle":{k:c.get(k) for k in ("release_checks","capture_vad_summary","events_ms","durations_ms","display_calls","residency_label","ollama_metrics","voice_config","missing_events")}},indent=2))'
+./venv/bin/python -c 'import json, pathlib; r=json.loads((pathlib.Path.home()/"speech-detection-acceptance.json").read_text()); c=r.get("cycle",{}); print(json.dumps({"status":r.get("status"),"reason":r.get("reason",c.get("reason")),"telemetry":r.get("telemetry"),"cycle":{k:c.get(k) for k in ("release_checks","capture_vad_summary","events_ms","durations_ms","display_calls","residency_label","ollama_metrics","voice_config","missing_events")}},indent=2))'
 ```
 
 Required software result: `sample_complete_quality_pending`, every `release_checks`
@@ -191,11 +246,16 @@ To restore the exact preceding release code, revert this correction's commit on
 `codex/offline-model-selection` and fast-forward the Pi to that reviewed revert;
 no model/service restart, database change or persistent environment edit is needed.
 
-## Correction changed files
+## Speech correction changed files
 
-- `assistant/voice/capture_vad.py`: shared robust preparation/calibration estimator;
-  optional validated floor in the existing threshold formula; legacy default intact.
-- `assistant/tests_release_candidate.py`: fan distribution, noisy calibration,
-  unusable input, speech contamination, endpoint and callback regressions.
-- `docs/final-release-candidate.md`: corrected algorithm, limits and acceptance.
-- `docs/fan-fix-focused-tests.log`, `docs/fan-fix-windows-tests.log`: Windows evidence.
+- `assistant/voice/capture_vad.py`: opt-in corroborated relative onset/continuation;
+  existing confirmation, duration, reset and endpoint state machine retained.
+- `assistant/voice/spectral_onset.py`: bounded LEFT-channel spectral corroboration.
+- `scripts/voice_loop.py`: calibration, frozen detector and content-free summaries.
+- `assistant/tests_speech_onset.py`: measured scalar constraints, synthetic modest
+  speech, tonal/broadband fan noise, gain changes, bursts, hysteresis, native PCM
+  and exact pre-roll regressions.
+- `assistant/tests_release_candidate.py`: explicit single STT/service dispatch checks.
+- `docs/final-release-candidate.md`: implementation, limitations and acceptance.
+- `docs/speech-onset-focused-tests.log`, `docs/speech-onset-windows-tests.log`:
+  Windows verification; no Pi timing/physical acceptance claim.
