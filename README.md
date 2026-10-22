@@ -744,6 +744,12 @@ Verify transcription prints only in audio-file mode, normal streamed output/timi
 
 ### Hands-free wake word (Phase 1)
 
+The optional exact-phrase **Hey Companion** integration is disabled until a
+genuinely trained model passes the offline Pi validation gate. No model or
+passing report is included. See [training, validation, deployment and GPIO17
+fallback commands](docs/hey-companion.md). It reuses the existing serial
+hands-free pipeline; the default push-to-talk boot service is unchanged.
+
 Offline hands-free operation is opt-in. Phase 1 uses the built-in **"Hey Jarvis"**
 phrase to validate the architecture. Install `requirements.txt` in the Pi's active
 Python environment (`openwakeword==0.6.0`). On Debian 13 with Python 3.13 (or
@@ -956,7 +962,7 @@ At a boundary, the player inserts only `max(0, target - previous retained traili
 
 On AI/TTS/preparation/playback failure, shared cancellation discards queued work, cancels/reaps active Piper/FFmpeg/aplay/paplay processes, unblocks both queues through cancellation-aware waits, closes the service generator, and joins both workers before temporary files are removed. The original failure is retained instead of being replaced by secondary cancellation errors. An audio failure is surfaced when the bounded service stream next yields or times out. The next interaction starts at LISTENING.
 
-The display changes to SPEAKING exactly once, after preparation and immediately before opening the persistent player/writing initial silence, remains SPEAKING throughout the response and final device drain, then returns to READY/ECO/PROTECTIVE. Pulse still prepends its first-chunk WAV silence before playback. ALSA uses `arecord`, `ffmpeg`, and `aplay`; Pulse retains `parecord`, `ffmpeg`, and `paplay`. Wake-word detection is not implemented.
+The display changes to SPEAKING exactly once, after preparation and immediately before opening the persistent player/writing initial silence, remains SPEAKING throughout the response and final device drain, then returns to READY/ECO/PROTECTIVE. Pulse still prepends its first-chunk WAV silence before playback. ALSA uses `arecord`, `ffmpeg`, and `aplay`; Pulse retains `parecord`, `ffmpeg`, and `paplay`. Optional wake-word detection uses the serial hands-free path described above; Hey Companion requires a trained model and local validation approval.
 
 Timing values are seconds, printed to millisecond precision:
 

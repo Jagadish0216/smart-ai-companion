@@ -52,7 +52,7 @@ from assistant.voice.interruption import (InterruptControl, VoiceInterrupted, In
 from assistant.voice.capture_vad import AdaptiveCaptureVAD, QuietCapturePreparation, SettledFanPreparation  # noqa: E402
 from assistant.voice.spectral_onset import SpectralOnset  # noqa: E402
 from assistant.voice.hands_free import HandsFreeCaptureConfig, record_audio_hands_free  # noqa: E402
-from assistant.voice.wakeword.base import WakeWordConfig, WakeWordError, WakeWordDetection  # noqa: E402
+from assistant.voice.wakeword.base import WakeWordConfig, WakeWordError, WakeWordDetection, WakeWordCleanupError  # noqa: E402
 from assistant.voice.wakeword.factory import get_wake_word_provider  # noqa: E402
 
 CAPTURE_SAMPLE_RATE = 16000
@@ -1927,7 +1927,7 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
             except Exception as exc:
                 raise VoiceLoopError(f"Transcription failed: {exc}") from exc
             wake_only = (hands_free_request and hands_free_preroll is not None and
-                         re.fullmatch(r"(?:hey[\s,]+)?jarvis[\s.!?,]*", transcript, re.IGNORECASE))
+                         re.fullmatch(r"(?:hey[\s,]+)?(?:jarvis|companion)[\s.!?,]*", transcript, re.IGNORECASE))
             stop_only = (hands_free_request and delivery_control() is not None and
                          re.fullmatch(r"(?:(?:hey[\s,]+)?jarvis[\s,.!]+)?(?:stop|cancel)[\s.!?,]*",
                                       transcript, re.IGNORECASE))
@@ -2037,7 +2037,8 @@ def run_hands_free(config, wake_config, provider, display, *, capture_config=Non
     pending_detection = None
     while True:
         try:
-            _set_display_text(display, "Say Hey Jarvis" if wake_config.model == "hey_jarvis" and not wake_config.model_path else "Wake standby")
+            _set_display_text(display, "Say Hey Companion" if wake_config.model == 'hey_companion' else
+                              "Say Hey Jarvis" if wake_config.model == "hey_jarvis" and not wake_config.model_path else "Wake standby")
             detection = pending_detection
             pending_detection = None
             if detection is None:
@@ -2078,6 +2079,9 @@ def run_hands_free(config, wake_config, provider, display, *, capture_config=Non
         except KeyboardInterrupt:
             raise
         except InterruptionCleanupError:
+            raise
+        except WakeWordCleanupError:
+            # Never reopen capture or attempt fallback if ownership is uncertain.
             raise
         except VoiceInterrupted as exc:
             control = exc.control
@@ -2125,7 +2129,16 @@ def main(argv=None) -> int:
     inputs.add_argument("--text-mode", action="store_true", help="Interactively enter text while retaining the conversation.")
     inputs.add_argument("--hands-free", action="store_true", help="Continuously wait for the offline wake word, then retain a bounded microphone request (requires enabled wake word and ALSA).")
     inputs.add_argument('--push-to-talk', action='store_true', help='Primary demo: hold BCM17 button to record, release to process.')
+    inputs.add_argument('--hey-companion', action='store_true', help='Optional offline, validated Hey Companion model; never enabled at boot by this flag.')
+    parser.add_argument('--companion-model', type=Path, help='Locally trained hey_companion.onnx; no automatic download.')
+    parser.add_argument('--companion-validation', type=Path, help='Passing Pi validation report bound to the model and runtime assets.')
     args = parser.parse_args(argv)
+    if args.hey_companion:
+        if args.voice_barge_in:
+            parser.error('Hey Companion disables concurrent voice monitoring during speaker playback.')
+        args.hands_free = True
+    elif args.companion_model or args.companion_validation:
+        parser.error('Companion model/report options require --hey-companion.')
     if (args.barge_in or args.voice_barge_in) and not args.hands_free:
         parser.error("Interruption flags require --hands-free")
     if args.text is not None and not args.text.strip():
@@ -2145,7 +2158,11 @@ def main(argv=None) -> int:
         if args.push_to_talk and config.audio_backend != 'alsa':
             raise VoiceLoopError('--push-to-talk requires the existing ALSA backend.')
         if args.hands_free:
-            wake_config = WakeWordConfig.from_settings()
+            if args.hey_companion:
+                from assistant.voice.wakeword.companion import approved_config
+                wake_config = approved_config(args.companion_model, args.companion_validation)
+            else:
+                wake_config = WakeWordConfig.from_settings()
             if not wake_config.enabled:
                 raise WakeWordError("--hands-free requires VOICE_WAKE_WORD_ENABLED=true. Omit the flag for Enter-to-record mode.")
             if config.audio_backend != "alsa":

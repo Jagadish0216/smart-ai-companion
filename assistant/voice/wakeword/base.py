@@ -37,6 +37,7 @@ class WakeWordConfig:
     vad_threshold: float = 0.5
     timeout_seconds: float = 0.0
     cooldown_seconds: float = 0.75
+    validation_report: str = ""
 
     @classmethod
     def from_settings(cls):

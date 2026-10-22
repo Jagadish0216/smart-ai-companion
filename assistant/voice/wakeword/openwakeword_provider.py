@@ -4,6 +4,8 @@ from collections import deque
 from dataclasses import replace
 from statistics import median
 import logging
+import math
+from pathlib import Path
 import time
 
 from .audio import AlsaWakeCapture, KWS_FRAME_SAMPLES, LeftChannelConverter
@@ -26,6 +28,9 @@ class OpenWakeWordProvider(WakeWordProvider):
         if self.model is not None:
             return
         try:
+            if self.config.model == 'hey_companion' or Path(self.config.model_path).stem == 'hey_companion':
+                from .companion import verify_approval
+                verify_approval(self.config)
             if self.config.inference_framework == "onnx" or self.config.vad_threshold > 0:
                 configure_cpu_onnx_logging()
             engine = load_engine()
@@ -45,6 +50,8 @@ class OpenWakeWordProvider(WakeWordProvider):
         if self.capture is not None:
             raise WakeWordError("Wake microphone is already owned by a listening attempt.")
         self.warm()
+        if self.config.model == 'hey_companion':
+            confirmations = max(2, confirmations)
         started = time.monotonic()
         deadline = started + self.config.timeout_seconds if self.config.timeout_seconds else None
         self.capture = AlsaWakeCapture(device)
@@ -74,7 +81,7 @@ class OpenWakeWordProvider(WakeWordProvider):
                         diagnostics.increment('frames')
                     logger.debug("Wake scores: %s", scores)
                     for model, score in scores.items():
-                        above = float(score) >= max(self.config.threshold, threshold or 0)
+                        above = math.isfinite(float(score)) and float(score) >= max(self.config.threshold, threshold or 0)
                         permitted = above and (guard is None or guard(frame))
                         if diagnostics is not None:
                             diagnostics.record('max_score', float(score), maximum=True)
