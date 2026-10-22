@@ -13,6 +13,19 @@ from assistant import latency_trace as latency
 URL = 'http://127.0.0.1:8178'
 
 
+def server_command(binary, model, threads):
+    """Check only the options we actually pass to the installed server."""
+    import re
+    import subprocess
+    options = ['--model', '--threads', '--language', '--host', '--port']
+    result = subprocess.run([str(binary), '--help'], capture_output=True, timeout=5)
+    advertised = set(re.findall(rb'(?<![\w-])--[a-z][a-z-]*(?![\w-])', result.stdout + result.stderr))
+    if any(option.encode() not in advertised for option in options):
+        raise STTError('Installed whisper-server has incompatible flags.')
+    return [str(binary), '--model', str(model), '--threads', str(threads),
+            '--language', 'en', '--host', '127.0.0.1', '--port', '8178']
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise urllib.error.HTTPError(req.full_url, code, 'Local STT redirects are refused.', headers, fp)
@@ -89,8 +102,12 @@ class WhisperServerProvider(SpeechToTextProvider):
             raise STTError('Resident speech recognizer is busy; retry after the current request.')
         try:
             boundary = 'companion-' + uuid.uuid4().hex
+            # whisper.cpp v1.7.6 exposes no_context via HTTP, not CLI, and defaults
+            # it to false. Reset it and any retained prompt on EVERY request.
+            # https://github.com/ggml-org/whisper.cpp/blob/v1.7.6/examples/server/server.cpp
             fields = b''.join((f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n{value}\r\n').encode()
-                              for key, value in [('response_format', 'json'), ('language', 'en'), ('temperature', '0.0')])
+                              for key, value in [('response_format', 'json'), ('language', 'en'), ('temperature', '0.0'),
+                                                 ('no_context', 'true'), ('prompt', '')])
             body = (fields + f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="request.wav"\r\nContent-Type: audio/wav\r\n\r\n'.encode()
                     + path.read_bytes() + f'\r\n--{boundary}--\r\n'.encode())
             request = urllib.request.Request(URL + '/inference', data=body,
@@ -127,8 +144,7 @@ def main():
     threads = int(settings.STT_WHISPER_THREADS)
     if not 1 <= threads <= 8:
         raise STTError('Whisper thread configuration is outside safe demo bounds.')
-    os.execv(str(binary), [str(binary), '-m', str(model), '-t', str(threads), '-l', 'en',
-                          '-nc', '--host', '127.0.0.1', '--port', '8178'])
+    os.execv(str(binary), server_command(binary, model, threads))
 
 
 if __name__ == '__main__':

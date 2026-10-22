@@ -48,12 +48,11 @@ PY
     ./venv/bin/python -c 'from assistant.voice.push_to_talk import TalkButton; b=TalkButton(); b.close(); print("RP1 BCM17 input claim/release passed")'
     ./venv/bin/python - <<'PY'
 import os
-import subprocess
 from pathlib import Path
 import django
 os.environ.setdefault('DJANGO_SETTINGS_MODULE','config.settings'); django.setup()
 from django.conf import settings
-from assistant.voice.whisper_server import prepare_server_binary
+from assistant.voice.whisper_server import prepare_server_binary, server_command
 assert settings.SECRET_KEY != 'django-insecure-default-key-for-dev', 'Configure a private Django SECRET_KEY first.'
 assert settings.OLLAMA_MODEL == 'qwen3.5:4b-q4_K_M' and settings.OLLAMA_NUM_CTX == 4096, 'Preserve approved model/context.'
 assert settings.TTS_ENGINE == 'piper', 'Existing Piper configuration required.'
@@ -61,9 +60,7 @@ for asset in (settings.STT_WHISPER_MODEL, settings.TTS_PIPER_BIN, settings.TTS_P
     assert Path(asset).is_file(), 'A required existing local speech asset is missing.'
 assert Path(settings.STT_WHISPER_MODEL).name == 'ggml-base.en.bin', 'Keep the approved existing base.en model.'
 binary = prepare_server_binary(settings.STT_WHISPER_BIN)
-help_result = subprocess.run([str(binary), '--help'], capture_output=True, timeout=5)
-help_text = help_result.stdout + help_result.stderr
-assert all(flag in help_text for flag in (b'--host', b'--port', b'--model', b'--no-context')), 'Installed whisper-server has incompatible flags.'
+server_command(binary, settings.STT_WHISPER_MODEL, settings.STT_WHISPER_THREADS)
 PY
     sudo install -d -o root -g jagadish -m 0750 /etc/smart-ai-companion
     sudo install -o root -g jagadish -m 0640 deployment/demo.env.example /etc/smart-ai-companion/demo.env
