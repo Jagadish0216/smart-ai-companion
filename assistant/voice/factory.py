@@ -20,7 +20,10 @@ def get_stt_provider() -> SpeechToTextProvider:
 
     engine = getattr(settings, 'STT_ENGINE', 'mock')
 
-    if engine == 'whisper_cpp':
+    if engine == 'whisper_server':
+        from .whisper_server import WhisperServerProvider
+        _stt_provider_cache = WhisperServerProvider(getattr(settings, 'STT_TIMEOUT', 30))
+    elif engine == 'whisper_cpp':
         bin_path = getattr(settings, 'STT_WHISPER_BIN', '')
         model_path = getattr(settings, 'STT_WHISPER_MODEL', '')
         timeout = getattr(settings, 'STT_TIMEOUT', 30)

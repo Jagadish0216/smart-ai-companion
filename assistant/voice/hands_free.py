@@ -156,14 +156,16 @@ class NativeRequestReader:
             self.close()
             raise
 
-    def read_frames(self, frames):
+    def read_frames(self, frames, *, keep_recording=None):
         pending = bytearray()
         size = frames * FRAME_BYTES
         while len(pending) < size:
+            if keep_recording is not None and not keep_recording():
+                return bytes(pending[:len(pending) // FRAME_BYTES * FRAME_BYTES])
             remaining = self.deadline - time.monotonic()
             if remaining <= 0:
                 raise HandsFreeCaptureError("Request arecord exceeded its bounded capture deadline.")
-            if not self.selector.select(min(0.25, remaining)):
+            if not self.selector.select(min(0.01 if keep_recording is not None else 0.25, remaining)):
                 if self.process.poll() is not None:
                     raise HandsFreeCaptureError(f"Request arecord exited (exit {self.process.returncode}).")
                 continue

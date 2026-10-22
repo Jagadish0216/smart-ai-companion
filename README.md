@@ -1225,3 +1225,9 @@ Ask the same distinct standalone questions, an actual supported device action, a
 5. **Local LLM + lexical RAG** ✅
 6. **Local LLM + RAG + Online Retrieval** ✅ (deterministic router + optional SearXNG snippets)
 7. **ESP32 MQTT LED + DHT11** ✅ (safe low-voltage action milestone)
+
+## Final review offline demonstration
+
+Use the [physical push-to-talk and protected demo hotspot procedure](docs/final-review-demo.md)
+for the final review. It reuses the existing deployment and keeps optional wake
+models and experimental acoustic interruption out of the primary boot path.

@@ -1784,6 +1784,7 @@ def run_voice_cycle(
     hands_free_capture: HandsFreeCaptureConfig | None = None,
     hands_free_preroll: bytes | None = None,
     hands_free_background: float | None = None,
+    talk_button=None,
 ) -> int | None:
     """Run a cycle; hardware display failures are isolated from voice failures."""
     with latency.cycle():
@@ -1792,6 +1793,7 @@ def run_voice_cycle(
                 config, conversation_id, display, audio_file=audio_file, text=text,
                 hands_free_capture=hands_free_capture,
                 hands_free_preroll=hands_free_preroll, hands_free_background=hands_free_background,
+                talk_button=talk_button,
             )
         except (NoSpeechDetected, VoiceInterrupted):
             _set_display_state(display, DisplayState.READY)
@@ -1806,13 +1808,13 @@ def run_voice_cycle(
 
 
 def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=None,
-                     hands_free_capture=None, hands_free_preroll=None, hands_free_background=None):
+                     hands_free_capture=None, hands_free_preroll=None, hands_free_background=None, talk_button=None):
     """Select an input, then reuse the production respond/speak cycle."""
     if audio_file is not None and text is not None:
         raise VoiceLoopError("Choose either audio-file or text input, not both.")
     hands_free_request = hands_free_capture is not None and audio_file is None and text is None
     latency.mark("cycle_config", audio_backend=config.audio_backend,
-                 input_mode="text" if text is not None else "audio_file" if audio_file is not None else
+                 input_mode="push_to_talk" if talk_button is not None else "text" if text is not None else "audio_file" if audio_file is not None else
                  "hands_free" if hands_free_request else "vad" if config.capture_vad_enabled else "fixed")
     meter = AudioLevelMeter(lambda level: _set_display_level(display, level))
     amplitude = meter.feed if display is not None and getattr(display, "enabled", True) else None
@@ -1835,10 +1837,17 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
                     raise VoiceLoopError(f"Input audio is not a file: {recorded_path}")
                 print(f"Input audio: {recorded_path}")
             else:
-                if not hands_free_request and not config.capture_ready_lifecycle:
+                if not hands_free_request and talk_button is None and not config.capture_ready_lifecycle:
                     _set_display_state(display, DisplayState.LISTENING)
                 source = config.alsa_capture_device if config.audio_backend == "alsa" else config.input_source
-                if hands_free_request:
+                if talk_button is not None:
+                    from assistant.voice.push_to_talk import record_held
+                    _timed_call(timings, 'record', record_held, recorded_path, source, talk_button.held,
+                                on_ready=lambda: (_set_display_state(display, DisplayState.LISTENING),
+                                                  _set_display_text(display, 'Listening - hold button')),
+                                on_amplitude=amplitude)
+                    _set_display_state(display, DisplayState.THINKING)
+                elif hands_free_request:
                     _timed_call(
                         timings, "record", record_audio_hands_free, recorded_path,
                         config.alsa_capture_device, hands_free_capture,
@@ -1923,7 +1932,7 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
                          re.fullmatch(r"(?:(?:hey[\s,]+)?jarvis[\s,.!]+)?(?:stop|cancel)[\s.!?,]*",
                                       transcript, re.IGNORECASE))
             if not transcript or is_no_speech_transcription(transcript) or wake_only or stop_only:
-                if hands_free_request:
+                if hands_free_request or talk_button is not None:
                     raise NoSpeechDetected("No request speech recognized; returning to wake listening.")
                 raise VoiceLoopError("Transcription failed: no speech was recognized.")
             print(f"You: {transcript}")
@@ -1967,6 +1976,44 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
     if config.capture_ready_lifecycle:
         _set_display_text(display, idle.value)
     return next_conversation_id
+
+
+def run_push_to_talk(config, button, display):
+    """Discard presses while busy; require release and a fresh press each cycle."""
+    from assistant.voice.push_to_talk import ShortPress, wait_released
+    conversation_id = None
+    failures = 0
+    while True:
+        _set_display_state(display, DisplayState.READY)
+        _set_display_text(display, 'READY - hold button')
+        wait_released(button.held)
+        while not button.held.wait(.1):
+            pass
+        control = InterruptControl(keyboard=True)
+        try:
+            try:
+                with delivery(control):
+                    conversation_id = run_voice_cycle(config, conversation_id, display=display, talk_button=button)
+                    control.close()
+                    control.commit()
+            finally:
+                control.close()
+            failures = 0
+        except InterruptionCleanupError:
+            raise
+        except VoiceInterrupted:
+            conversation_id = control.conversation_id or conversation_id
+            failures = 0
+            _set_display_state(display, DisplayState.READY)
+            _set_display_text(display, 'INTERRUPTED - hold button')
+        except (ShortPress, NoSpeechDetected):
+            failures = 0
+        except Exception as exc:
+            failures += 1
+            _set_display_state(display, DisplayState.ERROR)
+            print('PTT cycle failed; release and try a fresh press.', file=sys.stderr)
+            if failures >= 3:
+                raise VoiceLoopError('Three PTT failures; inspect capture/providers before restarting.') from exc
 
 
 def run_hands_free(config, wake_config, provider, display, *, capture_config=None,
@@ -2077,6 +2124,7 @@ def main(argv=None) -> int:
     inputs.add_argument("--text", help="Run once using text, bypassing capture, normalization and STT.")
     inputs.add_argument("--text-mode", action="store_true", help="Interactively enter text while retaining the conversation.")
     inputs.add_argument("--hands-free", action="store_true", help="Continuously wait for the offline wake word, then retain a bounded microphone request (requires enabled wake word and ALSA).")
+    inputs.add_argument('--push-to-talk', action='store_true', help='Primary demo: hold BCM17 button to record, release to process.')
     args = parser.parse_args(argv)
     if (args.barge_in or args.voice_barge_in) and not args.hands_free:
         parser.error("Interruption flags require --hands-free")
@@ -2094,6 +2142,8 @@ def main(argv=None) -> int:
             config = replace(config, stream_eager_first_sentence=True)
         if args.voice_refinements or args.voice_diagnostics:
             config = replace(config, voice_refinements=args.voice_refinements, voice_diagnostics=args.voice_diagnostics)
+        if args.push_to_talk and config.audio_backend != 'alsa':
+            raise VoiceLoopError('--push-to-talk requires the existing ALSA backend.')
         if args.hands_free:
             wake_config = WakeWordConfig.from_settings()
             if not wake_config.enabled:
@@ -2113,7 +2163,7 @@ def main(argv=None) -> int:
     print(f"Audio backend: {config.audio_backend}")
     if not single_input and not args.text_mode:
         print(f"Input source: {config.alsa_capture_device if config.audio_backend == 'alsa' else config.input_source}")
-        if not args.hands_free:
+        if not args.hands_free and not args.push_to_talk:
             print("Press Enter to record, or type q and press Enter to quit.")
     if args.latency_trace_dir is not None:
         latency.configure(args.latency_trace_dir)
@@ -2121,8 +2171,19 @@ def main(argv=None) -> int:
     display = get_companion_display()
     tts_provider = None
     wake_provider = None
+    ownership = None
     try:
-        _set_display_state(display, DisplayState.READY)
+        if sys.platform == 'linux' and config.audio_backend == 'alsa' and not single_input and not args.text_mode:
+            from assistant.voice.push_to_talk import microphone_ownership
+            ownership = microphone_ownership()
+            ownership.__enter__()
+            import signal
+            def stop_owned_voice(signum, frame):
+                raise KeyboardInterrupt
+            signal.signal(signal.SIGTERM, stop_owned_voice)
+        _set_display_state(display, DisplayState.THINKING if args.push_to_talk else DisplayState.READY)
+        if args.push_to_talk:
+            _set_display_text(display, 'STARTING - local speech')
         try:
             tts_provider = get_tts_provider()
             print("Warming configured speech provider...")
@@ -2135,6 +2196,19 @@ def main(argv=None) -> int:
             _set_display_state(display, DisplayState.ERROR)
             print(f"TTS warm-up failed: {exc}", file=sys.stderr)
             return 1
+        if args.push_to_talk:
+            from assistant.voice.push_to_talk import TalkButton
+            stt = get_stt_provider()
+            if hasattr(stt, 'warm'):
+                stt.warm()
+            button = TalkButton()
+            try:
+                run_push_to_talk(config, button, display)
+            except KeyboardInterrupt:
+                return 130
+            finally:
+                button.close()
+            return 0
         if args.hands_free:
             try:
                 if args.barge_in or args.voice_barge_in:
@@ -2211,6 +2285,8 @@ def main(argv=None) -> int:
                 except Exception:
                     logger.warning("Companion display cleanup failed")
                 finally:
+                    if ownership is not None:
+                        ownership.__exit__(None, None, None)
                     if args.latency_trace_dir is not None:
                         store = latency.configure(None)
                         if store is not None:

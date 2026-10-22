@@ -42,8 +42,11 @@ def system_status(request):
         if ai_engine_name == 'LOCAL'
         else 'Development'
     )
-    internet_state = _cached_internet_state()
-    internet_label, internet_class = INTERNET_PRESENTATION[internet_state]
+    if getattr(settings, 'DEMO_AP_ENABLED', False):
+        internet_state, internet_label, internet_class = 'OFFLINE', 'LOCAL MODE', 'offline'
+    else:
+        internet_state = _cached_internet_state()
+        internet_label, internet_class = INTERNET_PRESENTATION[internet_state]
 
     return {
         'global_ai_engine': ai_engine_name,

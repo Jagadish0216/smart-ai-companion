@@ -14,8 +14,8 @@ import uuid
 MAX_EVENTS = 512
 MAX_BYTES = 128 * 1024
 MAX_FILES = 8
-SPANS = frozenset('rag playback_conversion capture capture_open capture_cleanup normalize stt_cli service_prepare conversation_prepare policy history user_persist routing memory response_persist resource_snapshot resource_metrics network_checks ancillary_checks provisioning_check piper_ready piper_exchange tts audio_prepare text_queue_wait audio_queue_wait player_start leading_silence speech_file drain display_callback serial_write'.split())
-MARKS = frozenset('cycle_start cycle_end capture_first_frame calibration_end speech_detected capture_stopped endpoint_detected capture_ready ollama_request_ready llm_first_alphanumeric ollama_complete first_complete_sentence first_speech_unit piper_state first_audio_ready first_speech_pcm_accepted resource_cache_hit resource_cache_miss resource_state resource_policy cycle_config route stream_error'.split())
+SPANS = frozenset('rag playback_conversion capture capture_open capture_cleanup normalize stt_cli stt_server service_prepare conversation_prepare policy history user_persist routing memory response_persist resource_snapshot resource_metrics network_checks ancillary_checks provisioning_check piper_ready piper_exchange tts audio_prepare text_queue_wait audio_queue_wait player_start leading_silence speech_file drain display_callback serial_write'.split())
+MARKS = frozenset('button_release cycle_start cycle_end capture_first_frame calibration_end speech_detected capture_stopped endpoint_detected capture_ready ollama_request_ready llm_first_alphanumeric ollama_complete first_complete_sentence first_speech_unit piper_state first_audio_ready first_speech_pcm_accepted resource_cache_hit resource_cache_miss resource_state resource_policy cycle_config route stream_error'.split())
 EVENT_NAMES = MARKS | {'audio_unit_ready', 'audio_unit_dequeued', 'text_unit_ready', 'punctuation_pause'} | {s + suffix for s in SPANS for suffix in ('_start', '_end')}
 EVENT_NAMES = EVENT_NAMES | frozenset(("capture_warmup_start", "capture_warmup_end", "calibration_start",
                                     "speech_start_window_open", "minimum_speech_accepted"))
@@ -74,7 +74,7 @@ class Trace:
                     event[key] = value
                 elif key == 'audio_backend' and value in ('alsa', 'pulse'):
                     event[key] = value
-                elif key == 'input_mode' and value in ('fixed', 'vad', 'hands_free', 'audio_file', 'text'):
+                elif key == 'input_mode' and value in ('fixed', 'vad', 'hands_free', 'audio_file', 'text', 'push_to_talk'):
                     event[key] = value
                 elif key == 'route' and value in ('local', 'local_rag', 'online', 'action', 'clarification'):
                     event[key] = value
@@ -84,7 +84,7 @@ class Trace:
                     event[key] = value
                 elif key == 'outcome' and value in ('ok', 'error', 'timeout', 'cancelled'):
                     event[key] = value
-                elif key == 'reason' and value in ('silence', 'max_duration', 'start_timeout', 'preparation_activity', 'preparation_unstable', 'calibration_unreliable'):
+                elif key == 'reason' and value in ('silence', 'button_release', 'max_duration', 'start_timeout', 'preparation_activity', 'preparation_unstable', 'calibration_unreliable'):
                     event[key] = value
             self.events.append(event)
             self.counts[name] = count + 1

@@ -34,6 +34,14 @@ ALLOWED_HOSTS = os.environ.get(
     'smart-ai-companion.local,127.0.0.1,localhost',
 ).split(',')
 
+DEMO_AP_ENABLED = os.environ.get('DEMO_AP_ENABLED', 'false').lower() == 'true'
+LOGIN_URL = '/login/'
+LOGIN_REDIRECT_URL = '/'
+if DEMO_AP_ENABLED:
+    # The dedicated profile explicitly configures this address; deployment verifies it.
+    ALLOWED_HOSTS = list(dict.fromkeys(ALLOWED_HOSTS + ['smart-ai-companion.local', '10.77.0.1']))
+CSRF_TRUSTED_ORIGINS = ['http://smart-ai-companion.local:8000', 'http://10.77.0.1:8000'] if DEMO_AP_ENABLED else []
+
 
 # Application definition
 

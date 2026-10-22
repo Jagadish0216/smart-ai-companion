@@ -1,0 +1,7 @@
+{% load static %}<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign in — Smart AI Companion</title><link rel="stylesheet" href="{% static 'css/style.css' %}"></head>
+<body><main style="max-width:28rem;margin:4rem auto;padding:1.5rem">
+<h1>Smart AI Companion</h1><p>Sign in to the local control center. Local AI works without internet.</p>
+<form method="post">{% csrf_token %}{{ form.as_p }}<input type="hidden" name="next" value="{{ next }}"><button type="submit">Sign in</button></form>
+</main></body></html>

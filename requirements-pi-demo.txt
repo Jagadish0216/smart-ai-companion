@@ -1,0 +1,2 @@
+# Only the optional physical button needs these. Install before going offline.
+lgpio==0.2.2.0; platform_system == "Linux"

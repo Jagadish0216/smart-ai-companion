@@ -63,6 +63,7 @@ class NetworkProvisioningState(models.Model):
         CONNECTING = "CONNECTING", "Connecting"
         FAILED = "FAILED", "Failed"
         NORMAL_MODE = "NORMAL_MODE", "Normal mode"
+        DEMO_AP = 'DEMO_AP', 'Protected demonstration access point'
 
     state = models.CharField(
         max_length=20,

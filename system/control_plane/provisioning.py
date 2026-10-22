@@ -155,6 +155,17 @@ def ensure_network_mode(
     if force_setup:
         return enter_recovery_mode()
 
+    if getattr(settings, 'DEMO_AP_ENABLED', False) and not prefer_client:
+        from .demo_ap import activate
+        try:
+            result = activate()
+            _set_state(NetworkProvisioningState.State.DEMO_AP)
+            return result
+        except (RuntimeError, ValueError, IndexError):
+            # Keep authenticated LAN access possible; never fall back to an open AP.
+            _set_state(NetworkProvisioningState.State.DEMO_AP, 'Demo AP activation failed; use console/Ethernet recovery.')
+            return {'success': False, 'state': 'DEMO_AP', 'message': 'Demo AP activation failed; use console/Ethernet recovery.'}
+
     current = NetworkProvisioningState.get_current()
     if current.state in SETUP_STATES and not prefer_client:
         # SETUP_AP and FAILED are explicit recovery states. CONNECTING means a

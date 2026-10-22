@@ -158,7 +158,10 @@
               "audio_unit_ready",
               "text_unit_ready",
               "punctuation_pause",
-              "audio_unit_dequeued"
+              "audio_unit_dequeued",
+              "button_release",
+              "stt_server_start",
+              "stt_server_end"
             ]
           },
           "at_ms": {
@@ -188,7 +191,8 @@
               "start_timeout",
               "preparation_activity",
               "preparation_unstable",
-              "calibration_unreliable"
+              "calibration_unreliable",
+              "button_release"
             ]
           },
           "profile": {
@@ -212,7 +216,8 @@
               "vad",
               "hands_free",
               "audio_file",
-              "text"
+              "text",
+              "push_to_talk"
             ]
           },
           "route": {
