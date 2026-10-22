@@ -47,7 +47,7 @@
                     placeholder="Leave blank only for an open network"
                 >
                 <div class="setup-warning">
-                    Companion will leave this setup network while it connects. Your phone or computer may disconnect and reconnect to the selected Wi-Fi automatically.
+                    Companion will leave this setup network while it connects. Join the selected Wi-Fi in your phone or computer's Wi-Fi settings, then return to this page. The browser cannot switch networks for you.
                     If connection fails, reconnect to <strong>{{ setup_ssid }}</strong> and reopen <strong>smart-ai-companion.local:8000/setup/</strong>.
                 </div>
                 <div class="form-actions">
@@ -68,7 +68,9 @@
                     <h2 id="setup-handoff-title">Connecting Smart Companion</h2>
                     <p id="setup-handoff-detail"></p>
                     <p class="handoff-guidance" id="setup-handoff-guidance"></p>
-                    <button class="button button-secondary hidden" id="setup-handoff-retry" type="button">Retry connection check</button>
+                    <p><a class="button button-secondary" id="setup-dashboard-link" href="{{ canonical_url }}">Open Dashboard</a></p>
+                    <p>Use this link after joining the selected Wi-Fi. It does not verify the connection.</p>
+                    <button class="button button-secondary hidden" id="setup-handoff-retry" type="button">Retry Connection Check</button>
                 </div>
             </section>
 
@@ -77,6 +79,6 @@
             </footer>
         </section>
     </main>
-    <script src="{% static 'js/setup.js' %}?v=2"></script>
+    <script src="{% static 'js/setup.js' %}?v=3"></script>
 </body>
 </html>

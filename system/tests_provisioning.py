@@ -569,6 +569,8 @@ class SetupPortalTests(TestCase):
         self.assertContains(response, "/static/js/setup.js")
         self.assertContains(response, 'id="setup-handoff-panel"')
         self.assertContains(response, 'id="setup-handoff-retry"')
+        self.assertContains(response, 'id="setup-dashboard-link" href="http://smart-ai-companion.local:8000/"')
+        self.assertContains(response, 'Open Dashboard')
         self.assertContains(response, "Companion will leave this setup network")
         self.assertContains(response, "If connection fails, reconnect to")
         self.assertContains(response, "smart-ai-companion.local:8000/setup/")
@@ -706,15 +708,15 @@ class SetupHandoffFrontendTests(SimpleTestCase):
     def test_script_redirects_only_after_confirmed_normal_mode(self):
         self.assertIn("status.state === 'NORMAL_MODE'", self.script)
         self.assertIn("status.ready === true", self.script)
-        self.assertIn("showSuccess(status.connected_ssid);", self.script)
-        self.assertIn("window.location.assign('/');", self.script)
+        self.assertIn("showSuccess(status);", self.script)
+        self.assertIn("window.location.assign(canonicalUrl);", self.script)
         self.assertIn("const SUCCESS_REDIRECT_DELAY_MS = 2000;", self.script)
         self.assertNotRegex(self.script, r"(?:192\.168\.|172\.\d+\.|10\.42\.)")
 
     def test_script_failure_allows_retry_and_timeout_is_neutral(self):
         self.assertIn("connectButton.disabled = false;", self.script)
         self.assertIn("Check the Wi-Fi password and try again.", self.script)
-        self.assertIn("Retry connection check", (
+        self.assertIn("Retry Connection Check", (
             Path(settings.BASE_DIR) / "templates" / "setup" / "index.html"
         ).read_text(encoding="utf-8"))
         self.assertIn("We couldn't reach Smart Companion yet.", self.script)

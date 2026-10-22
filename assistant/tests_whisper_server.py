@@ -83,6 +83,11 @@ class ResidentWhisperTests(SimpleTestCase):
 
     @patch('assistant.voice.whisper_server.urllib.request.build_opener')
     def test_readiness_is_bounded_and_no_audio_is_sent(self,session):
-        session.return_value.open.return_value.status_code=404
-        WhisperServerProvider().warm(.1)
+        # urllib responses expose status, not requests' status_code.
+        from types import SimpleNamespace
+        for status in (200, 404):
+            response = SimpleNamespace(status=status, close=MagicMock())
+            session.return_value.open.return_value = response
+            WhisperServerProvider().warm(.1)
+            response.close.assert_called_once_with()
         self.assertEqual(session.return_value.open.call_args.args[0],URL+'/')

@@ -73,7 +73,7 @@ class WhisperServerProvider(SpeechToTextProvider):
             try:
                 response = self.opener.open(URL + '/', timeout=1)
                 # Older whisper servers omit public UI assets (404), but load before listening.
-                status = response.status_code
+                status = response.status
                 response.close()
                 if status in (200, 404):
                     return
