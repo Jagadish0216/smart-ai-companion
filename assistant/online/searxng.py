@@ -110,6 +110,7 @@ class SearXNGOnlineRetriever(OnlineRetriever):
         self.base_url = normalize_searxng_base_url(base_url)
         self.timeout_seconds = float(timeout_seconds)
         self.max_results = int(max_results)
+        self.diagnostics = {}
         if not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
             raise OnlineRetrievalConfigurationError(
                 "Online retrieval timeout must be greater than zero."
@@ -120,6 +121,7 @@ class SearXNGOnlineRetriever(OnlineRetriever):
             )
 
     def retrieve(self, query: str) -> list[OnlineRetrievalResult]:
+        self.diagnostics = {}
         bounded_query = _bounded_query(query)
         if not bounded_query:
             return []
@@ -132,6 +134,7 @@ class SearXNGOnlineRetriever(OnlineRetriever):
                 raise OnlineRetrievalProviderError("Online search is temporarily unavailable.")
             cached = _CACHE.get(key)
             if cached and cached[0] > now:
+                self.diagnostics = dict(cached[2]) if len(cached) > 2 else {}
                 return list(cached[1])
         if not _SLOTS.acquire(blocking=False):
             raise OnlineRetrievalProviderError("Online search is busy.")
@@ -166,23 +169,58 @@ class SearXNGOnlineRetriever(OnlineRetriever):
                         raise OnlineRetrievalProviderError("External search health could not be verified.")
             from .enrichment import enrich_results
             from .evidence_policy import evidence_category, official_catalog
+            retrieved_count = len(results)
             if results and evidence_category(query)=='release' and re.search(r'\braspberry\s+pi\s+os\b',query,re.I):
                 catalog=next((r for r in results if official_catalog(r.url)),None)
                 if catalog is None:
                     catalog=OnlineRetrievalResult('Official Raspberry Pi OS catalog','https://www.raspberrypi.com/software/operating-systems/',
                         'Official Raspberry Pi OS download catalog. Release details require page verification.', 'official_catalog',datetime.now(timezone.utc))
                 results=[catalog]+[r for r in results if not official_catalog(r.url)][:19]
-            results = enrich_results(results, query, deadline, min(4, self.max_results))
+            # Reserve part of the existing two-second page budget for a fallback.
+            enrichment_deadline = min(deadline, time.monotonic() + 2.0)
+            attempt_budget = [4]
+            results = enrich_results(results, query, min(enrichment_deadline, time.monotonic()+1.0), min(4, self.max_results), attempt_budget)
             from .selection import rank_candidates, diverse_selection
             from .grounding import select_current_evidence
+            fresh = select_current_evidence(results, query, datetime.now(timezone.utc))
+            category = evidence_category(query)
+            if retrieved_count and not fresh and category in {'current', 'release'} and deadline-time.monotonic() > .15:
+                # One additional discovery call only, sharing the original 8s
+                # deadline. Never retry a denied page or bypass its restriction.
+                alternative = (
+                    bounded_query + ' release notes site:raspberrypi.com/news/'
+                    if category == 'release' and re.search(r'\braspberry\s+pi\s+os\b', query, re.I)
+                    else re.sub(r'\bnews\b', 'headlines', bounded_query, flags=re.I)
+                    if re.search(r'\bnews\b', bounded_query, re.I)
+                    else bounded_query + ' release notes' if category == 'release' else ''
+                )
+                if alternative and alternative != candidate:
+                    try:
+                        discovered = self._search(alternative, deadline)
+                        retrieved_count += len(discovered)
+                        known = {r.url for r in results}
+                        discovered = [r for r in discovered if r.url not in known]
+                        results += enrich_results(discovered, query, enrichment_deadline, min(4, self.max_results), attempt_budget)
+                    except (OnlineRetrievalProviderError, OnlineRetrievalTimeoutError, OnlineRetrievalResponseError):
+                        pass  # Preserve the original evidence and honest abstention.
+            verified_count = sum(r.accessibility == 'available' for r in results)
+            unavailable_count = sum(r.accessibility == 'unavailable' for r in results)
+            denied_count = sum(r.http_status in (401, 403) for r in results)
             results = rank_candidates(results, query)
             fresh = select_current_evidence(results, query, datetime.now(timezone.utc))
+            self.diagnostics = {
+                'provider_reachable': True, 'results_retrieved': retrieved_count,
+                'sources_verified': verified_count,
+                'sources_unavailable': unavailable_count,
+                'sources_access_denied': denied_count,
+                'fresh_evidence_accepted': len(fresh),
+            }
             remainder = [item for item in results if item not in fresh and item.accessibility != 'unavailable']
             selected = diverse_selection(fresh, self.max_results)
             results = selected + diverse_selection(remainder, self.max_results - len(selected)) if len(selected) < self.max_results else selected
             with _LOCK:
                 _remember(_HEALTH, self.base_url, (time.monotonic() + 30, True), 8)
-                _remember(_CACHE, key, (time.monotonic() + (freshness_seconds(query) if results else 5), tuple(results)))
+                _remember(_CACHE, key, (time.monotonic() + (freshness_seconds(query) if results else 5), tuple(results), dict(self.diagnostics)))
             return results
         except (OnlineRetrievalProviderError, OnlineRetrievalTimeoutError, OnlineRetrievalResponseError):
             with _LOCK:
@@ -196,10 +234,13 @@ class SearXNGOnlineRetriever(OnlineRetriever):
         if remaining <= 0:
             raise OnlineRetrievalTimeoutError("Online search budget exhausted.")
 
-        query_string = parse.urlencode({
+        parameters = {
             "q": bounded_query,
             "format": "json",
-        })
+        }
+        if re.search(r'\b(news|headlines?)\b', bounded_query, re.I):
+            parameters.update(categories='news', time_range='day')
+        query_string = parse.urlencode(parameters)
         search_request = request.Request(
             f"{self.base_url}/search?{query_string}",
             headers={

@@ -112,7 +112,7 @@ class OnlineProviderTests(SimpleTestCase):
         self.assertEqual(results[0].content, "Version 3.14 is current.")
         self.assertEqual(results[0].url, "https://example.com/releases")
         self.assertEqual(results[0].provider, "searxng")
-        called_request = urlopen.call_args.args[0]
+        called_request = urlopen.call_args_list[0].args[0]
         parsed_request = parse.urlsplit(called_request.full_url)
         request_query = parse.parse_qs(parsed_request.query)
         self.assertEqual(parsed_request.path, "/search")
@@ -121,6 +121,7 @@ class OnlineProviderTests(SimpleTestCase):
             "format": ["json"],
         })
         self.assertLessEqual(urlopen.call_args.kwargs["timeout"], 3)
+        self.assertLessEqual(urlopen.call_count, 3)
 
     @patch("assistant.online.searxng._open_search", side_effect=socket.timeout())
     def test_timeout_is_reported_as_typed_failure(self, _urlopen):

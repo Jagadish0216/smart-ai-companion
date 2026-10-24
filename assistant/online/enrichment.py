@@ -218,7 +218,7 @@ def fetch_metadata(url, deadline):
     raise ValueError('Too many article redirects')
 
 
-def enrich_results(results, query, deadline, target=4):
+def enrich_results(results, query, deadline, target=4, attempt_budget=None):
     """Four candidate attempts at most; unchanged shared 2s sub-budget.
 
     A nonblocking OS lock also caps cooperating Pi service workers to one fetch
@@ -229,6 +229,8 @@ def enrich_results(results, query, deadline, target=4):
     terms = query_terms(query)
     enriched = list(results)
     attempts = 0
+    if attempt_budget is None:
+        attempt_budget = [4]
     occurrences, order = {}, []
     for index, result in enumerate(results):
         host = (urlsplit(result.url).hostname or '').removeprefix('www.')
@@ -247,8 +249,6 @@ def enrich_results(results, query, deadline, target=4):
         host = urlsplit(result.url).hostname
         with _LOCK:
             blocked = _HOST_BACKOFF.get(host, 0) > time.monotonic()
-        if blocked:
-            continue
         if urlsplit(result.url).path.strip('/').lower() in {'', 'news', 'blog', 'search', 'category', 'tag'}:
             continue  # Landing-page metadata cannot date linked articles.
         words = set(re.findall(r'[a-z0-9]+', (result.title + ' ' + result.content).lower()))
@@ -258,10 +258,13 @@ def enrich_results(results, query, deadline, target=4):
             continue
         with _LOCK:
             cached = _CACHE.get(cache_key)
+        if blocked and not (cached and cached[0] > time.monotonic()):
+            enriched[index] = replace(result, accessibility='unavailable')
+            continue
         if cached and cached[0] > time.monotonic():
             metadata = cached[1]
         else:
-            if attempts >= 4 or time.monotonic() >= deadline or not _SLOT.acquire(blocking=False):
+            if attempts >= 4 or attempt_budget[0] <= 0 or time.monotonic() >= deadline or not _SLOT.acquire(blocking=False):
                 continue
             guard = None
             try:
@@ -275,6 +278,7 @@ def enrich_results(results, query, deadline, target=4):
                     os.lseek(guard, 0, 0)
                     msvcrt.locking(guard, msvcrt.LK_NBLCK, 1)
                 attempts += 1
+                attempt_budget[0] -= 1
                 fetched = fetch_metadata(result.url, min(deadline, time.monotonic()+(1.25 if needs_catalog else .65)))
                 metadata = (*fetched[:3], 'available', *(fetched[3:] if len(fetched)>3 else (None,'')), datetime.now(timezone.utc))
             except (OSError, ValueError, http.client.HTTPException, RecursionError) as failure:
@@ -283,7 +287,8 @@ def enrich_results(results, query, deadline, target=4):
                         _HOST_BACKOFF[host] = time.monotonic()+60
                         while len(_HOST_BACKOFF) > 32:
                             _HOST_BACKOFF.popitem(last=False)
-                metadata = (None, None, False, 'unavailable')
+                metadata = (None, None, False, 'unavailable', None, '', None,
+                            failure.status if isinstance(failure, PageUnavailable) else None)
             finally:
                 if guard is not None:
                     os.close(guard)
@@ -296,4 +301,6 @@ def enrich_results(results, query, deadline, target=4):
         published, modified, conflict = metadata[:3]
         accessibility = metadata[3] if len(metadata) > 3 else 'available'
         enriched[index] = replace(result, published_at=published, modified_at=modified or result.modified_at, publication_source='article_metadata' if published else '', date_conflict=conflict, accessibility=accessibility, release_at=metadata[4] if len(metadata)>4 else None, release_evidence=metadata[5] if len(metadata)>5 else '', verified_at=metadata[6] if len(metadata)>6 else None)
+        if len(metadata) > 7:
+            enriched[index] = replace(enriched[index], http_status=metadata[7])
     return enriched

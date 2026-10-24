@@ -312,6 +312,12 @@ def _prepare_message(
         "recent_history_chars": sum(len(item["content"]) for item in recent),
         "online_attempted": False,
         "online_success": False,
+        "provider_reachable": False,
+        "results_retrieved": 0,
+        "sources_verified": 0,
+        "sources_unavailable": 0,
+        "sources_access_denied": 0,
+        "fresh_evidence_accepted": 0,
         "fallback_reason": "online_unavailable" if route_decision.route == QueryRoute.ONLINE else "",
         "generation_ms": 0,
     }
@@ -397,10 +403,18 @@ def _prepare_message(
         stage_ms.update(online_attempted=True, fallback_reason="")
         retrieval_started = time.perf_counter()
         try:
-            retrieved_results = get_online_retriever().retrieve(query)
-            stage_ms["online_success"] = True
+            retriever = get_online_retriever()
+            retrieved_results = retriever.retrieve(query)
+            stage_ms.update(provider_reachable=True, results_retrieved=len(retrieved_results))
+            diagnostics = getattr(retriever, 'diagnostics', {})
+            if isinstance(diagnostics, dict):
+                for key in ('results_retrieved', 'sources_verified', 'sources_unavailable', 'sources_access_denied'):
+                    value = diagnostics.get(key)
+                    if type(value) is int and value >= 0:
+                        stage_ms[key] = value
             request_time = django_timezone.localtime(django_timezone.now())
             retrieved_results = select_current_evidence(retrieved_results, query, request_time)
+            stage_ms['fresh_evidence_accepted'] = len(retrieved_results)
             if has_conflicting_claims(retrieved_results, query):
                 stage_ms["fallback_reason"] = "conflicting_evidence"
                 raise OnlineRetrievalError("Current sources disagree.")
@@ -414,6 +428,7 @@ def _prepare_message(
             if not online_results:
                 stage_ms["fallback_reason"] = "no_relevant_current_results"
                 raise OnlineRetrievalError("The online provider returned no useful results.")
+            stage_ms['online_success'] = True
             try:
                 persist_used_online_results(query, online_results)
             except Exception:
@@ -427,7 +442,7 @@ def _prepare_message(
                 ("The current sources disagree, so I can't verify a reliable answer."
                  if stage_ms["fallback_reason"] == "conflicting_evidence" else
                  "I couldn't retrieve current information: the results do not provide enough detail or dated, relevant evidence for a reliable answer."
-                 if stage_ms["online_success"] else "I couldn't retrieve current information right now. Online search is unavailable; I won't guess current facts."),
+                 if stage_ms["provider_reachable"] else "I couldn't retrieve current information right now. Online search is unavailable; I won't guess current facts."),
                 route_decision,
                 engine="online",
                 latency_ms=online_latency_ms,
@@ -490,6 +505,9 @@ def _prepare_message(
         effective_instruction = _combine_instructions(effective_instruction,
             'Project-specific facts require supplied local evidence; state missing project details as unknown. Clearly label any general explanation as general knowledge.'
             if project_general else 'Answer this document-scoped request from supplied local evidence only. If none is supplied, say the documents are unavailable or insufficient. Do not invent document contents.')
+    if not local_knowledge and route_decision.route == QueryRoute.LOCAL:
+        from .technical_facts import specification_instruction
+        effective_instruction = _combine_instructions(effective_instruction, specification_instruction(query))
     effective_instruction = _build_generation_instruction(
         registry=registry,
         base_instruction=effective_instruction,
@@ -657,6 +675,8 @@ def _log_request_performance(prepared: PreparedAssistantRequest, metadata: dict)
             "execution_ms", "policy_ms", "routing_ms", "rag_ms", "online_ms", "ollama_metrics",
             "prompt_prepare_ms", "ttft_ms", "generation_ms", "route",
             "request_ttft_ms", "online_attempted", "online_success", "online_results", "fallback_reason",
+            "provider_reachable", "results_retrieved", "sources_verified", "sources_unavailable",
+            "sources_access_denied", "fresh_evidence_accepted",
             "resource_profile", "effective_model",
             "num_predict", "max_output_tokens", "eval_count", "output_limit_reached",
             "memory_used", "memory_messages", "memory_chars", "memory_ms",
@@ -811,6 +831,8 @@ def _persist_direct_response(
                     "execution_ms", "policy_ms", "routing_ms", "rag_ms",
                     "online_ms", "route", "resource_profile",
                     "online_attempted", "online_success", "online_results", "fallback_reason", "generation_ms",
+                    "provider_reachable", "results_retrieved", "sources_verified", "sources_unavailable",
+                    "sources_access_denied", "fresh_evidence_accepted",
                 )
             }
         },
