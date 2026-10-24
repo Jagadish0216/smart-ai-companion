@@ -67,6 +67,9 @@ def _online_result(
 class OnlineProviderTests(SimpleTestCase):
     def setUp(self):
         clear_online_cache()
+        enrichment = patch("assistant.online.enrichment.enrich_results", side_effect=lambda results, *args: results)
+        enrichment.start()
+        self.addCleanup(enrichment.stop)
 
     def make_retriever(self):
         return SearXNGOnlineRetriever(

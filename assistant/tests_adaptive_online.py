@@ -60,6 +60,9 @@ class IntentTests(SimpleTestCase):
 class ProviderResilienceTests(SimpleTestCase):
     def setUp(self):
         clear_online_cache()
+        enrichment = patch("assistant.online.enrichment.enrich_results", side_effect=lambda results, *args: results)
+        enrichment.start()
+        self.addCleanup(enrichment.stop)
         self.retriever = SearXNGOnlineRetriever(base_url="http://127.0.0.1:8888", timeout_seconds=4, max_results=4)
 
     @patch("assistant.online.searxng.request.urlopen")

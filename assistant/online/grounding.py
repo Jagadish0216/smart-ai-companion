@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from .base import OnlineRetrievalResult
 from .searxng import _safe_public_url, _published_time, _plain_text, query_terms
+from .dates import consistent_date
 
 
 def has_conflicting_claims(results, query):
@@ -46,10 +48,12 @@ def select_current_evidence(results, query, request_time):
     admitted = []
     seen = set()
     for result in results[:20]:
-        if not isinstance(result, OnlineRetrievalResult) or not _safe_public_url(result.url):
+        if not isinstance(result, OnlineRetrievalResult) or result.date_conflict or not _safe_public_url(result.url):
             continue
         content = result.content
         if not isinstance(content, str) or len(content.strip()) < 20:
+            continue
+        if re.search(r'\b(?:shop now|buy now|discount codes?|sponsored|special offers?)\b', content, re.I):
             continue
         if len(content) < 120 and re.search(r"\b(?:coverage|news and analysis|latest news and updates|read more|click here)\b", content, re.I):
             continue
@@ -65,8 +69,10 @@ def select_current_evidence(results, query, request_time):
         if published is None:
             # Accept explicit ISO dates, but never manufacture publication time
             # from the date this result was fetched.
-            match = re.search(r"\b20\d{2}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})?)?\b", content)
-            published = _published_time(match.group()) if match else None
+            dates = re.findall(r"\b(?:published|posted)\s*:?\s*(20\d{2}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})?)?)\b", content, re.I)
+            published = consistent_date(dates)
+            if published is not None:
+                result = replace(result, published_at=published, publication_source='snippet_publication_label')
         if published is None:
             continue
         age = (now - _normalized_request_time(published)).total_seconds()
@@ -150,6 +156,8 @@ def build_online_grounding_instruction(
             f"URL: {result.url}\n"
             f"Retrieved: {result.retrieved_at.isoformat()}\n"
             f"Published: {result.published_at.isoformat() if result.published_at else 'see snippet; unknown otherwise'}\n"
+            f"Publication evidence: {result.publication_source or 'explicit snippet publication label'}\n"
+            f"Modified (not publication): {result.modified_at.isoformat() if result.modified_at else 'unknown'}\n"
             "Snippet: "
         )
         footer = f"\n--- SOURCE {index} END ---"

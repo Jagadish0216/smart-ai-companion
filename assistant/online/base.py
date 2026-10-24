@@ -17,6 +17,9 @@ class OnlineRetrievalResult:
     provider: str
     retrieved_at: datetime
     published_at: datetime | None = None
+    modified_at: datetime | None = None
+    publication_source: str = ""
+    date_conflict: bool = False
 
     def source_metadata(self) -> dict:
         """Return public-safe attribution data without copied web content."""
@@ -26,6 +29,8 @@ class OnlineRetrievalResult:
             "provider": self.provider,
             "retrieved_at": self.retrieved_at.isoformat(),
             "published_at": self.published_at.isoformat() if self.published_at else None,
+            "modified_at": self.modified_at.isoformat() if self.modified_at else None,
+            "publication_source": self.publication_source,
         }
 
 

@@ -15,6 +15,7 @@ from collections import OrderedDict
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from urllib import error, parse, request
+from .dates import parse_publication_date, consistent_date
 
 from .base import (
     OnlineRetrievalConfigurationError,
@@ -60,7 +61,8 @@ def freshness_seconds(query):
 
 def query_terms(query):
     stop = set("what whats s who is are the a an of in on at to for me tell please latest current currently today now recent version release news weather price score status and how much does it cost search browse look up web internet online this".split())
-    return set(re.findall(r"[a-z0-9]+", query.lower())) - stop
+    stop.update('january february march april may june july august september october november december'.split())
+    return {term for term in re.findall(r"[a-z0-9]+", query.lower()) if not re.fullmatch(r'20\d{2}', term)} - stop
 
 
 class _HTMLTextExtractor(HTMLParser):
@@ -151,6 +153,8 @@ class SearXNGOnlineRetriever(OnlineRetriever):
                     probe = self._search("IANA example domains", deadline)
                     if not any(parse.urlsplit(r.url).hostname in {"iana.org", "www.iana.org"} and "example" in r.content.lower() for r in probe):
                         raise OnlineRetrievalProviderError("External search health could not be verified.")
+            from .enrichment import enrich_results
+            results = enrich_results(results, query, deadline)
             with _LOCK:
                 _remember(_HEALTH, self.base_url, (time.monotonic() + 30, True), 8)
                 _remember(_CACHE, key, (time.monotonic() + (freshness_seconds(query) if results else 5), tuple(results)))
@@ -251,18 +255,26 @@ class SearXNGOnlineRetriever(OnlineRetriever):
                 continue
             seen_urls.add(url)
             seen_content.add(identity)
+            date_values = [raw_result.get(key) for key in ('publishedDate', 'pubdate', 'published_date', 'datePublished', 'date_of_publication')]
+            parsed_dates = [parse_publication_date(value) for value in date_values]
+            publication = consistent_date(date_values)
+            conflict = len({d.date() for d in parsed_dates if d}) > 1
             results.append(OnlineRetrievalResult(
                 title=title[:180],
                 url=url[:2048],
                 content=content[:900],
                 provider=self.provider_name,
                 retrieved_at=retrieved_at,
-                published_at=_published_time(raw_result.get("publishedDate") or raw_result.get("published_date")),
+                published_at=publication,
+                publication_source='searxng' if publication else '',
+                date_conflict=conflict,
+                modified_at=consistent_date([raw_result.get('dateModified'), raw_result.get('modifiedDate')]),
             ))
         terms = query_terms(bounded_query)
         # Rank a bounded candidate pool before applying the result limit, so a
         # generic landing-page hit cannot crowd out a relevant dated source.
         results.sort(key=lambda item: (
+            not bool(re.search(r'\b(?:shop now|buy now|discount codes?|sponsored|special offers?)\b', item.content, re.I)),
             len(terms & set(re.findall(r"[a-z0-9]+", (item.title + " " + item.content).lower()))),
             item.published_at.timestamp() if item.published_at else 0,
         ), reverse=True)
@@ -274,13 +286,7 @@ class _TransientProviderError(OnlineRetrievalProviderError):
 
 
 def _published_time(value):
-    if not isinstance(value, str):
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
-    except ValueError:
-        return None
+    return parse_publication_date(value)
 
 
 def _read_bounded(response, deadline):
