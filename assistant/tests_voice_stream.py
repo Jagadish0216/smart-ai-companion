@@ -1122,6 +1122,7 @@ class ResourceNoticeTests(SimpleTestCase):
         engine.generate_stream.return_value = [AIEngineStreamEvent(type="delta", text=model_text),
                                                AIEngineStreamEvent(type="done", result=result)]
         prepare.return_value = SimpleNamespace(
+            stage_ms={}, execution_started=0,
             conversation=SimpleNamespace(id=42), num_predict=64, engine=engine, history=[], system_instruction="", is_voice=False,
             route_decision=SimpleNamespace(route=SimpleNamespace(value="local")),
             execution_plan=SimpleNamespace(resource_profile="ECO", status_message=REDUCED_RESOURCE_STATUS,

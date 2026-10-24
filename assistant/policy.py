@@ -195,7 +195,7 @@ def build_runtime_capability_registry(
         online_configured and online_allowed,
         unavailable_response=(
             "I can't retrieve live online information right now because "
-            "the current connectivity policy does not allow Internet access."
+            "online retrieval is disabled, unconfigured, or disallowed by policy."
         ),
     )
 

@@ -7,7 +7,6 @@ from dataclasses import asdict, dataclass, replace
 from typing import Callable, Iterable
 
 from django.conf import settings
-from system.control_plane.network import get_internet_status
 from system.control_plane.resource_manager import get_resource_manager_report
 
 
@@ -181,14 +180,9 @@ def get_ai_execution_plan(
             raise ValueError("resource profile is unavailable")
         policy_available = True
     except Exception:
-        try:
-            internet = get_internet_status()
-            online_allowed = bool(
-                getattr(settings, "ONLINE_RETRIEVAL_ENABLED", False)
-                and internet.get("state") in {"FULL", "LIMITED"}
-            )
-        except Exception:
-            online_allowed = False
+        # Permission to try is independent of NetworkManager's connectivity
+        # classification. The retriever validates actual search health.
+        online_allowed = bool(getattr(settings, "ONLINE_RETRIEVAL_ENABLED", False))
         report = {
             "recommended_profile": "UNKNOWN",
             "reasons": [{"code": "RESOURCE_POLICY_UNAVAILABLE"}],

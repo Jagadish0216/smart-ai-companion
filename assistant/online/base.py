@@ -16,6 +16,7 @@ class OnlineRetrievalResult:
     content: str
     provider: str
     retrieved_at: datetime
+    published_at: datetime | None = None
 
     def source_metadata(self) -> dict:
         """Return public-safe attribution data without copied web content."""
@@ -24,6 +25,7 @@ class OnlineRetrievalResult:
             "url": self.url,
             "provider": self.provider,
             "retrieved_at": self.retrieved_at.isoformat(),
+            "published_at": self.published_at.isoformat() if self.published_at else None,
         }
 
 

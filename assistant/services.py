@@ -38,7 +38,7 @@ from .devices.types import DeviceAction, DeviceCommand, SensorReading
 from .online.base import OnlineRetrievalError, OnlineRetrievalResult
 from .online.factory import get_online_retriever
 from knowledge_base.online_sync import persist_used_online_results
-from .online.grounding import build_online_grounding_instruction
+from .online.grounding import build_online_grounding_instruction, select_current_evidence, has_conflicting_claims
 from .execution_policy import AIExecutionPlan, get_ai_execution_plan, select_voice_budget
 from .policy import (
     Capability,
@@ -108,6 +108,7 @@ class AssistantService:
             return prepared
 
         try:
+            prepared.stage_ms["request_generation_start_ms"] = round((time.perf_counter() - prepared.execution_started) * 1000)
             result = prepared.engine.generate(
                 query,
                 **_generation_kwargs(prepared),
@@ -172,12 +173,14 @@ class AssistantService:
             if prefix:
                 complete_text += prefix
                 yield {"type": "delta", "text": prefix}
+            prepared.stage_ms["request_generation_start_ms"] = round((time.perf_counter() - prepared.execution_started) * 1000)
             engine_stream = prepared.engine.generate_stream(
                 query,
                 **_generation_kwargs(prepared),
             )
             for event in engine_stream:
                 if event.type == "delta" and event.text:
+                    prepared.stage_ms.setdefault("request_ttft_ms", round((time.perf_counter() - prepared.execution_started) * 1000))
                     complete_text += event.text
                     yield {"type": "delta", "text": event.text}
                 elif event.type == "done":
@@ -306,6 +309,10 @@ def _prepare_message(
         "recent_history_used": bool(recent),
         "recent_history_messages": len(recent),
         "recent_history_chars": sum(len(item["content"]) for item in recent),
+        "online_attempted": False,
+        "online_success": False,
+        "fallback_reason": "online_unavailable" if route_decision.route == QueryRoute.ONLINE else "",
+        "generation_ms": 0,
     }
     if route_decision.retrieval_query is not None:
         stage_ms["retrieval_query"] = route_decision.retrieval_query
@@ -316,6 +323,14 @@ def _prepare_message(
         registry,
         planned_response=(response_plan.direct_response if response_plan else None),
     )
+    if (route_decision.route in (QueryRoute.LOCAL, QueryRoute.LOCAL_RAG)
+            and not QueryRouter.requires_online(query)
+            and QueryRouter.requires_online(query, respect_offline=False)):
+        stage_ms["fallback_reason"] = "offline_requested"
+        direct_response = (
+            "This is an offline request. My local knowledge may be outdated, "
+            "so I can't verify current facts, scores or prices without online evidence."
+        )
     if direct_response:
         metadata_updates = None
         if (
@@ -356,6 +371,7 @@ def _prepare_message(
         )
 
     if not execution_plan.generation_allowed:
+        stage_ms["fallback_reason"] = "resource_protection"
         return _persist_direct_response(
             conversation,
             execution_plan.status_message
@@ -377,28 +393,40 @@ def _prepare_message(
     online_instruction = None
     online_latency_ms = 0
     if route_decision.route == QueryRoute.ONLINE:
+        stage_ms.update(online_attempted=True, fallback_reason="")
         retrieval_started = time.perf_counter()
         try:
             retrieved_results = get_online_retriever().retrieve(query)
+            stage_ms["online_success"] = True
+            request_time = django_timezone.localtime(django_timezone.now())
+            retrieved_results = select_current_evidence(retrieved_results, query, request_time)
+            if has_conflicting_claims(retrieved_results, query):
+                stage_ms["fallback_reason"] = "conflicting_evidence"
+                raise OnlineRetrievalError("Current sources disagree.")
             online_latency_ms = round((time.perf_counter() - retrieval_started) * 1000)
             online_instruction, online_results = build_online_grounding_instruction(
                 retrieved_results,
-                max_context_chars=getattr(settings, "ONLINE_MAX_CONTEXT_CHARS", 6000),
+                max_context_chars=min(3600, getattr(settings, "ONLINE_MAX_CONTEXT_CHARS", 6000)),
                 query=query,
-                request_time=django_timezone.localtime(django_timezone.now()),
+                request_time=request_time,
             )
             if not online_results:
+                stage_ms["fallback_reason"] = "no_relevant_current_results"
                 raise OnlineRetrievalError("The online provider returned no useful results.")
             try:
                 persist_used_online_results(query, online_results)
             except Exception:
                 logger.warning("Automatic online knowledge persistence unavailable")
         except OnlineRetrievalError as exc:
+            stage_ms["fallback_reason"] = stage_ms["fallback_reason"] or "online_unavailable"
             online_latency_ms = round((time.perf_counter() - retrieval_started) * 1000)
             logger.warning("Online retrieval failed: %s", exc.__class__.__name__)
             return _persist_direct_response(
                 conversation,
-                "I couldn't retrieve current information right now.",
+                ("The current sources disagree, so I can't verify a reliable answer."
+                 if stage_ms["fallback_reason"] == "conflicting_evidence" else
+                 "I couldn't retrieve current information: the results do not provide enough detail or dated, relevant evidence for a reliable answer."
+                 if stage_ms["online_success"] else "I couldn't retrieve current information right now. Online search is unavailable; I won't guess current facts."),
                 route_decision,
                 engine="online",
                 latency_ms=online_latency_ms,
@@ -408,8 +436,9 @@ def _prepare_message(
                 stage_ms={**stage_ms, "online_ms": online_latency_ms},
             )
         except Exception:
+            stage_ms["fallback_reason"] = "online_unavailable"
             online_latency_ms = round((time.perf_counter() - retrieval_started) * 1000)
-            logger.exception("Unexpected online retrieval failure")
+            logger.warning("Unexpected online retrieval failure")
             return _persist_direct_response(
                 conversation,
                 "I couldn't retrieve current information right now.",
@@ -422,11 +451,14 @@ def _prepare_message(
                 stage_ms={**stage_ms, "online_ms": online_latency_ms},
             )
     stage_ms["online_ms"] = online_latency_ms
+    # Evidence, not earlier conversational claims, supports current answers.
+    if online_results:
+        history = []
 
     memory_messages = []
     memory_history = []
     memory_started = time.perf_counter()
-    if conversation_id and (response_plan is None or response_plan.allow_long_term_memory):
+    if not online_results and conversation_id and (response_plan is None or response_plan.allow_long_term_memory):
         try:
             memory_messages = get_memory_retriever().retrieve(
                 query, conversation_id=conversation.id, before_id=current_message.id,
@@ -594,6 +626,9 @@ def _generation_metadata(prepared: PreparedAssistantRequest, result) -> dict:
     metadata.update(prepared.execution_plan.metadata())
     metadata["effective_model"] = result.model or prepared.execution_plan.effective_model
     metadata.update(prepared.stage_ms)
+    metadata["generation_ms"] = result.generation_ms or result.latency_ms
+    if result.ttft_ms is not None and "request_ttft_ms" not in metadata:
+        metadata["request_ttft_ms"] = prepared.stage_ms.get("request_generation_start_ms", 0) + result.ttft_ms
     eval_count = result.metrics.get("eval_count")
     if isinstance(eval_count, int) and not isinstance(eval_count, bool) and eval_count >= 0:
         metadata["eval_count"] = eval_count
@@ -607,6 +642,7 @@ def _log_request_performance(prepared: PreparedAssistantRequest, metadata: dict)
         for key in (
             "execution_ms", "policy_ms", "routing_ms", "rag_ms", "online_ms", "ollama_metrics",
             "prompt_prepare_ms", "ttft_ms", "generation_ms", "route",
+            "request_ttft_ms", "online_attempted", "online_success", "online_results", "fallback_reason",
             "resource_profile", "effective_model",
             "num_predict", "max_output_tokens", "eval_count", "output_limit_reached",
             "memory_used", "memory_messages", "memory_chars", "memory_ms",
@@ -734,6 +770,10 @@ def _persist_direct_response(
         "online_sources": [],
         "online_results": 0,
         "online_latency_ms": online_latency_ms,
+        "online_attempted": False,
+        "online_success": False,
+        "fallback_reason": "",
+        "generation_ms": 0,
         "memory_used": False,
         "memory_messages": 0,
         "memory_chars": 0,
@@ -756,6 +796,7 @@ def _persist_direct_response(
                 for key in (
                     "execution_ms", "policy_ms", "routing_ms", "rag_ms",
                     "online_ms", "route", "resource_profile",
+                    "online_attempted", "online_success", "online_results", "fallback_reason", "generation_ms",
                 )
             }
         },

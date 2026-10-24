@@ -316,7 +316,9 @@ class ResourcePolicyTests(SimpleTestCase):
         result = resource_manager.evaluate_resource_policy(snapshot)
 
         self.assertTrue(result["ai_recommendation"]["local_ai_allowed"])
-        self.assertFalse(result["ai_recommendation"]["online_allowed"])
+        # This is permission to attempt; external provider health is validated
+        # by the retriever even when NetworkManager reports OFFLINE/UNKNOWN.
+        self.assertTrue(result["ai_recommendation"]["online_allowed"])
         self.assertEqual(result["subsystem_health"]["network"]["level"], "CAUTION")
         self.assertEqual(result["reasons"][0]["code"], "INTERNET_OFFLINE")
 

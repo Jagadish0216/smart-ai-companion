@@ -482,10 +482,9 @@ def evaluate_resource_policy(snapshot: dict[str, Any]) -> dict[str, Any]:
             "PROTECTIVE": "MINIMAL",
             "ECO": "REDUCED",
         }.get(profile, "REDUCED" if safety_unknown else "NORMAL"),
-        "online_allowed": bool(
-            snapshot["ai"]["online_retrieval_enabled"]
-            and snapshot["network"]["internet_state"] in {"FULL", "LIMITED"}
-        ),
+        # Permission to attempt retrieval, not a claim of external connectivity.
+        # SearXNG validates search health with a bounded cache/cooldown.
+        "online_allowed": bool(snapshot["ai"]["online_retrieval_enabled"]),
     }
 
     storage_level = health["storage"]["level"]

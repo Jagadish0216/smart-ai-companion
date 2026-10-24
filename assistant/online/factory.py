@@ -1,6 +1,7 @@
 """Configuration-driven online retriever factory and availability check."""
 
 from django.conf import settings
+import math
 
 from .base import OnlineRetrievalConfigurationError, OnlineRetriever
 from .searxng import SearXNGOnlineRetriever, normalize_searxng_base_url
@@ -27,7 +28,10 @@ def get_online_retriever() -> OnlineRetriever:
 
 
 def is_online_retrieval_available() -> bool:
-    """Conservatively report whether the configured pipeline is usable."""
+    """Report configuration eligibility, not external connectivity.
+
+    Actual search health is validated lazily only for online requests.
+    """
     if not getattr(settings, "ONLINE_RETRIEVAL_ENABLED", False):
         return False
     if getattr(settings, "AI_ENGINE", "mock") != "local":
@@ -46,4 +50,4 @@ def is_online_retrieval_available() -> bool:
         max_context = int(getattr(settings, "ONLINE_MAX_CONTEXT_CHARS", 6000))
     except (OnlineRetrievalConfigurationError, TypeError, ValueError):
         return False
-    return timeout > 0 and 1 <= max_results <= 20 and max_context >= 500
+    return math.isfinite(timeout) and timeout > 0 and 1 <= max_results <= 20 and max_context >= 500
