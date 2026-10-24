@@ -29,6 +29,10 @@ def _public_assistant_metadata(metadata):
             "online_used",
             "online_results",
             "online_latency_ms",
+            "online_attempted",
+            "online_success",
+            "fallback_reason",
+            "request_ttft_ms",
             "resource_profile",
             "configured_model",
             "effective_model",
@@ -72,7 +76,7 @@ def _public_assistant_metadata(metadata):
             for source in metadata.get("rag_sources", [])
         ]
     if "online_sources" in metadata:
-        allowed_source_fields = {"title", "url", "provider", "retrieved_at"}
+        allowed_source_fields = {"title", "url", "provider", "retrieved_at", "published_at"}
         payload["online_sources"] = []
         for source in metadata.get("online_sources", []):
             if not isinstance(source, dict):

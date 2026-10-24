@@ -25,6 +25,7 @@ from assistant.online.grounding import build_online_grounding_instruction
 from assistant.online.searxng import (
     SearXNGOnlineRetriever,
     normalize_searxng_base_url,
+    clear_online_cache,
 )
 from assistant.policy import AssistantResponsePolicy, Capability, CapabilityRegistry
 from assistant.routing import QueryRoute, QueryRouteDecision
@@ -54,15 +55,19 @@ def _online_result(
     url="https://example.com/releases",
 ):
     return OnlineRetrievalResult(
-        title="Current release",
+        title="Current Python release",
         url=url,
         content=content,
         provider="searxng",
         retrieved_at=datetime(2026, 10, 1, 8, 30, tzinfo=timezone.utc),
+        published_at=datetime.now(timezone.utc),
     )
 
 
 class OnlineProviderTests(SimpleTestCase):
+    def setUp(self):
+        clear_online_cache()
+
     def make_retriever(self):
         return SearXNGOnlineRetriever(
             base_url="http://127.0.0.1:8888/",
@@ -112,7 +117,7 @@ class OnlineProviderTests(SimpleTestCase):
             "q": ["latest Python release"],
             "format": ["json"],
         })
-        self.assertEqual(urlopen.call_args.kwargs["timeout"], 3)
+        self.assertLessEqual(urlopen.call_args.kwargs["timeout"], 3)
 
     @patch("assistant.online.searxng.request.urlopen", side_effect=socket.timeout())
     def test_timeout_is_reported_as_typed_failure(self, _urlopen):
@@ -145,9 +150,10 @@ class OnlineProviderTests(SimpleTestCase):
 
     @patch("assistant.online.searxng.request.urlopen")
     def test_zero_useful_results_returns_empty_list(self, urlopen):
-        urlopen.return_value = _FakeHTTPResponse(
-            json.dumps({"results": []}).encode()
-        )
+        urlopen.side_effect = [
+            _FakeHTTPResponse(json.dumps({"results": []}).encode()),
+            _FakeHTTPResponse(json.dumps({"results": [{"title": "Example domains", "url": "https://www.iana.org/help/example-domains", "content": "IANA example domains are reserved for documentation."}]}).encode()),
+        ]
         self.assertEqual(self.make_retriever().retrieve("latest news"), [])
 
     @patch("assistant.online.searxng.request.urlopen")
@@ -548,7 +554,9 @@ class OnlineServiceTests(TestCase):
         self.assertIsNone(error_message)
         self.assertIn("do not provide enough detail", text)
         self.assertNotIn("Reuters says", text)
-        self.assertTrue(metadata["online_used"])
+        self.assertFalse(metadata["online_used"])
+        self.assertEqual(metadata["fallback_reason"], "no_relevant_current_results")
+        engine.generate.assert_not_called()
         retriever.retrieve.assert_called_once()
 
     @patch("assistant.services.get_engine")
@@ -563,7 +571,7 @@ class OnlineServiceTests(TestCase):
         )
 
         self.assertIsNone(error_message)
-        self.assertEqual(text, "I couldn't retrieve current information right now.")
+        self.assertIn("Online search is unavailable", text)
         get_engine.assert_not_called()
         self.assertFalse(metadata["online_used"])
         self.assertEqual(metadata["online_results"], 0)

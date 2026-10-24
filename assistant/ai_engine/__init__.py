@@ -81,6 +81,8 @@ def get_engine(engine_name: Optional[str] = None) -> AIEngine:
             timeout=settings.OLLAMA_TIMEOUT, keep_alive=settings.OLLAMA_KEEP_ALIVE,
             num_predict=settings.OLLAMA_NUM_PREDICT, num_ctx=settings.OLLAMA_NUM_CTX,
             think=settings.OLLAMA_THINK,
+            num_thread=getattr(settings, "OLLAMA_NUM_THREAD", None),
+            num_batch=getattr(settings, "OLLAMA_NUM_BATCH", None),
         )
     else:
         _engine_instance = engine_class()

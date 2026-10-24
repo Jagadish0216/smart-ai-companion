@@ -83,6 +83,8 @@ class Command(BaseCommand):
             num_predict=settings.OLLAMA_NUM_PREDICT,
             num_ctx=settings.OLLAMA_NUM_CTX,
             think=settings.OLLAMA_THINK,
+            num_thread=getattr(settings, "OLLAMA_NUM_THREAD", None),
+            num_batch=getattr(settings, "OLLAMA_NUM_BATCH", None),
         )
         started = time.perf_counter()
         deadline = time.monotonic() + timeout

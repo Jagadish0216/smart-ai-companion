@@ -276,8 +276,9 @@ class GenerationInstructionOrderingTests(TestCase):
         engine = LocalLLMEngine(model=plan.configured_model)
         rag = RetrievedChunk(1, 1, "test:prefix", "prefix.md", 0, "Local reference.", 1.0)
         online = OnlineRetrievalResult(
-            "Current reference", "https://example.com", "Current facts.", "searxng",
+            "News search reference", "https://example.com", "Today's news search contains current facts.", "searxng",
             datetime(2026, 10, 6, tzinfo=timezone.utc),
+            published_at=datetime.now(timezone.utc),
         )
         with (
             patch("knowledge_base.services.is_rag_available", return_value=True),

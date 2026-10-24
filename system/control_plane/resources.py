@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from assistant import latency_trace as latency
 import ctypes
 import os
 import platform as platform_module
@@ -292,6 +293,7 @@ def _device_name(hostname: str) -> str:
     return model or hostname
 
 
+@latency.span("resource_metrics")
 def get_resource_metrics() -> dict[str, Any]:
     """Return measured host telemetry, using ``None`` when unavailable."""
     hostname = platform_module.node() or "UNKNOWN"

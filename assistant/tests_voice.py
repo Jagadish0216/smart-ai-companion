@@ -319,6 +319,18 @@ class PersistentPiperLifecycleTests(SimpleTestCase):
         self.provider.close()
         self.assert_stopped(pid)
 
+    def test_scalar_timings_distinguish_new_and_reused_worker_without_text(self):
+        with self.assertLogs("assistant.voice.tts", level="INFO") as logs:
+            self.provider.synthesize("PRIVATE_FIRST")
+            self.provider.synthesize("PRIVATE_SECOND")
+        metrics = [record.piper_timings for record in logs.records]
+        self.assertEqual([item["worker_reused"] for item in metrics], [False, True])
+        for item in metrics:
+            self.assertGreaterEqual(item["ready_ms"], 0)
+            self.assertGreaterEqual(item["exchange_ms"], 0)
+            self.assertGreater(item["wav_bytes"], 0)
+        self.assertNotIn("PRIVATE", str(logs.output))
+
     def test_preset_cancel_starts_no_worker(self):
         stopped = Event()
         stopped.set()

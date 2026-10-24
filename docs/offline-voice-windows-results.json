@@ -1,0 +1,71 @@
+{
+  "scope": "Windows synthetic and mocked-device tests only; no physical Pi trial or speed claim",
+  "tested_base_commit": "5334e3b30bba766c809d36b54cd04960461d0dcc",
+  "branch": "codex/offline-model-selection",
+  "source_sha256": {
+    "scripts/validate_offline_voice.py": "86131e2e5c6a2d2a0002a712c88dc7ae0c9658e0e71c70866b155e7cfcbb6d71",
+    "assistant/tests_offline_voice_validation.py": "86bd345b8fb433770af3a98590ac37f89246b912bf86ec16d9a866376717039b"
+  },
+  "platform": "Windows-10-10.0.26200-SP0",
+  "python": "3.10.2",
+  "dependencies": {
+    "Django": "5.2.17",
+    "djangorestframework": "3.18.1",
+    "piper-tts": null,
+    "onnxruntime": null,
+    "numpy": "2.2.6",
+    "paho-mqtt": null,
+    "pyserial": null,
+    "openwakeword": null,
+    "pypdf": "6.19.0"
+  },
+  "full_suite": {
+    "exit_code": 0,
+    "count": 1069,
+    "elapsed_seconds": 103.518,
+    "passed": 1068,
+    "skipped": 1
+  },
+  "focused_suite": {
+    "run": 358,
+    "passed": 357,
+    "skipped": 1,
+    "elapsed_seconds": 13.245,
+    "exit_code": 0
+  },
+  "new_tests": {
+    "run": 15,
+    "passed": 15,
+    "skipped": 0
+  },
+  "standalone_synthetic_rechecks": [
+    {
+      "status": "sample_complete_quality_pending",
+      "timing_order_valid": true,
+      "missing_events": []
+    },
+    {
+      "status": "sample_complete_quality_pending",
+      "timing_order_valid": true,
+      "missing_events": []
+    },
+    {
+      "status": "sample_complete_quality_pending",
+      "timing_order_valid": true,
+      "missing_events": []
+    }
+  ],
+  "smoke_limitation": "One earlier Windows standalone smoke aborted after first WAV return, with a generic cycle failure. Cause not identified. Immediate, instrumented, and three further independent rechecks passed. No hardware was accessed. Earlier attempts using sandbox system-temp paths also encountered permission errors; final runs used an owned workspace TEMP/TMP directory.",
+  "protected_files": {
+    "before": 555,
+    "after": 555,
+    "hash_changes": 0,
+    "inventory_changes": 0
+  },
+  "physical_latency_verified": false,
+  "quality_accepted": false,
+  "production_changes": false,
+  "pi_inference_run": false,
+  "main_changed": false,
+  "pi_command": "python scripts/validate_offline_voice.py --operator-live-trial --fixture fact --output /tmp/offline-voice-fact-01.json"
+}

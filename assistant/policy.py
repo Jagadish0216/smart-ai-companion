@@ -195,7 +195,7 @@ def build_runtime_capability_registry(
         online_configured and online_allowed,
         unavailable_response=(
             "I can't retrieve live online information right now because "
-            "the current connectivity policy does not allow Internet access."
+            "online retrieval is disabled, unconfigured, or disallowed by policy."
         ),
     )
 
@@ -408,7 +408,6 @@ class AssistantResponsePolicy:
     ) -> ResponsePlan:
         from django.conf import settings
 
-        registry = registry or CapabilityRegistry.from_settings()
         mode, required_capability = cls.classify(query)
         normalized = " ".join(query.split())
         if mode in {ResponseMode.NORMAL, ResponseMode.BRIEF} and _EXPLICIT_LONG_VOICE_FORMAT.search(normalized):
@@ -441,14 +440,24 @@ class AssistantResponsePolicy:
         direct_response = None
         if mode == ResponseMode.CLARIFICATION:
             direct_response = "What would you like me to do?"
-        elif (
-            mode == ResponseMode.ACTION
-            and required_capability is not None
-            and not registry.is_available(required_capability)
-        ):
-            direct_response = registry.status(required_capability).unavailable_response
+        elif mode == ResponseMode.ACTION and required_capability is not None:
+            # Other modes do not inspect capability availability here. The
+            # service builds its authoritative request registry after policy.
+            registry = registry or CapabilityRegistry.from_settings()
+            if not registry.is_available(required_capability):
+                direct_response = registry.status(required_capability).unavailable_response
 
         instruction = f"{_VOICE_BASE_INSTRUCTION}\n\n{_MODE_INSTRUCTIONS[mode]}"
+        if getattr(settings, "VOICE_COMPACT_STYLE", False):
+            # Experiment only: safety/grounding lives separately and is unchanged.
+            style = {
+                ResponseMode.BRIEF: "Answer in one short sentence.",
+                ResponseMode.NORMAL: "Answer in 1-2 short sentences.",
+                ResponseMode.DETAILED: "Give the requested detail concisely; finish the answer.",
+                ResponseMode.ACTION: _MODE_INSTRUCTIONS[ResponseMode.ACTION],
+                ResponseMode.CLARIFICATION: _MODE_INSTRUCTIONS[ResponseMode.CLARIFICATION],
+            }[mode]
+            instruction = "Speak directly. " + style + " Explicit format requests take priority."
         if _VOICE_REFERENCE.search(normalized):
             instruction += " Use supplied history to resolve references."
         return ResponsePlan(

@@ -1,7 +1,7 @@
 """Engine-independent wake-word contract and validated runtime configuration."""
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 from pathlib import Path
 
@@ -12,12 +12,19 @@ class WakeWordError(Exception):
     """Configuration, model or capture failure in the wake-word subsystem."""
 
 
+class WakeWordCleanupError(WakeWordError):
+    """Owned microphone release could not be confirmed."""
+
+
 @dataclass(frozen=True)
 class WakeWordDetection:
     detected: bool
     model: str = ""
     score: float = 0.0
     elapsed_seconds: float = 0.0
+    # Native request handoff only; never include microphone bytes in repr/logs.
+    audio_preroll: bytes = field(default=b"", repr=False, compare=False)
+    background_rms: float | None = None
 
 
 @dataclass(frozen=True)
@@ -30,6 +37,7 @@ class WakeWordConfig:
     vad_threshold: float = 0.5
     timeout_seconds: float = 0.0
     cooldown_seconds: float = 0.75
+    validation_report: str = ""
 
     @classmethod
     def from_settings(cls):

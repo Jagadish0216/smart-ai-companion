@@ -1,0 +1,68 @@
+Creating test database for alias 'default'...
+
+Local AI generation timed out
+Found 157 test(s).
+System check identified no issues (0 silenced).
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 2
+Preparing microphone (1s warm-up, then speech-driven capture)...
+You: PRIVATE_QUESTION_CANARY
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. PRIVATE_ANSWER_CANARY
+TTS chunks: 3
+Timing: record=0.001s normalize=0.001s stt=0.000s ai=0.003s ai_ttft=0.002s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.005s ai_to_first_speech=0.006s first_speech=0.010s ai_total=0.003s tts=0.000s audio_prepare=0.007s playback=0.004s total=0.019s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=3.223 max_playback_starvation_ms=1.729
+usage: manage.py [-h] [--latency-trace-dir LATENCY_TRACE_DIR]
+                 [--audio-file AUDIO_FILE | --text TEXT | --text-mode | --hands-free]
+
+Production voice loop with optional development input injection.
+
+options:
+  -h, --help            show this help message and exit
+  --latency-trace-dir LATENCY_TRACE_DIR
+                        Opt-in content-free timing reports in a dedicated
+                        bounded directory.
+  --audio-file AUDIO_FILE
+                        Run once using an audio file instead of microphone
+                        capture.
+  --text TEXT           Run once using text, bypassing capture, normalization
+                        and STT.
+  --text-mode           Interactively enter text while retaining the
+                        conversation.
+  --hands-free          Continuously wait for the offline wake word, then
+                        retain a bounded microphone request (requires enabled
+                        wake word and ALSA).
+Preparing microphone (1s warm-up, then 5s recording)...
+Keep quiet: calibrating capture noise for 0.5s...
+Keep quiet: calibrating capture noise for 0.5s...
+Capture VAD: noise_floor=0.0000 start_threshold=0.0200 continue_threshold=0.0050 max_wait_rms=0.0000 speech_duration=0.00s capture_duration=0.00s elapsed=0.06s stop_reason=start_timeout
+Speak now...
+Speak now...
+Speak now...
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Hello
+Preparing microphone (1.25s warm-up, then speech-driven capture)...
+Preparing microphone (1s warm-up, then 5s recording)...
+You: A question.
+Preparing microphone (1s warm-up, then 5s recording)...
+You: A question.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech.
+Assistant: A sentence.
+Assistant: A sentence.
+Assistant: A sentence.
+Assistant: A sentence.
+Assistant: A sentence.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 2
+Assistant: Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 2
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 2
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+................................................................................................s............................................................
+----------------------------------------------------------------------
+Ran 157 tests in 3.951s
+
+OK (skipped=1)
+Destroying test database for alias 'default'...
+
+TTS chunks: 2

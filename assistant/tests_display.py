@@ -668,6 +668,8 @@ class DisplayVoiceLifecycleTests(SimpleTestCase):
                     "STATE THINKING", "QUERY Explain local AI.", "MODE LOCAL",
                     "STATE SPEAKING", "TEXT " + answer, "STATE READY",
                 ]
+                if source == "hands_free":
+                    expected.insert(1,"TEXT Listening...")
                 self.assertEqual([c for c in commands if not c.startswith("LEVEL ")], expected)
                 for index, command in enumerate(commands):
                     if command.startswith("STATE "):

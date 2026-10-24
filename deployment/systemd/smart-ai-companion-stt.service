@@ -1,0 +1,27 @@
+[Unit]
+Description=Resident local whisper.cpp base.en recognizer
+After=local-fs.target
+StartLimitIntervalSec=300
+StartLimitBurst=2
+
+[Service]
+Type=simple
+User=jagadish
+Group=jagadish
+WorkingDirectory=/home/jagadish/apps/smart-ai-companion
+EnvironmentFile=/home/jagadish/apps/smart-ai-companion/.env
+EnvironmentFile=/etc/smart-ai-companion/demo.env
+ExecStart=/home/jagadish/apps/smart-ai-companion/venv/bin/python -m assistant.voice.whisper_server
+ExecStartPost=/home/jagadish/apps/smart-ai-companion/venv/bin/python -m assistant.voice.whisper_server --wait
+TimeoutStartSec=60
+TimeoutStopSec=15
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=multi-user.target

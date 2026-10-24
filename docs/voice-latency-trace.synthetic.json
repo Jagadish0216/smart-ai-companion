@@ -1,0 +1,162 @@
+{
+  "cache_accounting": "unknown_or_invalid",
+  "schema_version": 1,
+  "cycle_id": "00000000000000000000000000000000",
+  "clock": "monotonic_ns",
+  "synthetic": true,
+  "status": "ok",
+  "elapsed_ms": 51.0,
+  "events": [
+    {
+      "name": "cycle_start",
+      "at_ms": 0.0,
+      "lane": "main"
+    },
+    {
+      "name": "capture_open_start",
+      "at_ms": 1.0,
+      "lane": "main"
+    },
+    {
+      "name": "capture_open_end",
+      "at_ms": 2.0,
+      "lane": "main"
+    },
+    {
+      "name": "capture_first_frame",
+      "at_ms": 3.0,
+      "lane": "main"
+    },
+    {
+      "name": "calibration_end",
+      "at_ms": 4.0,
+      "lane": "main"
+    },
+    {
+      "name": "speech_detected",
+      "at_ms": 5.0,
+      "lane": "main"
+    },
+    {
+      "name": "endpoint_detected",
+      "at_ms": 6.0,
+      "lane": "main",
+      "reason": "silence"
+    },
+    {
+      "name": "normalize_start",
+      "at_ms": 7.0,
+      "lane": "main"
+    },
+    {
+      "name": "normalize_end",
+      "at_ms": 8.0,
+      "lane": "main"
+    },
+    {
+      "name": "stt_cli_start",
+      "at_ms": 9.0,
+      "lane": "main"
+    },
+    {
+      "name": "stt_cli_end",
+      "at_ms": 10.0,
+      "lane": "main"
+    },
+    {
+      "name": "resource_cache_hit",
+      "at_ms": 11.0,
+      "lane": "main"
+    },
+    {
+      "name": "ollama_request_ready",
+      "at_ms": 12.0,
+      "lane": "main"
+    },
+    {
+      "name": "llm_first_alphanumeric",
+      "at_ms": 15.0,
+      "lane": "main"
+    },
+    {
+      "name": "first_complete_sentence",
+      "at_ms": 16.0,
+      "lane": "main"
+    },
+    {
+      "name": "first_speech_unit",
+      "at_ms": 17.0,
+      "lane": "main"
+    },
+    {
+      "name": "tts_start",
+      "at_ms": 18.0,
+      "lane": "audio_prepare"
+    },
+    {
+      "name": "piper_state",
+      "at_ms": 19.0,
+      "lane": "audio_prepare",
+      "reused": true
+    },
+    {
+      "name": "ollama_complete",
+      "at_ms": 25.0,
+      "lane": "main",
+      "load_duration_ms": 1,
+      "prompt_eval_count": 136
+    },
+    {
+      "name": "tts_end",
+      "at_ms": 30.0,
+      "lane": "audio_prepare"
+    },
+    {
+      "name": "first_audio_ready",
+      "at_ms": 31.0,
+      "lane": "audio_prepare"
+    },
+    {
+      "name": "player_start_start",
+      "at_ms": 32.0,
+      "lane": "audio_playback"
+    },
+    {
+      "name": "player_start_end",
+      "at_ms": 33.0,
+      "lane": "audio_playback"
+    },
+    {
+      "name": "leading_silence_start",
+      "at_ms": 34.0,
+      "lane": "audio_playback"
+    },
+    {
+      "name": "leading_silence_end",
+      "at_ms": 35.0,
+      "lane": "audio_playback"
+    },
+    {
+      "name": "first_speech_pcm_accepted",
+      "at_ms": 36.0,
+      "lane": "audio_playback"
+    },
+    {
+      "name": "drain_end",
+      "at_ms": 50.0,
+      "lane": "audio_playback"
+    },
+    {
+      "name": "cycle_end",
+      "at_ms": 51.0,
+      "lane": "main",
+      "outcome": "ok"
+    }
+  ],
+  "dropped_events": 0,
+  "residency": "unknown_not_probed",
+  "acoustic_onset": "unobserved",
+  "missing_events": [],
+  "cache_counter_semantics": "backend_reported; missing is unknown; no derived uncached claim",
+  "interpretation": "SYNTHETIC FIXTURE: invented logical-clock timestamps, no hardware or inference. Concurrent lanes overlap; never sum their durations or claim acoustic onset."
+}

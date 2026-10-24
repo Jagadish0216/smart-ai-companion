@@ -34,6 +34,14 @@ ALLOWED_HOSTS = os.environ.get(
     'smart-ai-companion.local,127.0.0.1,localhost',
 ).split(',')
 
+DEMO_AP_ENABLED = os.environ.get('DEMO_AP_ENABLED', 'false').lower() == 'true'
+LOGIN_URL = '/login/'
+LOGIN_REDIRECT_URL = '/'
+if DEMO_AP_ENABLED:
+    # The dedicated profile explicitly configures this address; deployment verifies it.
+    ALLOWED_HOSTS = list(dict.fromkeys(ALLOWED_HOSTS + ['smart-ai-companion.local', '10.77.0.1']))
+CSRF_TRUSTED_ORIGINS = ['http://smart-ai-companion.local:8000', 'http://10.77.0.1:8000'] if DEMO_AP_ENABLED else []
+
 
 # Application definition
 
@@ -158,6 +166,10 @@ OLLAMA_KEEP_ALIVE = os.environ.get('OLLAMA_KEEP_ALIVE', '24h')
 OLLAMA_THINK = os.environ.get('OLLAMA_THINK', 'false').lower() in ('1', 'true', 'yes', 'on')
 OLLAMA_NUM_CTX = int(os.environ.get('OLLAMA_NUM_CTX', '4096'))
 OLLAMA_NUM_PREDICT = int(os.environ.get('OLLAMA_NUM_PREDICT', '128'))
+# Unset preserves Ollama's backend-selected CPU settings. Explicit trials only.
+OLLAMA_NUM_THREAD = int(os.environ['OLLAMA_NUM_THREAD']) if os.environ.get('OLLAMA_NUM_THREAD') else None
+OLLAMA_NUM_BATCH = int(os.environ['OLLAMA_NUM_BATCH']) if os.environ.get('OLLAMA_NUM_BATCH') else None
+VOICE_COMPACT_STYLE = os.environ.get('VOICE_COMPACT_STYLE', 'false').lower() in ('1', 'true', 'yes', 'on')
 # Deprecated settings are parsed for compatibility only; never select models.
 AI_LIGHTWEIGHT_MODEL = os.environ.get('AI_LIGHTWEIGHT_MODEL', OLLAMA_MODEL)
 AI_GENERATION_NORMAL_NUM_PREDICT = int(
@@ -288,6 +300,8 @@ VOICE_AUDIO_BACKEND = os.environ.get('VOICE_AUDIO_BACKEND', 'pulse').strip().low
 VOICE_ALSA_CAPTURE_DEVICE = os.environ.get('VOICE_ALSA_CAPTURE_DEVICE', 'hw:CARD=sndrpigooglevoi,DEV=0')
 VOICE_ALSA_PLAYBACK_DEVICE = os.environ.get('VOICE_ALSA_PLAYBACK_DEVICE', 'hw:CARD=sndrpigooglevoi,DEV=0')
 VOICE_PLAYBACK_GAIN = os.environ.get('VOICE_PLAYBACK_GAIN', '4.0')
+# Opt-in replaces the legacy gain; never stack the approved profile with 4x gain.
+VOICE_PLAYBACK_PROFILE = os.environ.get('VOICE_PLAYBACK_PROFILE', 'legacy').strip().lower()
 VOICE_RECORD_SECONDS = os.environ.get('VOICE_RECORD_SECONDS', '5')
 VOICE_INPUT_WARMUP_SECONDS = os.environ.get('VOICE_INPUT_WARMUP_SECONDS', '1.0')
 VOICE_CAPTURE_VAD_ENABLED = os.environ.get('VOICE_CAPTURE_VAD_ENABLED', 'false').lower() in ('1', 'true', 'yes', 'on')
@@ -296,6 +310,9 @@ VOICE_CAPTURE_VAD_SILENCE_SECONDS = os.environ.get('VOICE_CAPTURE_VAD_SILENCE_SE
 VOICE_CAPTURE_VAD_MAX_SECONDS = os.environ.get('VOICE_CAPTURE_VAD_MAX_SECONDS', '10')
 VOICE_CAPTURE_VAD_START_TIMEOUT_SECONDS = os.environ.get('VOICE_CAPTURE_VAD_START_TIMEOUT_SECONDS', '5')
 VOICE_CAPTURE_VAD_ADAPTIVE = os.environ.get('VOICE_CAPTURE_VAD_ADAPTIVE', 'true').lower() in ('1', 'true', 'yes', 'on')
+# Reversible release candidate: opt in per process until physical acceptance.
+VOICE_CAPTURE_PREPARATION_POLICY = os.environ.get('VOICE_CAPTURE_PREPARATION_POLICY', 'legacy').strip().lower()
+VOICE_CAPTURE_READY_LIFECYCLE = os.environ.get('VOICE_CAPTURE_READY_LIFECYCLE', 'false').lower() in ('1', 'true', 'yes', 'on')
 VOICE_CAPTURE_VAD_NOISE_CALIBRATION_SECONDS = os.environ.get('VOICE_CAPTURE_VAD_NOISE_CALIBRATION_SECONDS', '0.5')
 VOICE_CAPTURE_VAD_START_CONFIRM_MS = os.environ.get('VOICE_CAPTURE_VAD_START_CONFIRM_MS', '60')
 VOICE_CAPTURE_VAD_MIN_SPEECH_MS = os.environ.get('VOICE_CAPTURE_VAD_MIN_SPEECH_MS', '300')
@@ -303,6 +320,8 @@ VOICE_LEADING_SILENCE_SECONDS = os.environ.get('VOICE_LEADING_SILENCE_SECONDS', 
 VOICE_TTS_CHUNK_CHARS = os.environ.get('VOICE_TTS_CHUNK_CHARS', '300')
 VOICE_STREAM_TTS_TARGET_CHARS = os.environ.get('VOICE_STREAM_TTS_TARGET_CHARS', '180')
 VOICE_STREAM_FIRST_CHUNK_MIN_CHARS = os.environ.get('VOICE_STREAM_FIRST_CHUNK_MIN_CHARS', '60')
+# Empty keeps sentence/phrase packing identical to the accepted configuration.
+VOICE_STREAM_FIRST_SENTENCE_MIN_CHARS = os.environ.get('VOICE_STREAM_FIRST_SENTENCE_MIN_CHARS', '')
 VOICE_STREAM_FIRST_CHUNK_TARGET_CHARS = os.environ.get('VOICE_STREAM_FIRST_CHUNK_TARGET_CHARS', '100')
 VOICE_STREAM_INTER_CHUNK_SILENCE_SECONDS = os.environ.get('VOICE_STREAM_INTER_CHUNK_SILENCE_SECONDS', '0.12')
 VOICE_TTS_MAX_TOTAL_CHARS = os.environ.get('VOICE_TTS_MAX_TOTAL_CHARS', '0')

@@ -76,9 +76,11 @@ class AlsaWakeCapture:
             self.close()
             raise
 
-    def chunks(self, deadline=None):
+    def chunks(self, deadline=None, cancel_event=None):
         last_audio = time.monotonic()
         while True:
+            if cancel_event is not None and cancel_event.is_set():
+                return
             now = time.monotonic()
             if deadline is not None and now >= deadline:
                 return

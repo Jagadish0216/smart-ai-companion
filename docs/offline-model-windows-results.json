@@ -1,0 +1,179 @@
+{
+  "baseline": "c4c5c442df0972ad177b038a4e9f7f4c540c5604",
+  "branch": "codex/offline-model-selection",
+  "git_state": "Windows evidence collected before feature-only publication; warm_distinct_parent denotes this extension parent. No merge or deployment.",
+  "scope": "Windows regression and synthetic/mocked distinct-question fixtures only. New Pi timing, cache and quality results are not measured here.",
+  "platform": "Windows-10-10.0.26200-SP0",
+  "python": "3.10.2",
+  "dependencies": {
+    "Django": "5.2.17",
+    "djangorestframework": "3.18.1",
+    "piper-tts": null,
+    "onnxruntime": null,
+    "numpy": "2.2.6",
+    "paho-mqtt": null,
+    "pyserial": null,
+    "openwakeword": null,
+    "pypdf": "6.19.0"
+  },
+  "full_suite": {
+    "run": 1054,
+    "passed": 1053,
+    "skipped": 1,
+    "seconds": 79.733,
+    "exit_code": 0
+  },
+  "focused_suite": {
+    "run": 290,
+    "passed": 290,
+    "seconds": 7.987,
+    "exit_code": 0
+  },
+  "new_tests": {
+    "count": 29,
+    "coverage": [
+      "loopback-only endpoint and redirect rejection",
+      "exact GGUF tag/digest inventory",
+      "missing telemetry/current flags/thermal margins",
+      "unequal pair rejection",
+      "thermal abort preserves invalid report and terminates owned child",
+      "deadline termination escalation/reaping",
+      "real service RAG, memory and follow-up with mocked inference",
+      "confirmed-prefix and full-digest pin rejection",
+      "resident identity and multiple-runner rejection",
+      "separate load/prefill/decode and cold/warm/reload labels",
+      "Qwen residency refuses Llama before schema/inference; releases benchmark lock",
+      "separate cold/warm calls with independently measured warm TTFT",
+      "premature expiry, wrong identity/context and failed cold initialization",
+      "cache hits/unknown counters/changed evaluated work invalidate pair",
+      "reloads/unequal requests/incomplete reports cannot imply improvement",
+      "warm thermal abort and per-child deadline cleanup",
+      "failed warm phase persists cold evidence and invalid overall report",
+      "deterministic different questions for all six patterns",
+      "quantified partial prefix caching; invalid missing/impossible cache counts",
+      "replay/control/profile/reload invalidation",
+      "application rather than HTTP-only latency target",
+      "expiry and thermal aborts retain cleanup guarantees",
+      "real service RAG/follow-up/memory paths using only exact observed cold turn"
+    ],
+    "warm_extension_count": 10,
+    "distinct_extension_count": 8
+  },
+  "plan_only": "Passed without network or inference; six fixed fixtures and 48-token maximum",
+  "pi_model_inventory_attempt": {
+    "operation": "read-only GET /api/tags, no inference",
+    "address": "smart-ai-companion.local:11434",
+    "status": "unverified",
+    "error_type": "URLError"
+  },
+  "protected_files_verified": 555,
+  "production_changes": false,
+  "limitations": [
+    "No candidate quality, speed, peak RSS or thermal stability accepted",
+    "Real Linux process-session cancellation and server-side cancellation pending",
+    "Physical capture/Whisper/Piper/ALSA/TFT acceptance pending; no production changes",
+    "New script keeps all aborts invalid; one sample is not a model comparison",
+    "No distinct-question Pi measurements made by this workspace",
+    "Uncached token count is derived from backend total/cached fields; validate runtime semantics",
+    "Fixed questions are distinct within one trial, not proven never asked on the device",
+    "Observed cold turn is rehydrated with new database IDs/timestamps; no memory-aging claim",
+    "Application overhead includes separately recorded benchmark identity probes"
+  ],
+  "source_sha256": {
+    "scripts/compare_offline_models.py": "54e89ea525854596cb67113064cd33f934750c32d3ba215f9a85d3ea821f4cd3",
+    "assistant/tests_offline_models.py": "f20f9811706662b13b03b0320a87f91cf8dff9aa079fe865382fb7cd169b91d6",
+    "assistant/tests_warm_benchmark.py": "b6c9f7e5899768a69e3c70bb2bb06fb94da83e8a6f1b0fc1c6410ddacf743b38",
+    "assistant/tests_warm_distinct.py": "3042215d3c3ec6255f8563a248a7c3924213d370baacb93c99268e71d9672066"
+  },
+  "user_confirmed_pi_state": {
+    "source": "User supplied snapshot; not measured by this workspace",
+    "temperature_c": 46.1,
+    "throttling": "0x0",
+    "available_ram_gib": 3.0,
+    "qwen_resident_approx_gb": 3.6,
+    "active_cooler": false,
+    "digest_prefixes": {
+      "qwen3.5:4b-q4_K_M": "d8b0f5e9760c",
+      "llama3.2:1b": "baf6a787fdff",
+      "llama3.2:3b": "a80c4f17acd5"
+    }
+  },
+  "runtime_identity_note": "Only user-confirmed prefixes are known here; each Pi trial fetches and rechecks the full installed digest. No invented full digests or new Pi timing/quality results.",
+  "benchmark_guards": {
+    "cool_start_below_c": 55,
+    "cutoff_c": 70,
+    "minimum_available_ram_mib": 512,
+    "max_output_tokens": 48,
+    "child_wall_deadline_s": 45,
+    "request_idle_keep_alive": "60s",
+    "explicit_model_unload": false,
+    "own_harness_linux_lock": true,
+    "mode_requests": {
+      "run": 1,
+      "cold_warm": 2,
+      "warm_distinct": 2
+    },
+    "paired_socket_and_policy_timeout_s": 20,
+    "cold_warm_fixture": "fact only",
+    "warm_continuation_below_c": 70,
+    "deadline_note": "45 seconds per child, monitored with bounded polling overhead; checked again after child exit",
+    "cold_warm_cache_rule": "Require reported zero hits and equal positive evaluated prompt work; unknown is invalid",
+    "warm_distinct_cache_rule": "Allow quantified prefix reuse; total/cached must be known and consistent, derived warm uncached work positive. Different question never means zero cache.",
+    "warm_distinct_fixtures": [
+      "fact",
+      "technical",
+      "reasoning",
+      "followup",
+      "rag",
+      "memory"
+    ]
+  },
+  "warm_benchmark_parent": "917695fbdd7a182e6fae93fbbafe21b30345845b",
+  "harness_focused": {
+    "run": 29,
+    "passed": 29,
+    "verified_within_targeted_suite": true
+  },
+  "user_supplied_llama_cold_evidence": {
+    "source": "User supplied report; not regenerated or revalidated here",
+    "model": "llama3.2:1b",
+    "digest_prefix": "baf6a787fdff",
+    "load_ms": 17433.33,
+    "prompt_eval_ms": 2407.88,
+    "decode_ms": 1860.19,
+    "first_text_ms": 19844,
+    "full_answer_s": 21.919,
+    "generation_tokens_per_s": 9.1,
+    "prompt_tokens": 142,
+    "generated_tokens": 17,
+    "answer": "The capital of India is New Delhi. It is north of the equator."
+  },
+  "new_pi_performance_results": null,
+  "warm_distinct_parent": "b910c68a384c78b132a853df1349d9fa1d59a04e",
+  "user_supplied_repeated_warm_evidence": {
+    "source": "User supplied; raw Pi reports not regenerated here",
+    "cold": {
+      "first_meaningful_text_ms": 6308,
+      "total_answer_s": 8.34,
+      "load_ms": 3876,
+      "prompt_eval_ms": 2426,
+      "tokens_per_s": 9.3,
+      "cached_tokens": 0,
+      "prompt_tokens": 142
+    },
+    "repeated_warm": {
+      "first_meaningful_text_ms": 119,
+      "total_answer_s": 2.155,
+      "load_ms": 1.3,
+      "prompt_eval_ms": 114.49,
+      "tokens_per_s": 9.3,
+      "cached_tokens": 141,
+      "prompt_tokens": 142
+    },
+    "reported_status": "invalid_cold_warm",
+    "reason": "prompt_cache_reuse",
+    "max_temperature_c_approx": 56.8,
+    "active_throttling": false,
+    "interpretation": "Identical-question cached replay; not evidence of new-question speed."
+  }
+}

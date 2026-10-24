@@ -1,0 +1,84 @@
+{
+  "scope": "Windows synthetic infrastructure/regression tests; no Pi model inference or model-quality acceptance",
+  "tested_base_commit": "1043dfa18b2937bc8f3e0f469fb06f0459a69bfd",
+  "branch": "codex/offline-model-selection",
+  "platform": "Windows-10-10.0.26200-SP0",
+  "python": "3.10.2",
+  "dependencies": {
+    "Django": "5.2.17",
+    "djangorestframework": "3.18.1",
+    "piper-tts": null,
+    "onnxruntime": null,
+    "numpy": "2.2.6",
+    "paho-mqtt": null,
+    "pyserial": null,
+    "openwakeword": null,
+    "pypdf": "6.19.0"
+  },
+  "bank_version": "1.0.0",
+  "questions": 100,
+  "reviewer_questions": 25,
+  "source_sha256": {
+    "assistant/tests_quality_evaluation.py": "2d10612f61fd9922f466f9ad7a6294849283b7439a5fe0025b0c7949fc540942",
+    "benchmarks/offline_quality_v1.json": "7db7b4f023e3422273cbf2b793ed03b8b431580d1269cc137c1bbd34c18ff51c",
+    "benchmarks/offline_quality_reviewer_v1.md": "db0bad3084eec16d366d5b246fc48e7555c36d2a227bb056c0945cbebae24f34",
+    "benchmarks/offline_quality_pending_v1.json": "7b6478ffb6472af7d3ce1820bcd2ff711e77ac7495480ea3da4df48d212e1dc6",
+    "scripts/evaluate_offline_quality.py": "abe003ab06757fb74c156df865e53b857c9e052ad1177432789df6a509043023",
+    "scripts/report_offline_quality.py": "6a514c78fc248a376ec411944e282fec6451037acc26ebf8880661b0e5890feb"
+  },
+  "full_suite": {
+    "exit_code": 0,
+    "count": 1096,
+    "elapsed_seconds": 36.518,
+    "passed": 1095,
+    "skipped": 1
+  },
+  "focused_suite": {
+    "run": 385,
+    "passed": 384,
+    "skipped": 1,
+    "elapsed_seconds": 8.104,
+    "exit_code": 0
+  },
+  "new_tests": {
+    "run": 27,
+    "passed": 27,
+    "skipped": 0
+  },
+  "windows_inference_refusal": {
+    "status": "aborted",
+    "reason": "linux_pi_only_no_laptop_inference",
+    "inference_process_started": false
+  },
+  "protected_files": {
+    "before": 555,
+    "after": 555,
+    "hash_changes": 0,
+    "inventory_changes": 0
+  },
+  "changed_files": [
+    "assistant/tests_quality_evaluation.py",
+    "benchmarks/offline_quality_v1.json",
+    "benchmarks/offline_quality_reviewer_v1.md",
+    "benchmarks/offline_quality_pending_v1.json",
+    "scripts/evaluate_offline_quality.py",
+    "scripts/report_offline_quality.py",
+    "docs/offline-quality-evaluation.md",
+    "docs/offline-model-selection.md",
+    "docs/offline-quality-windows-results.json",
+    "docs/offline-quality-windows-tests.log"
+  ],
+  "full_log_normalization": "Trailing spaces and blank EOF lines removed; test content/results retained.",
+  "pi_inference_run": false,
+  "model_quality_scores_pending": true,
+  "production_defaults_changed": false,
+  "main_changed": false,
+  "physical_limitations": [
+    "All actual model outputs and independent quality scores remain unmeasured.",
+    "Matched cold/warm/cache-aware Pi timing and thermal evidence remain pending.",
+    "Long answers may not complete under uncooled safety limits; incomplete samples cannot establish acceptance.",
+    "Text clarity review cannot establish physical spoken delivery.",
+    "Independent assessment is declared by the evaluator, not authenticated by this tool."
+  ],
+  "canonical_bank_sha256": "e752f0aea718c85ee321f0b543e31557bd5986f580c02137ff09f9c6a87c81c7"
+}

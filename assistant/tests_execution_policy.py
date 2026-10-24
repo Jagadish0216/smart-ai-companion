@@ -212,15 +212,12 @@ class ExecutionPolicyMappingTests(SimpleTestCase):
         self.assertEqual(plan.model_reason, "RESOURCE_POLICY_BLOCK")
         self.assertIn("protecting itself", plan.status_message)
 
-    @patch("assistant.execution_policy.get_internet_status")
     @patch("assistant.execution_policy.get_resource_manager_report")
     def test_resource_manager_failure_uses_conservative_fallback(
         self,
         resource_report,
-        internet_status,
     ):
         resource_report.side_effect = RuntimeError("telemetry unavailable")
-        internet_status.return_value = {"state": "FULL"}
         inventory = MagicMock()
 
         with self.settings(ONLINE_RETRIEVAL_ENABLED=True):
@@ -306,7 +303,7 @@ class ResourceAwareAssistantServiceTests(TestCase):
         )
 
         self.assertIsNone(error)
-        self.assertIn("does not allow Internet access", text)
+        self.assertIn("disallowed by policy", text)
         self.assertFalse(metadata["online_allowed"])
         self.assertFalse(metadata["online_used"])
         online_retriever.assert_not_called()
@@ -392,11 +389,12 @@ class ResourceAwareAssistantServiceTests(TestCase):
         retriever = MagicMock()
         retriever.retrieve.return_value = [
             OnlineRetrievalResult(
-                title="Current release",
+                title="Current Python release",
                 url="https://example.com/release",
                 content="The current release is available.",
                 provider="searxng",
                 retrieved_at=datetime(2026, 10, 3, tzinfo=timezone.utc),
+                published_at=datetime.now(timezone.utc),
             )
         ]
         online_retriever.return_value = retriever

@@ -474,6 +474,7 @@ class OnlinePersistenceIntegrationTests(OnlineSyncFixture):
 
     def test_persistence_failure_cannot_fail_the_online_answer_or_log_secrets(self):
         install_resource_report(self, online_allowed=True)
+        self.retriever.retrieve.return_value = [replace(result(), published_at=NOW)]
         engine = MagicMock()
         engine.generate.return_value = AIEngineResult(text='A grounded answer.', engine='local', model='test', mode='offline', latency_ms=1)
         with patch('assistant.services.get_online_retriever', return_value=self.retriever), patch(

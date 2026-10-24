@@ -44,7 +44,10 @@ def validate_installed_assets(config, engine):
     missing = [str(path) for path, _ in required_assets(config, engine)
                if not path.is_file() or not path.stat().st_size]
     if missing:
-        raise WakeWordError("Wake model assets are missing; run python manage.py prepare_wake_word_model. Missing: " + ", ".join(missing))
+        command = "./venv/bin/python manage.py prepare_wake_word_model"
+        if not config.model_path:
+            command += " --model " + config.model
+        raise WakeWordError("Wake model assets are missing; no download attempted. After operator approval run " + command + ". Missing: " + ", ".join(missing))
 
 
 def prepare_model(config):

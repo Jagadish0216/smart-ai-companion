@@ -6,6 +6,77 @@ import re
 from datetime import datetime, timezone
 
 from .base import OnlineRetrievalResult
+from .searxng import _safe_public_url, _published_time, _plain_text, query_terms
+
+
+def has_conflicting_claims(results, query):
+    """Abstain on directly comparable role/price/score claims.
+
+    This catches explicit conflicts only. Other disagreements still require
+    the grounding instruction's uncertainty rule, not automated adjudication.
+    """
+    patterns = []
+    for role in ("CEO", "president", "prime minister", "governor", "mayor"):
+        if re.search(r"\b" + role + r"\b", query, re.I):
+            patterns.append(r"(?i:\b" + role + r"\s+(?:is|:)\s*)([A-Z][\w'-]+(?: [A-Z][\w'-]+){0,3})")
+    if re.search(r"\b(?:price|cost)\b", query, re.I):
+        patterns.append(r"(?i:\b(?:price|cost)\s*(?:is|:)?\s*)([$€£]\s*\d[\d,.]*)")
+    if re.search(r"\bscore\b", query, re.I):
+        patterns.append(r"(?i:\bscore\s*(?:is|:)\s*)(\d+\s*[-:]\s*\d+)")
+    return any(len({re.sub(r"\s+", "", match).casefold() for result in results for match in re.findall(pattern, result.content)}) > 1 for pattern in patterns)
+
+
+def select_current_evidence(results, query, request_time):
+    """Conservative admission, independent of model compliance.
+
+    Retrieval time is not publication/observation time. Undated search snippets
+    are deliberately insufficient for a current claim.
+    """
+    now = _normalized_request_time(request_time)
+    age_limit = 30 * 86400
+    if re.search(r"\b(news|recent|today|events?)\b", query, re.I):
+        age_limit = 2 * 86400
+    if re.search(r"\b(ceo|president|minister|rankings?|schedules?|availability)\b", query, re.I):
+        age_limit = 7 * 86400
+    if re.search(r"\b(weather|forecast)\b", query, re.I):
+        age_limit = 3 * 3600
+    if re.search(r"\b(prices?|scores?|status|live|traffic|stocks?)\b", query, re.I):
+        age_limit = 15 * 60
+    terms = query_terms(query)
+    admitted = []
+    seen = set()
+    for result in results[:20]:
+        if not isinstance(result, OnlineRetrievalResult) or not _safe_public_url(result.url):
+            continue
+        content = result.content
+        if not isinstance(content, str) or len(content.strip()) < 20:
+            continue
+        if len(content) < 120 and re.search(r"\b(?:coverage|news and analysis|latest news and updates|read more|click here)\b", content, re.I):
+            continue
+        words = set(re.findall(r"[a-z0-9]+", (result.title + " " + content).lower()))
+        if terms and len(terms & words) < min(2, len(terms)):
+            continue
+        published = result.published_at
+        observation = re.search(r"\bas of\s+(20\d{2}-\d{2}-\d{2})\b", content, re.I)
+        if observation:
+            observed = _published_time(observation.group(1))
+            if observed is not None and (now - observed).total_seconds() > age_limit:
+                continue
+        if published is None:
+            # Accept explicit ISO dates, but never manufacture publication time
+            # from the date this result was fetched.
+            match = re.search(r"\b20\d{2}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})?)?\b", content)
+            published = _published_time(match.group()) if match else None
+        if published is None:
+            continue
+        age = (now - _normalized_request_time(published)).total_seconds()
+        if age < -300 or age > age_limit or result.url in seen:
+            continue
+        seen.add(result.url)
+        admitted.append(result)
+        if len(admitted) == 4:
+            break
+    return admitted
 
 
 _ONLINE_SECURITY_INSTRUCTION = (
@@ -71,18 +142,21 @@ def build_online_grounding_instruction(
     used_chars = 0
 
     for index, result in enumerate(results, start=1):
+        if not _safe_public_url(result.url):
+            continue
         header = (
             f"--- SOURCE {index} START ---\n"
-            f"Title: {result.title}\n"
+            f"Title: {_plain_text(result.title)[:180]}\n"
             f"URL: {result.url}\n"
             f"Retrieved: {result.retrieved_at.isoformat()}\n"
+            f"Published: {result.published_at.isoformat() if result.published_at else 'see snippet; unknown otherwise'}\n"
             "Snippet: "
         )
         footer = f"\n--- SOURCE {index} END ---"
         remaining = context_budget - used_chars - len(header) - len(footer)
         if remaining <= 0:
             break
-        content = _truncate_at_word(result.content, remaining)
+        content = _truncate_at_word(_plain_text(result.content), remaining)
         if not content:
             continue
         block = f"{header}{content}{footer}"
@@ -104,7 +178,11 @@ def build_online_grounding_instruction(
         f"Date: {request_time.date().isoformat()}\n"
         f"Day of week: {request_time.strftime('%A')}\n"
         "If the answer uses a current date or weekday, use these supplied values "
-        "exactly rather than model memory or mental date calculation."
+        "exactly rather than model memory or mental date calculation. "
+        "You are a local model using web search snippets, not a cloud LLM. "
+        "Retrieval time does not establish the age of a fact. State evidence dates. "
+        "If sources disagree, explicitly report uncertainty and do not choose a winner. "
+        "Earlier conversation claims are not evidence for current facts."
     )
     return (
         f"{_ONLINE_SECURITY_INSTRUCTION}\n\n"

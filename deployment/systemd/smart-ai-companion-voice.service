@@ -1,0 +1,29 @@
+[Unit]
+Description=Smart AI Companion hold-to-record physical demo
+Wants=ollama.service smart-ai-companion-model-warm.service
+Requires=smart-ai-companion-stt.service smart-ai-companion-model-warm.service
+After=ollama.service smart-ai-companion-model-warm.service smart-ai-companion-stt.service sound.target
+StartLimitIntervalSec=300
+StartLimitBurst=2
+
+[Service]
+Type=simple
+User=jagadish
+Group=jagadish
+SupplementaryGroups=audio gpio
+WorkingDirectory=/home/jagadish/apps/smart-ai-companion
+EnvironmentFile=/home/jagadish/apps/smart-ai-companion/.env
+EnvironmentFile=/etc/smart-ai-companion/demo.env
+ExecStart=/home/jagadish/apps/smart-ai-companion/venv/bin/python -u scripts/voice_loop.py --push-to-talk --responsive --voice-refinements
+Restart=on-failure
+RestartSec=10
+KillSignal=SIGINT
+KillMode=control-group
+TimeoutStopSec=20
+NoNewPrivileges=true
+UMask=0077
+StandardOutput=null
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

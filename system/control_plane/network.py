@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from assistant import latency_trace as latency
 import ipaddress
 import os
 import shutil
@@ -1462,6 +1463,7 @@ def _fallback_status() -> dict[str, Any]:
     }
 
 
+@latency.span("network_checks")
 def get_network_status() -> dict[str, Any]:
     """Return network state without scanning, connecting, or changing configuration."""
     executable = shutil.which("nmcli")

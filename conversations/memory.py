@@ -1,5 +1,6 @@
 """Bounded, replaceable retrieval of earlier user statements in one conversation."""
 
+from assistant import latency_trace as latency
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 import re
@@ -62,6 +63,7 @@ class ConversationMemoryRetriever(ABC):
 
 
 class LexicalConversationMemoryRetriever(ConversationMemoryRetriever):
+    @latency.span("memory")
     def retrieve(self, query: str, *, conversation_id: int, before_id: int,
                  recent_ids: list[int], recent_texts: list[str] | None = None) -> list[MemoryMessage]:
         if is_contentless_follow_up(query):

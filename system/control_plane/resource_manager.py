@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from assistant import latency_trace as latency
 import time
 from typing import Any
 
@@ -115,6 +116,7 @@ def _unknown_services() -> dict[str, dict[str, Any]]:
     }
 
 
+@latency.span("resource_snapshot")
 def collect_resource_snapshot() -> dict[str, Any]:
     """Collect each existing telemetry source independently and honestly."""
     try:
@@ -129,10 +131,12 @@ def collect_resource_snapshot() -> dict[str, Any]:
         services = get_service_health()
     except Exception:
         services = _unknown_services()
+    latency.mark("provisioning_check_start")
     try:
         provisioning_state = NetworkProvisioningState.get_current().state
     except Exception:
         provisioning_state = "UNKNOWN"
+    latency.mark("provisioning_check_end")
 
     wifi_connected = network.get("wifi", {}).get("connected")
     ethernet_connected = network.get("ethernet", {}).get("connected")
@@ -141,7 +145,10 @@ def collect_resource_snapshot() -> dict[str, Any]:
     else:
         lan_connected = bool(wifi_connected or ethernet_connected)
 
+    latency.mark("resource_state", temperature_c=metrics.get("temperature_c"), ram_available_bytes=metrics.get("ram_available_bytes"))
     throttling = metrics.get("throttled")
+    if isinstance(throttling, dict):
+        latency.mark("resource_state", **{key: throttling.get(key) for key in CURRENT_THROTTLE_FLAGS})
     return {
         "snapshot_generated_at": timezone.now().isoformat(),
         "host": {
@@ -475,10 +482,9 @@ def evaluate_resource_policy(snapshot: dict[str, Any]) -> dict[str, Any]:
             "PROTECTIVE": "MINIMAL",
             "ECO": "REDUCED",
         }.get(profile, "REDUCED" if safety_unknown else "NORMAL"),
-        "online_allowed": bool(
-            snapshot["ai"]["online_retrieval_enabled"]
-            and snapshot["network"]["internet_state"] in {"FULL", "LIMITED"}
-        ),
+        # Permission to attempt retrieval, not a claim of external connectivity.
+        # SearXNG validates search health with a bounded cache/cooldown.
+        "online_allowed": bool(snapshot["ai"]["online_retrieval_enabled"]),
     }
 
     storage_level = health["storage"]["level"]
@@ -519,8 +525,10 @@ def get_resource_manager_report(*, use_cache: bool = True) -> dict[str, Any]:
     if use_cache:
         cached = cache.get(RESOURCE_MANAGER_CACHE_KEY)
         if isinstance(cached, dict):
+            latency.mark("resource_cache_hit")
             return cached
 
+    latency.mark("resource_cache_miss")
     total_started = time.perf_counter()
     collection_started = time.perf_counter()
     snapshot = collect_resource_snapshot()

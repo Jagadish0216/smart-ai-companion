@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "bank_version": "1.0.0",
+  "bank_sha256": "e752f0aea718c85ee321f0b543e31557bd5986f580c02137ff09f9c6a87c81c7",
+  "report_generator_sha256": "6a514c78fc248a376ec411944e282fec6451037acc26ebf8880661b0e5890feb",
+  "models": {
+    "llama3.2:1b": {
+      "tested_questions": 0,
+      "reviewed_questions": 0,
+      "overall_quality": null,
+      "acceptance": "pending: no measured trials",
+      "coverage": "0/100"
+    },
+    "qwen3.5:4b-q4_K_M": {
+      "tested_questions": 0,
+      "reviewed_questions": 0,
+      "overall_quality": null,
+      "acceptance": "pending: no measured trials",
+      "coverage": "0/100"
+    }
+  },
+  "paired_latency": [],
+  "replacement_recommendation": "pending evidence; keep Qwen4B default"
+}

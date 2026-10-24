@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from assistant import latency_trace as latency
 import heapq
 import re
 from abc import ABC, abstractmethod
@@ -65,6 +66,7 @@ class KnowledgeRetriever(ABC):
 class LexicalRetriever(KnowledgeRetriever):
     """Term-coverage retrieval with no model or external service dependency."""
 
+    @latency.span("rag")
     def retrieve(
         self,
         query: str,
@@ -95,25 +97,29 @@ class LexicalRetriever(KnowledgeRetriever):
             .filter(document__status="INDEXED")
             .filter(usable_knowledge_filter())
             .filter(candidate_filter)
-            .select_related("document")
             .order_by("document_id", "chunk_index")
+            # Scoring needs six scalars, not two model instances and every
+            # document metadata column for each candidate. Keep filtering and
+            # ordering in SQL; do not cap candidates or change relevance.
+            .values_list("id", "document_id", "document__source_identifier",
+                         "document__filename", "chunk_index", "content")
         )
 
         best: list[tuple[float, int, int, int, RetrievedChunk]] = []
-        for chunk in candidates.iterator(chunk_size=200):
-            content_counts = Counter(_tokenize(chunk.content))
+        for chunk_id, document_id, source_identifier, title, chunk_index, content in candidates.iterator(chunk_size=200):
+            content_counts = Counter(_tokenize(content))
             if not _has_sufficient_distinct_matches(query_counts, content_counts):
                 continue
             score = _term_coverage(query_counts, content_counts)
             if score < min_relevance:
                 continue
             result = RetrievedChunk(
-                chunk_id=chunk.id,
-                document_id=chunk.document_id,
-                source_identifier=chunk.document.source_identifier,
-                title=chunk.document.filename,
-                chunk_index=chunk.chunk_index,
-                content=chunk.content,
+                chunk_id=chunk_id,
+                document_id=document_id,
+                source_identifier=source_identifier,
+                title=title,
+                chunk_index=chunk_index,
+                content=content,
                 score=round(score, 4),
             )
             rank = (

@@ -35,6 +35,8 @@
     const handoffDetail = document.getElementById('setup-handoff-detail');
     const handoffGuidance = document.getElementById('setup-handoff-guidance');
     const handoffRetry = document.getElementById('setup-handoff-retry');
+    const dashboardLink = document.getElementById('setup-dashboard-link');
+    let canonicalUrl = dashboardLink.href;
     const setupSsid = handoffPanel.dataset.setupSsid;
     let selectedSsid = null;
     let phase = PHASES.IDLE;
@@ -42,6 +44,12 @@
     let pollRunId = 0;
     let pollStartTimer = null;
     let redirectTimer = null;
+    let requestController = null;
+    let pollDelayTimer = null;
+    let resumePollDelay = null;
+    let pollDeadline = 0;
+    let connectionRunId = 0;
+    let postController = null;
 
     function csrfToken() {
         for (const part of document.cookie.split(';')) {
@@ -56,7 +64,26 @@
     }
 
     function delay(milliseconds) {
-        return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+        return new Promise((resolve) => {
+            resumePollDelay = resolve;
+            pollDelayTimer = window.setTimeout(wakePolling, milliseconds);
+        });
+    }
+
+    function wakePolling() {
+        if (pollDelayTimer !== null) window.clearTimeout(pollDelayTimer);
+        pollDelayTimer = null;
+        if (resumePollDelay) resumePollDelay();
+        resumePollDelay = null;
+    }
+
+    function updateCanonicalUrl(value) {
+        try {
+            const url = new URL(value);
+            if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return;
+            canonicalUrl = url.href;
+            dashboardLink.href = canonicalUrl;
+        } catch (_error) { /* Keep the server-rendered canonical link. */ }
     }
 
     function showMessage(value, isError) {
@@ -84,6 +111,8 @@
     function stopHandoffPolling() {
         pollRunId += 1;
         polling = false;
+        if (requestController) requestController.abort();
+        wakePolling();
         if (pollStartTimer !== null) {
             window.clearTimeout(pollStartTimer);
             pollStartTimer = null;
@@ -91,6 +120,8 @@
     }
 
     function resetHandoff() {
+        connectionRunId += 1;
+        if (postController) postController.abort();
         stopHandoffPolling();
         if (redirectTimer !== null) {
             window.clearTimeout(redirectTimer);
@@ -109,7 +140,7 @@
             icon: '•••',
             title: `Connecting Smart Companion to ${targetSsid}…`,
             detail: 'The setup Wi-Fi will disconnect temporarily.',
-            guidance: `Your computer or phone may reconnect to ${targetSsid}. Keep this page open.`,
+            guidance: `Open this device's Wi-Fi settings, join ${targetSsid}, then return to this page. The browser cannot switch Wi-Fi for you.`,
             retry: false,
         });
     }
@@ -119,15 +150,17 @@
         setHandoffPhase(PHASES.WAITING_FOR_NETWORK, {
             icon: '•••',
             title: 'Waiting for Smart Companion…',
-            detail: `Make sure this device reconnects to ${targetSsid}.`,
-            guidance: 'Temporary DNS and network errors are expected while Wi-Fi changes.',
+            detail: `Join ${targetSsid} in this phone or laptop's Wi-Fi settings, then return to this page.`,
+            guidance: 'Connection checks continue for up to 90 seconds. Temporary DNS and network errors are expected. Once you have joined, you can also use Open Dashboard below.',
             retry: false,
         });
     }
 
-    function showSuccess(connectedSsid) {
+    function showSuccess(status) {
         stopHandoffPolling();
+        updateCanonicalUrl(status.canonical_url);
         stateLabel.textContent = 'CONNECTED';
+        const connectedSsid = status.connected_ssid;
         const title = connectedSsid
             ? `Connected to ${connectedSsid}`
             : 'Connected to Wi-Fi';
@@ -135,11 +168,12 @@
             icon: '✓',
             title: title,
             detail: 'Smart Companion is ready.',
-            guidance: 'Opening your dashboard…',
+            guidance: 'Opening your dashboard… If it does not open, use Open Dashboard below.',
             retry: false,
         });
         redirectTimer = window.setTimeout(() => {
-            window.location.assign('/');
+            redirectTimer = null;
+            window.location.assign(canonicalUrl);
         }, SUCCESS_REDIRECT_DELAY_MS);
     }
 
@@ -165,17 +199,18 @@
         setHandoffPhase(PHASES.TIMED_OUT, {
             icon: '?',
             title: "We couldn't reach Smart Companion yet.",
-            detail: `Make sure this device is connected to ${targetSsid}, then open:`,
-            guidance: 'smart-ai-companion.local:8000',
+            detail: `Make sure this device is connected to ${targetSsid} in Wi-Fi settings, then return here.`,
+            guidance: 'This does not confirm a connection failure. Use Open Dashboard, or Retry Connection Check for another 90-second check. If this page was opened at the setup IP address, use Open Dashboard at the normal hostname after joining.',
             retry: true,
         });
     }
 
     async function requestHandoffStatus() {
         const controller = new AbortController();
+        requestController = controller;
         const timeout = window.setTimeout(
             () => controller.abort(),
-            HANDOFF_REQUEST_TIMEOUT_MS
+            Math.min(HANDOFF_REQUEST_TIMEOUT_MS, Math.max(0, pollDeadline - Date.now()))
         );
         try {
             const response = await fetch(handoffStatusUrl, {
@@ -189,10 +224,11 @@
             return await readJson(response);
         } finally {
             window.clearTimeout(timeout);
+            if (requestController === controller) requestController = null;
         }
     }
 
-    async function startHandoffPolling(targetSsid) {
+    async function startHandoffPolling(targetSsid, resume = false) {
         if (
             polling ||
             phase === PHASES.SUCCESS ||
@@ -204,7 +240,8 @@
         }
         polling = true;
         const runId = ++pollRunId;
-        const deadline = Date.now() + HANDOFF_OVERALL_TIMEOUT_MS;
+        if (!resume) pollDeadline = Date.now() + HANDOFF_OVERALL_TIMEOUT_MS;
+        const deadline = pollDeadline;
         showWaiting(targetSsid);
 
         try {
@@ -217,7 +254,7 @@
                         status.state === 'NORMAL_MODE' &&
                         status.ready === true
                     ) {
-                        showSuccess(status.connected_ssid);
+                        showSuccess(status);
                         return;
                     }
                     if (
@@ -234,7 +271,8 @@
                     // DNS failure, connection refusal, abort, and network loss
                     // are expected while the client leaves the setup AP.
                 }
-                await delay(HANDOFF_POLL_INTERVAL_MS);
+                if (runId !== pollRunId) return;
+                await delay(Math.min(HANDOFF_POLL_INTERVAL_MS, Math.max(0, deadline - Date.now())));
             }
             if (runId === pollRunId) showHandoffTimeout(targetSsid);
         } finally {
@@ -300,6 +338,7 @@
             const response = await fetch(statusUrl, {credentials: 'same-origin'});
             const data = await readJson(response);
             if (response.ok) {
+                if (phase !== PHASES.IDLE) return;
                 stateLabel.textContent = data.state || 'SETUP_AP';
                 if (data.message) showMessage(data.message, data.state === 'FAILED');
             }
@@ -329,9 +368,13 @@
 
     async function submitConnection(event) {
         event.preventDefault();
-        if (!selectedSsid || polling) return;
+        if (!selectedSsid || polling || phase === PHASES.CONNECTING || phase === PHASES.WAITING_FOR_NETWORK) return;
 
         const targetSsid = selectedSsid;
+        const attempt = ++connectionRunId;
+        const controller = new AbortController();
+        postController = controller;
+        const postTimeout = window.setTimeout(() => controller.abort(), HANDOFF_REQUEST_TIMEOUT_MS);
         let password = passwordInput.value;
         const requestBody = JSON.stringify({ssid: targetSsid, password: password});
         passwordInput.value = '';
@@ -351,8 +394,11 @@
                     'X-CSRFToken': csrfToken(),
                 },
                 body: requestBody,
+                signal: controller.signal,
             });
             const data = await readJson(response);
+            // A delayed POST must never overwrite an authoritative poll result.
+            if (attempt !== connectionRunId || ![PHASES.CONNECTING, PHASES.WAITING_FOR_NETWORK].includes(phase)) return;
             if (!response.ok || !data.success) {
                 showConnectionFailure(
                     targetSsid,
@@ -370,12 +416,16 @@
             // Losing this POST response is expected when wlan0 leaves AP mode.
             // The read-only handoff poll will determine the authoritative result.
             if (
+                attempt === connectionRunId &&
                 phase !== PHASES.SUCCESS &&
                 phase !== PHASES.FAILURE &&
                 phase !== PHASES.TIMED_OUT
             ) {
                 startHandoffPolling(targetSsid);
             }
+        } finally {
+            window.clearTimeout(postTimeout);
+            if (postController === controller) postController = null;
         }
     }
 
@@ -388,7 +438,25 @@
         form.classList.add('hidden');
     });
     handoffRetry.addEventListener('click', () => {
-        if (selectedSsid) startHandoffPolling(selectedSsid);
+        if (selectedSsid && phase === PHASES.TIMED_OUT) startHandoffPolling(selectedSsid);
+    });
+    // Wake the existing bounded loop, never create a second loop or extend its deadline.
+    window.addEventListener('online', wakePolling);
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') wakePolling();
+    });
+    window.addEventListener('pagehide', () => {
+        connectionRunId += 1;
+        if (postController) postController.abort();
+        stopHandoffPolling();
+        if (redirectTimer !== null) window.clearTimeout(redirectTimer);
+        redirectTimer = null;
+    });
+    window.addEventListener('pageshow', (event) => {
+        if (!event.persisted) return;
+        if ([PHASES.CONNECTING, PHASES.WAITING_FOR_NETWORK].includes(phase)) {
+            startHandoffPolling(selectedSsid, true);
+        }
     });
 
     loadStatus();

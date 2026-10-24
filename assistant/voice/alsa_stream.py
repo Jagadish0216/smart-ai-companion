@@ -1,5 +1,6 @@
 """File-backed PCM preparation and a cancellable, response-long ALSA player."""
 
+from assistant import latency_trace as latency
 import os
 import logging
 import math
@@ -148,7 +149,7 @@ class PersistentAlsaPlayer:
     deadlock. One 300-second response-lifetime deadline also bounds final drain.
     """
 
-    def __init__(self, device, cancel_event, temp_path, timeout=300, *, on_amplitude=None):
+    def __init__(self, device, cancel_event, temp_path, timeout=300, *, on_amplitude=None, on_reference=None):
         self.device = device
         self.cancel_event = cancel_event
         self.temp_path = temp_path
@@ -157,8 +158,10 @@ class PersistentAlsaPlayer:
         self.stderr = None
         self.deadline = None
         self.fd = None
+        self.on_reference = on_reference
         self.amplitude = PlaybackAmplitudeObserver(on_amplitude) if on_amplitude is not None else None
 
+    @latency.span("player_start")
     def start(self):
         self.check()
         self.stderr = tempfile.TemporaryFile(dir=self.temp_path)
@@ -209,12 +212,16 @@ class PersistentAlsaPlayer:
                 raise AlsaStreamError("Persistent aplay stdin closed during playback.") from exc
             if count <= 0:
                 raise AlsaStreamError("Persistent aplay accepted no PCM data.")
+            latency.pcm_accepted()
+            if self.on_reference is not None:
+                self.on_reference(bytes(remaining[:count]))
             if self.amplitude is not None:
                 self.amplitude.accept(remaining[:count])
             remaining = remaining[count:]
             if on_write is not None:
                 on_write(count)
 
+    @latency.span("leading_silence")
     def write_silence(self, frames):
         zero_block = b"\x00" * COPY_BYTES
         remaining = frames * FRAME_BYTES
@@ -225,6 +232,7 @@ class PersistentAlsaPlayer:
         if self.amplitude is not None:
             self.amplitude.flush()
 
+    @latency.span("speech_file")
     def write_file(self, path, *, on_progress=None):
         """Optionally report accepted PCM bytes / total, not device timestamps.
 
@@ -258,6 +266,7 @@ class PersistentAlsaPlayer:
                 else:
                     self.write(block, on_write=report)
 
+    @latency.span("drain")
     def finish(self):
         """EOF, drain the device, verify status, reap, then release descriptors."""
         try:

@@ -744,6 +744,12 @@ Verify transcription prints only in audio-file mode, normal streamed output/timi
 
 ### Hands-free wake word (Phase 1)
 
+The optional exact-phrase **Hey Companion** integration is disabled until a
+genuinely trained model passes the offline Pi validation gate. No model or
+passing report is included. See [training, validation, deployment and GPIO17
+fallback commands](docs/hey-companion.md). It reuses the existing serial
+hands-free pipeline; the default push-to-talk boot service is unchanged.
+
 Offline hands-free operation is opt-in. Phase 1 uses the built-in **"Hey Jarvis"**
 phrase to validate the architecture. Install `requirements.txt` in the Pi's active
 Python environment (`openwakeword==0.6.0`). On Debian 13 with Python 3.13 (or
@@ -809,18 +815,31 @@ READY throughout those stages. The capture-ready callback fires once after
 calibration and changes the display to LISTENING at "Speak now...". Speech
 immediately attached to the wake phrase is not carried into request capture.
 
-The display initializes, Piper warms once, and the wake model warms once. READY
-waits for detection and remains READY during request warm-up/calibration;
-LISTENING means **every input chunk is now retained**, including quiet/weak speech.
-No speech-start confirmation, rejected-burst reset or start timeout can discard
-the request. THINKING begins immediately after recording and includes normalization,
-Whisper/Silero and the existing service. SPEAKING uses the existing TTS/playback cycle. After playback fully
-drains, the cycle retains its READY/ECO/PROTECTIVE idle state, waits the cooldown,
-resets detector history, and resumes wake listening. No wake capture runs during
-request capture, inference, synthesis or playback. Exactly one microphone owner
-is active at a time, on `VOICE_ALSA_CAPTURE_DEVICE` (normally
-`hw:CARD=sndrpigooglevoi,DEV=0`). This serialization applies within this runtime;
-avoid running another microphone application or a second voice loop on the device.
+The display initializes, Piper warms once, and the wake model warms once. See
+[the hands-free product acceptance guide](docs/hands-free-product.md) for the
+process-only Pi launch, offline asset check, two-wake demonstration and fallback.
+Optional keyboard/experimental voice interruption and earlier short first-sentence
+release are described in [the barge-in acceptance guide](docs/voice-barge-in.md).
+They are disabled by default and require supervised Pi duplex/echo verification.
+The initial pretrained phrase is **Hey Jarvis**; Hey Companion requires a compatible
+custom model and is not enabled by a label change.
+
+READY waits for detection. Wake heard is acknowledged visibly on the TFT; the
+request reader then opens ALSA and signals LISTENING before its first read.
+CLI hands-free capture retains every native request chunk immediately, with no
+post-wake warm-up/calibration discard. A bounded 320 ms wake tail is prepended
+in memory to reduce loss from late detection. THINKING begins after recording
+and includes normalization and Whisper; SPEAKING uses the existing serialized
+Piper/ALSA stream. The complete first-sentence option defaults to 20 characters
+in hands-free mode only unless explicitly configured. Other input modes retain
+their configured policy. After playback fully drains, the cycle retains its
+READY/ECO/PROTECTIVE idle state, waits the cooldown, resets detector history and
+resumes wake listening with conversation context intact. No wake capture runs
+during request capture, inference, synthesis or playback. One microphone owner
+is active at a time on `VOICE_ALSA_CAPTURE_DEVICE`. Do not run competing microphone
+applications. This is a serial device handoff, not a guarantee of gapless physical
+recording across closing/reopening ALSA; use the visible LISTENING cue for the
+supervised acceptance and verify opening words on hardware.
 
 Idle audio stays in bounded memory buffers: arecord reads native stereo 48 kHz
 S32_LE, Python/NumPy extracts LEFT, applies a 63-tap 7 kHz low-pass FIR, decimates
@@ -839,37 +858,34 @@ The wake model stays resident; Whisper is reached only by the existing voice cyc
 | `VOICE_WAKE_WORD_VAD_THRESHOLD` | `0.5` | Finite 0..1; 0 disables wake-engine VAD, independently of capture VAD |
 | `VOICE_WAKE_WORD_TIMEOUT_SECONDS` | `0` | Finite, nonnegative; 0 waits indefinitely; timeout resumes listening |
 | `VOICE_WAKE_WORD_COOLDOWN_SECONDS` | `0.75` | Finite 0..5 seconds after fully drained playback |
-| `VOICE_HANDS_FREE_WARMUP_SECONDS` | `0.25` | Finite 0.02..2 seconds; native PCM actively read/discarded |
-| `VOICE_HANDS_FREE_CALIBRATION_SECONDS` | `0.25` | Finite 0.02..2 seconds; ambient median RMS, excluded from WAV |
+| `VOICE_HANDS_FREE_WARMUP_SECONDS` | `0.25` | Legacy direct recorder only; CLI hands-free retains startup PCM |
+| `VOICE_HANDS_FREE_CALIBRATION_SECONDS` | `0.25` | Legacy direct recorder only; CLI reuses wake standby background |
 | `VOICE_HANDS_FREE_MAX_SECONDS` | `6.0` | Finite 0.1..30 seconds; hard post-ready audio window |
 | `VOICE_HANDS_FREE_END_SILENCE_SECONDS` | `0.9` | Finite 0.1..5 seconds; sustained quiet after speech evidence |
 | `VOICE_HANDS_FREE_VAD_MAX_START_THRESHOLD` | `0.10` | Deprecated compatibility setting, ignored by the new recorder |
 
-The hands-free endpoint detector is an optional latency optimization, independent
-of interactive `AdaptiveCaptureVAD`. From the frozen ambient median it calculates
-`speech_threshold = min(0.08, max(0.035, noise_floor * 1.15 + 0.003))` and
-`continue_threshold = min(speech_threshold * 0.95, max(0.015, noise_floor * 1.05 + 0.001))`.
-Two above-speech chunks among the last five 20 ms chunks establish evidence;
-they need not be consecutive. One strong chunk also suffices (threshold
-`min(1, max(speech_threshold * 1.4, noise_floor * 1.6 + 0.005))`). With a floor
-around 0.062, peaks of 0.10..0.12 count as evidence. After evidence, any chunk
-above continuation resets the quiet timer; approximately 0.9 seconds of sustained
-quiet ends capture early. Every chunk, including the endpoint silence, is retained.
-If classification is uncertain or silence never completes, the recorder writes
-the entire maximum window and sends it through normal normalization and Whisper.
-An end-silence setting longer than the maximum simply leaves the maximum in charge.
+The hands-free endpoint is a latency hint, never an audio admission gate. CLI
+standby supplies a bounded lower-energy ambient estimate from prior wake chunks.
+With a known floor, `speech_threshold=min(0.08,max(0.012,1.6*floor+0.002))` and
+`continue_threshold=min(0.95*speech_threshold,max(0.008,1.2*floor+0.001))`.
+Two above-threshold chunks in 100 ms or one strong chunk establish evidence;
+at least 300 ms of voiced energy plus sustained endpoint quiet are needed to
+finish early. Every chunk is retained before testing the endpoint. Uncertain
+classification or unknown background uses the full fixed maximum (six seconds
+by default, configurable to 30); the acceptance guide selects ten seconds to
+accommodate a complete question. The legacy direct recorder retains its old
+warm-up/calibration/endpoint behavior for existing callers.
 
-One final `Hands-free capture:` line reports frozen noise floor, speech/continuation
-thresholds, `speech_seen=true|false`, retained `capture_duration` and
-`stop_reason=silence|max_duration`. No per-frame RMS or hands-free start timeout
-is logged. Native-frame counts define each phase precisely, including short pipe
-reads. A separate wall deadline (warm-up + calibration + maximum + 5 seconds)
-bounds a stalled process; hardware failures still report ERROR and reap arecord.
-
-Ordinary Enter-to-record retains its accepted adaptive VAD, thresholds, confirmation,
-minimum speech, warm-up, silence durations and display timing. The new recorder
-does not require `VOICE_CAPTURE_VAD_ENABLED`; that setting controls interactive
-capture only. Text/audio-file injection still bypasses microphone capture.
+The final capture line reports categorical endpoint/max-duration status and safe
+numeric measurements, or `background=unknown`. Capture duration counts freshly
+read request audio; the WAV may also contain up to 320 ms of wake tail. No idle
+recordings or per-frame diagnostic history are written. Owned reader deadlines,
+selectors, Ctrl+C and terminate/reap cleanup remain bounded. `endpoint_detected`
+is reserved for an actual silence endpoint, not a maximum-duration fallback.
+Ordinary Enter-to-record preserves its selected fixed/adaptive recording and
+left-only Whisper conversion. Hands-free does not require interactive capture
+VAD or the strict public-fixture validation utility. Arbitrary normal questions,
+RAG, memory and existing local generation/resource policies remain available.
 
 For a future custom phrase, set `VOICE_WAKE_WORD_MODEL_PATH=/absolute/path/custom.onnx`
 and run preparation again to install shared assets. The custom file must already
@@ -881,8 +897,10 @@ and do not establish acoustic detection accuracy.
 
 Startup prints engine/model/threshold; detections print model/score/elapsed wait.
 Per-frame scores are debug-level logging only. Recoverable request or microphone
-hardware/process errors show ERROR and resume wake listening after at least
-0.5 seconds in READY, retaining the last successful conversation. A completed
+hardware/process errors show ERROR and retry only after 1 then 2 seconds of backoff
+(or longer configured cooldown). Three consecutive failures stop the process with
+an actionable Enter-to-record fallback message; successful/no-speech cycles reset
+the failure count. The last successful conversation is retained. A completed
 recording whose Whisper result is empty/a no-speech placeholder prints only
 "No request speech recognized; returning to wake listening.", returns to READY
 and resumes wake detection after bounded cooldown. It does not run AI/TTS or speak
@@ -944,7 +962,7 @@ At a boundary, the player inserts only `max(0, target - previous retained traili
 
 On AI/TTS/preparation/playback failure, shared cancellation discards queued work, cancels/reaps active Piper/FFmpeg/aplay/paplay processes, unblocks both queues through cancellation-aware waits, closes the service generator, and joins both workers before temporary files are removed. The original failure is retained instead of being replaced by secondary cancellation errors. An audio failure is surfaced when the bounded service stream next yields or times out. The next interaction starts at LISTENING.
 
-The display changes to SPEAKING exactly once, after preparation and immediately before opening the persistent player/writing initial silence, remains SPEAKING throughout the response and final device drain, then returns to READY/ECO/PROTECTIVE. Pulse still prepends its first-chunk WAV silence before playback. ALSA uses `arecord`, `ffmpeg`, and `aplay`; Pulse retains `parecord`, `ffmpeg`, and `paplay`. Wake-word detection is not implemented.
+The display changes to SPEAKING exactly once, after preparation and immediately before opening the persistent player/writing initial silence, remains SPEAKING throughout the response and final device drain, then returns to READY/ECO/PROTECTIVE. Pulse still prepends its first-chunk WAV silence before playback. ALSA uses `arecord`, `ffmpeg`, and `aplay`; Pulse retains `parecord`, `ffmpeg`, and `paplay`. Optional wake-word detection uses the serial hands-free path described above; Hey Companion requires a trained model and local validation approval.
 
 Timing values are seconds, printed to millisecond precision:
 
@@ -1213,3 +1231,9 @@ Ask the same distinct standalone questions, an actual supported device action, a
 5. **Local LLM + lexical RAG** ✅
 6. **Local LLM + RAG + Online Retrieval** ✅ (deterministic router + optional SearXNG snippets)
 7. **ESP32 MQTT LED + DHT11** ✅ (safe low-voltage action milestone)
+
+## Final review offline demonstration
+
+Use the [physical push-to-talk and protected demo hotspot procedure](docs/final-review-demo.md)
+for the final review. It reuses the existing deployment and keeps optional wake
+models and experimental acoustic interruption out of the primary boot path.

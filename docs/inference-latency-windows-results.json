@@ -1,0 +1,711 @@
+{
+  "validated_inference_baseline": "3bb84a9ca6987f6fd11df366be97aabbdef929b8",
+  "workspace_head": "3bb84a9ca6987f6fd11df366be97aabbdef929b8",
+  "platform": "Windows-10-10.0.26200-SP0",
+  "python": "3.10.2",
+  "dependencies": {
+    "Django": "5.2.17",
+    "djangorestframework": "3.18.1",
+    "piper-tts": null,
+    "onnxruntime": null,
+    "numpy": "2.2.6",
+    "paho-mqtt": null,
+    "pyserial": null,
+    "openwakeword": null,
+    "pypdf": "6.19.0"
+  },
+  "evidence_scope": "Windows regression and offline synthetic payload checks only; no new Raspberry Pi inference or acoustic measurements",
+  "tests": {
+    "exit_code": 0,
+    "count": 1025,
+    "elapsed_seconds": 44.827,
+    "passed": 1024,
+    "skipped": 1
+  },
+  "voice_focused": {
+    "count": 203,
+    "elapsed_seconds": 3.484,
+    "exit_code": 0
+  },
+  "inference_focused": {
+    "count": 363,
+    "elapsed_seconds": 7.389,
+    "exit_code": 0
+  },
+  "fixture_grounding": [
+    {
+      "fixture": "rag",
+      "route": "local_rag",
+      "rag_used": true,
+      "memory_used": false,
+      "inference": "mock only"
+    },
+    {
+      "fixture": "memory",
+      "route": "local",
+      "rag_used": false,
+      "memory_used": true,
+      "inference": "mock only"
+    }
+  ],
+  "default_payloads": {
+    "baseline": [
+      {
+        "message_sha256": "8e5b4170453cbb014c4eb58cca8d22e26e20dec0ae2b10ec73d2d2bf620aeb27",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 32,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "keep_alive": "24h",
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 455
+      },
+      {
+        "message_sha256": "e1ef86b5bcdd9fc98d67daf7f252f59fc8203e44bb6fa9cd835e9a4edd67f442",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "keep_alive": "24h",
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 490
+      },
+      {
+        "message_sha256": "991e776d63c058ac203927af4c63c92075e8ee11097a903f3ec8b00c773fc752",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "keep_alive": "24h",
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 486
+      },
+      {
+        "message_sha256": "7d4c1254ceb7cfbdf0f0c2d512b437c79755b61b0d58e7c8a043905e5d2ba027",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 192,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "keep_alive": "24h",
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 525
+      },
+      {
+        "message_sha256": "4a7703fc2aa992286f8a6f0ba2cce124d20177a600e1cf1c9c3c655c06b879a6",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "keep_alive": "24h",
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 504
+      },
+      {
+        "message_sha256": "d447b66443da044ff32c95670b421348dbc604cfd55a9b529b69c41fc0a69426",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "keep_alive": "24h",
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 531
+      }
+    ],
+    "candidate": [
+      {
+        "message_sha256": "8e5b4170453cbb014c4eb58cca8d22e26e20dec0ae2b10ec73d2d2bf620aeb27",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 32,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "keep_alive": "24h",
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 455
+      },
+      {
+        "message_sha256": "e1ef86b5bcdd9fc98d67daf7f252f59fc8203e44bb6fa9cd835e9a4edd67f442",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "keep_alive": "24h",
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 490
+      },
+      {
+        "message_sha256": "991e776d63c058ac203927af4c63c92075e8ee11097a903f3ec8b00c773fc752",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "keep_alive": "24h",
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 486
+      },
+      {
+        "message_sha256": "7d4c1254ceb7cfbdf0f0c2d512b437c79755b61b0d58e7c8a043905e5d2ba027",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 192,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "keep_alive": "24h",
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 525
+      },
+      {
+        "message_sha256": "4a7703fc2aa992286f8a6f0ba2cce124d20177a600e1cf1c9c3c655c06b879a6",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "keep_alive": "24h",
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 504
+      },
+      {
+        "message_sha256": "d447b66443da044ff32c95670b421348dbc604cfd55a9b529b69c41fc0a69426",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "keep_alive": "24h",
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 531
+      }
+    ]
+  },
+  "first_sentence_payloads": {
+    "baseline": [
+      {
+        "message_sha256": "8e5b4170453cbb014c4eb58cca8d22e26e20dec0ae2b10ec73d2d2bf620aeb27",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 32,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 455
+      },
+      {
+        "message_sha256": "e1ef86b5bcdd9fc98d67daf7f252f59fc8203e44bb6fa9cd835e9a4edd67f442",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 490
+      },
+      {
+        "message_sha256": "991e776d63c058ac203927af4c63c92075e8ee11097a903f3ec8b00c773fc752",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 486
+      },
+      {
+        "message_sha256": "7d4c1254ceb7cfbdf0f0c2d512b437c79755b61b0d58e7c8a043905e5d2ba027",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 192,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 525
+      },
+      {
+        "message_sha256": "4a7703fc2aa992286f8a6f0ba2cce124d20177a600e1cf1c9c3c655c06b879a6",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 504
+      },
+      {
+        "message_sha256": "d447b66443da044ff32c95670b421348dbc604cfd55a9b529b69c41fc0a69426",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 531
+      }
+    ],
+    "candidate": [
+      {
+        "message_sha256": "8e5b4170453cbb014c4eb58cca8d22e26e20dec0ae2b10ec73d2d2bf620aeb27",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 32,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 455
+      },
+      {
+        "message_sha256": "e1ef86b5bcdd9fc98d67daf7f252f59fc8203e44bb6fa9cd835e9a4edd67f442",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 490
+      },
+      {
+        "message_sha256": "991e776d63c058ac203927af4c63c92075e8ee11097a903f3ec8b00c773fc752",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 486
+      },
+      {
+        "message_sha256": "7d4c1254ceb7cfbdf0f0c2d512b437c79755b61b0d58e7c8a043905e5d2ba027",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 192,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 525
+      },
+      {
+        "message_sha256": "4a7703fc2aa992286f8a6f0ba2cce124d20177a600e1cf1c9c3c655c06b879a6",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 504
+      },
+      {
+        "message_sha256": "d447b66443da044ff32c95670b421348dbc604cfd55a9b529b69c41fc0a69426",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 531
+      }
+    ]
+  },
+  "cpu_payloads": {
+    "baseline": [
+      {
+        "message_sha256": "8e5b4170453cbb014c4eb58cca8d22e26e20dec0ae2b10ec73d2d2bf620aeb27",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 32,
+          "seed": 42,
+          "temperature": 0,
+          "num_thread": 4
+        },
+        "think": false,
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 455
+      },
+      {
+        "message_sha256": "e1ef86b5bcdd9fc98d67daf7f252f59fc8203e44bb6fa9cd835e9a4edd67f442",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0,
+          "num_thread": 4
+        },
+        "think": false,
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 490
+      },
+      {
+        "message_sha256": "991e776d63c058ac203927af4c63c92075e8ee11097a903f3ec8b00c773fc752",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0,
+          "num_thread": 4
+        },
+        "think": false,
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 486
+      },
+      {
+        "message_sha256": "7d4c1254ceb7cfbdf0f0c2d512b437c79755b61b0d58e7c8a043905e5d2ba027",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 192,
+          "seed": 42,
+          "temperature": 0,
+          "num_thread": 4
+        },
+        "think": false,
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 525
+      },
+      {
+        "message_sha256": "4a7703fc2aa992286f8a6f0ba2cce124d20177a600e1cf1c9c3c655c06b879a6",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0,
+          "num_thread": 4
+        },
+        "think": false,
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 504
+      },
+      {
+        "message_sha256": "d447b66443da044ff32c95670b421348dbc604cfd55a9b529b69c41fc0a69426",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0,
+          "num_thread": 4
+        },
+        "think": false,
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 531
+      }
+    ],
+    "candidate": [
+      {
+        "message_sha256": "8e5b4170453cbb014c4eb58cca8d22e26e20dec0ae2b10ec73d2d2bf620aeb27",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 32,
+          "seed": 42,
+          "temperature": 0,
+          "num_thread": 3
+        },
+        "think": false,
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 455
+      },
+      {
+        "message_sha256": "e1ef86b5bcdd9fc98d67daf7f252f59fc8203e44bb6fa9cd835e9a4edd67f442",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0,
+          "num_thread": 3
+        },
+        "think": false,
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 490
+      },
+      {
+        "message_sha256": "991e776d63c058ac203927af4c63c92075e8ee11097a903f3ec8b00c773fc752",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0,
+          "num_thread": 3
+        },
+        "think": false,
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 486
+      },
+      {
+        "message_sha256": "7d4c1254ceb7cfbdf0f0c2d512b437c79755b61b0d58e7c8a043905e5d2ba027",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 192,
+          "seed": 42,
+          "temperature": 0,
+          "num_thread": 3
+        },
+        "think": false,
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 525
+      },
+      {
+        "message_sha256": "4a7703fc2aa992286f8a6f0ba2cce124d20177a600e1cf1c9c3c655c06b879a6",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0,
+          "num_thread": 3
+        },
+        "think": false,
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 504
+      },
+      {
+        "message_sha256": "d447b66443da044ff32c95670b421348dbc604cfd55a9b529b69c41fc0a69426",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0,
+          "num_thread": 3
+        },
+        "think": false,
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 531
+      }
+    ]
+  },
+  "compact_payloads": {
+    "baseline": [
+      {
+        "message_sha256": "8e5b4170453cbb014c4eb58cca8d22e26e20dec0ae2b10ec73d2d2bf620aeb27",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 32,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "keep_alive": "24h",
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 455
+      },
+      {
+        "message_sha256": "e1ef86b5bcdd9fc98d67daf7f252f59fc8203e44bb6fa9cd835e9a4edd67f442",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "keep_alive": "24h",
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 490
+      },
+      {
+        "message_sha256": "991e776d63c058ac203927af4c63c92075e8ee11097a903f3ec8b00c773fc752",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "keep_alive": "24h",
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 486
+      },
+      {
+        "message_sha256": "7d4c1254ceb7cfbdf0f0c2d512b437c79755b61b0d58e7c8a043905e5d2ba027",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 192,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "keep_alive": "24h",
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 525
+      },
+      {
+        "message_sha256": "4a7703fc2aa992286f8a6f0ba2cce124d20177a600e1cf1c9c3c655c06b879a6",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "keep_alive": "24h",
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 504
+      },
+      {
+        "message_sha256": "d447b66443da044ff32c95670b421348dbc604cfd55a9b529b69c41fc0a69426",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "keep_alive": "24h",
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 531
+      }
+    ],
+    "candidate": [
+      {
+        "message_sha256": "71ad1a7a732ca2f47f7a2256a6ca06b1826cd5a5901081ee2f2c8ae7aaccec0e",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 32,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "keep_alive": "24h",
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 386
+      },
+      {
+        "message_sha256": "08b0729c3d165e9411df1d17ed2f07a7baacc947d889d0187f5e3f5bc9ab6cde",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "keep_alive": "24h",
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 396
+      },
+      {
+        "message_sha256": "b66e2c3762cb249a7403376b4a70f2b70ed37de4c4247c884542f66cd12c680d",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "keep_alive": "24h",
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 392
+      },
+      {
+        "message_sha256": "04f63d7af8aabc4840f18c590460fc15f274d56b74a36ac9d0c5054a616fa470",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 192,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "keep_alive": "24h",
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 447
+      },
+      {
+        "message_sha256": "30c287d4ecc44aa42705e72043e3cd89899b64daa257d4a48373bd657dede4d8",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "keep_alive": "24h",
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 410
+      },
+      {
+        "message_sha256": "5ec4777dfda7620aef3b7c78d193c80ed324fa8ddceb407652844934f2e967e3",
+        "options": {
+          "num_ctx": 4096,
+          "num_predict": 64,
+          "seed": 42,
+          "temperature": 0
+        },
+        "think": false,
+        "keep_alive": "24h",
+        "model": "qwen3.5:4b-q4_K_M",
+        "input_chars": 437
+      }
+    ]
+  },
+  "source_sha256": {
+    "assistant/ai_engine/local.py": "18418bebd0a5280cb992f76f043223e3c434bb195dc5ad1718307e9cb4e49f95",
+    "assistant/ai_engine/__init__.py": "7efbb8838d76dbe426bd572fb4a9ff8120cc9dd8bea01bc225aa04fb90b04b20",
+    "assistant/policy.py": "b99b259dd176722ca02f7abce4347a4ab9c7336645390b119f95590d5756f733",
+    "assistant/management/commands/warm_ai_model.py": "5f122b8908d0b1217ee43ac3c510dc6b1de83ef664d0bdacee7bcc0a7611b220",
+    "config/settings.py": "4a551a4d84ef7a632e0d963b57e0a20a1e71d457c7262343624acab0d6fc1ed6",
+    "scripts/voice_loop.py": "d119fc3d7cc9e6b4a8b9e458d5976ff362695304e70455368e48331e8a38806a",
+    "scripts/benchmark_inference_ab.py": "a224bb8b29a52fbd392d2658122b66eed0a2ce0e15616efea2b68a7dd5a2801b",
+    "assistant/tests_inference_latency.py": "ab8abd606f6cc3575a5a66d0f14a541f3701412a1e79b9828de90a6bc159ca2c",
+    "assistant/tests_inference_benchmark.py": "5272c77d12be81e3ff279e60187451bea7ecc47ab3fda683a526833fb84670d6",
+    "assistant/tests_capture_vad.py": "bbdf0db9cfe90443334e0d94ee50c60f5cec987d703964586a9ac52ead084452"
+  },
+  "protected_files_verified": 555,
+  "finalization_payload_checks": {
+    "defaults": {
+      "fixtures": 6,
+      "identical": true
+    },
+    "first-sentence": {
+      "fixtures": 6,
+      "identical": true
+    }
+  },
+  "finalization_note": "Full and focused suites rerun after unequal-condition reporting fix; only Windows/offline evidence. HEAD field denotes source parent before feature commit."
+}

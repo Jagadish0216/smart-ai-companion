@@ -22,6 +22,8 @@ Why Ollama:
     - Clean separation: Django handles web, Ollama handles inference
 """
 
+from assistant import latency_trace as latency
+from assistant.voice.interruption import interruptible_response
 import json
 import logging
 import socket
@@ -72,6 +74,8 @@ class LocalLLMEngine(AIEngine):
         num_predict: Optional[int] = None,
         num_ctx: Optional[int] = None,
         think: Optional[bool] = None,
+        num_thread: Optional[int] = None,
+        num_batch: Optional[int] = None,
     ):
         import os
 
@@ -89,6 +93,12 @@ class LocalLLMEngine(AIEngine):
             else int(os.environ.get("OLLAMA_NUM_PREDICT", "128"))
         )
         self._model_cache: tuple[float, set[str]] | None = None
+        self._cpu_options = {}
+        for name, value, ceiling in (("num_thread", num_thread, 64), ("num_batch", num_batch, 2048)):
+            if value is not None:
+                if type(value) is not int or not 1 <= value <= ceiling:
+                    raise ValueError(f"{name} must be an integer between 1 and {ceiling}.")
+                self._cpu_options[name] = value
 
     @property
     def engine_name(self) -> str:
@@ -169,6 +179,7 @@ class LocalLLMEngine(AIEngine):
 
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         metrics = self._log_performance_metrics(response_data)
+        metrics.update(self._prompt_metrics(messages))
 
         # Extract response text
         message = response_data.get("message", {})
@@ -217,13 +228,14 @@ class LocalLLMEngine(AIEngine):
             model=selected_model,
         )
         timeout = self._timeout if timeout_seconds is None else float(timeout_seconds)
+        latency.mark("ollama_request_ready")
         request_started = time.perf_counter()
         first_content_at = None
         complete_text = ""
         final_payload = None
 
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response, interruptible_response(response):
                 for raw_line in response:
                     if not raw_line or not raw_line.strip():
                         continue
@@ -245,6 +257,7 @@ class LocalLLMEngine(AIEngine):
                     message = event.get("message")
                     content = message.get("content", "") if isinstance(message, dict) else ""
                     if content:
+                        latency.first_text(content)
                         if first_content_at is None:
                             first_content_at = time.perf_counter()
                         complete_text += content
@@ -275,6 +288,7 @@ class LocalLLMEngine(AIEngine):
         generation_ms = round((time.perf_counter() - request_started) * 1000)
         ttft_ms = round((first_content_at - request_started) * 1000)
         metrics = self._log_performance_metrics(final_payload)
+        metrics.update(self._prompt_metrics(messages))
         logger.info(
             "Ollama streaming request completed",
             extra={
@@ -343,9 +357,23 @@ class LocalLLMEngine(AIEngine):
 
         return messages
 
+    @staticmethod
+    def _prompt_metrics(messages: list[dict]) -> dict:
+        """Character counts are diagnostic sizes, never token estimates or text."""
+        return {
+            "input_messages": len(messages),
+            "input_chars": sum(len(message["content"]) for message in messages),
+            "system_chars": sum(len(message["content"]) for message in messages
+                                if message["role"] == "system"),
+        }
+
     def _log_performance_metrics(self, response_data: dict) -> dict:
         """Log Ollama token counts, timings, and throughput when available."""
         metrics = {}
+        # Do not pass arbitrary backend strings (which could contain text) to
+        # logs. Missing/unknown reasons remain absent rather than guessed.
+        if response_data.get("done_reason") in ("stop", "length", "load", "unload"):
+            metrics["done_reason"] = response_data["done_reason"]
 
         for count_field in ("prompt_eval_count", "prompt_eval_cached_count", "eval_count"):
             count = response_data.get(count_field)
@@ -380,6 +408,7 @@ class LocalLLMEngine(AIEngine):
             ):
                 metrics[metric_name] = round(count / (duration_ns / 1e9), 1)
 
+        latency.mark("ollama_complete", **metrics)
         if metrics:
             logger.info(
                 "Ollama inference metrics: %s",
@@ -404,6 +433,7 @@ class LocalLLMEngine(AIEngine):
             "keep_alive": self._keep_alive,
             "think": self._think,
             "options": {
+                **self._cpu_options,
                 "num_ctx": self._num_ctx,
                 "num_predict": (
                     num_predict if num_predict is not None else self._num_predict
@@ -507,7 +537,7 @@ class LocalLLMEngine(AIEngine):
             "stream": False,
             "keep_alive": self._keep_alive,
             "think": self._think,
-            "options": {"num_ctx": self._num_ctx},
+            "options": {**self._cpu_options, "num_ctx": self._num_ctx},
         }).encode("utf-8")
         request = urllib.request.Request(
             f"{self._host}/api/generate",

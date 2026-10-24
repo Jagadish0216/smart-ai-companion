@@ -1,0 +1,401 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Opt-in content-free voice latency trace v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "cycle_id",
+    "clock",
+    "synthetic",
+    "status",
+    "elapsed_ms",
+    "events",
+    "dropped_events",
+    "missing_events",
+    "residency",
+    "acoustic_onset",
+    "cache_accounting",
+    "cache_counter_semantics",
+    "interpretation"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "cycle_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{32}$"
+    },
+    "clock": {
+      "const": "monotonic_ns"
+    },
+    "synthetic": {
+      "type": "boolean"
+    },
+    "status": {
+      "enum": [
+        "running",
+        "ok",
+        "error",
+        "timeout",
+        "cancelled"
+      ]
+    },
+    "elapsed_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "events": {
+      "type": "array",
+      "maxItems": 512,
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "at_ms",
+          "lane"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "enum": [
+              "ancillary_checks_end",
+              "ancillary_checks_start",
+              "audio_prepare_end",
+              "audio_prepare_start",
+              "audio_queue_wait_end",
+              "audio_queue_wait_start",
+              "calibration_end",
+              "capture_cleanup_end",
+              "capture_cleanup_start",
+              "capture_end",
+              "capture_first_frame",
+              "capture_open_end",
+              "capture_open_start",
+              "capture_ready",
+              "capture_start",
+              "conversation_prepare_end",
+              "conversation_prepare_start",
+              "cycle_config",
+              "cycle_end",
+              "cycle_start",
+              "display_callback_end",
+              "display_callback_start",
+              "drain_end",
+              "drain_start",
+              "endpoint_detected",
+              "capture_stopped",
+              "first_audio_ready",
+              "first_complete_sentence",
+              "first_speech_pcm_accepted",
+              "first_speech_unit",
+              "history_end",
+              "history_start",
+              "leading_silence_end",
+              "leading_silence_start",
+              "llm_first_alphanumeric",
+              "memory_end",
+              "memory_start",
+              "network_checks_end",
+              "network_checks_start",
+              "normalize_end",
+              "normalize_start",
+              "ollama_complete",
+              "ollama_request_ready",
+              "piper_exchange_end",
+              "piper_exchange_start",
+              "piper_ready_end",
+              "piper_ready_start",
+              "piper_state",
+              "playback_conversion_end",
+              "playback_conversion_start",
+              "player_start_end",
+              "player_start_start",
+              "policy_end",
+              "policy_start",
+              "provisioning_check_end",
+              "provisioning_check_start",
+              "rag_end",
+              "rag_start",
+              "resource_cache_hit",
+              "resource_cache_miss",
+              "resource_metrics_end",
+              "resource_metrics_start",
+              "resource_policy",
+              "resource_snapshot_end",
+              "resource_snapshot_start",
+              "resource_state",
+              "response_persist_end",
+              "response_persist_start",
+              "route",
+              "routing_end",
+              "routing_start",
+              "serial_write_end",
+              "serial_write_start",
+              "service_prepare_end",
+              "service_prepare_start",
+              "speech_detected",
+              "speech_file_end",
+              "speech_file_start",
+              "stream_error",
+              "stt_cli_end",
+              "stt_cli_start",
+              "text_queue_wait_end",
+              "text_queue_wait_start",
+              "tts_end",
+              "tts_start",
+              "user_persist_end",
+              "user_persist_start",
+              "capture_warmup_start",
+              "capture_warmup_end",
+              "calibration_start",
+              "speech_start_window_open",
+              "minimum_speech_accepted",
+              "audio_unit_ready",
+              "text_unit_ready",
+              "punctuation_pause",
+              "audio_unit_dequeued",
+              "button_release",
+              "stt_server_start",
+              "stt_server_end"
+            ]
+          },
+          "at_ms": {
+            "type": "number",
+            "minimum": 0
+          },
+          "lane": {
+            "enum": [
+              "main",
+              "audio_prepare",
+              "audio_playback",
+              "other"
+            ]
+          },
+          "outcome": {
+            "enum": [
+              "ok",
+              "error",
+              "timeout",
+              "cancelled"
+            ]
+          },
+          "reason": {
+            "enum": [
+              "silence",
+              "max_duration",
+              "start_timeout",
+              "preparation_activity",
+              "preparation_unstable",
+              "calibration_unreliable",
+              "button_release"
+            ]
+          },
+          "profile": {
+            "enum": [
+              "BALANCED",
+              "PERFORMANCE",
+              "ECO",
+              "PROTECTIVE",
+              "UNKNOWN"
+            ]
+          },
+          "audio_backend": {
+            "enum": [
+              "alsa",
+              "pulse"
+            ]
+          },
+          "input_mode": {
+            "enum": [
+              "fixed",
+              "vad",
+              "hands_free",
+              "audio_file",
+              "text",
+              "push_to_talk"
+            ]
+          },
+          "route": {
+            "enum": [
+              "local",
+              "local_rag",
+              "online",
+              "action",
+              "clarification"
+            ]
+          },
+          "done_reason": {
+            "enum": [
+              "stop",
+              "length",
+              "load",
+              "unload"
+            ]
+          },
+          "ram_available_bytes": {
+            "type": "number",
+            "minimum": 0
+          },
+          "eval_duration_ms": {
+            "type": "number",
+            "minimum": 0
+          },
+          "prompt_eval_cached_count": {
+            "type": "number",
+            "minimum": 0
+          },
+          "ready_ms": {
+            "type": "number",
+            "minimum": 0
+          },
+          "prompt_eval_duration_ms": {
+            "type": "number",
+            "minimum": 0
+          },
+          "exchange_ms": {
+            "type": "number",
+            "minimum": 0
+          },
+          "prompt_eval_count": {
+            "type": "number",
+            "minimum": 0
+          },
+          "load_duration_ms": {
+            "type": "number",
+            "minimum": 0
+          },
+          "temperature_c": {
+            "type": "number",
+            "minimum": 0
+          },
+          "total_duration_ms": {
+            "type": "number",
+            "minimum": 0
+          },
+          "eval_count": {
+            "type": "number",
+            "minimum": 0
+          },
+          "reused": {
+            "type": "boolean"
+          },
+          "generation_allowed": {
+            "type": "boolean"
+          },
+          "under_voltage": {
+            "type": "boolean"
+          },
+          "frequency_capped": {
+            "type": "boolean"
+          },
+          "currently_throttled": {
+            "type": "boolean"
+          },
+          "soft_temperature_limit": {
+            "type": "boolean"
+          },
+          "unit": {
+            "type": "number",
+            "minimum": 0
+          },
+          "chars": {
+            "type": "number",
+            "minimum": 0
+          },
+          "tts_ms": {
+            "type": "number",
+            "minimum": 0
+          },
+          "prepare_ms": {
+            "type": "number",
+            "minimum": 0
+          },
+          "audio_seconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "pause_ms": {
+            "type": "number",
+            "minimum": 0
+          },
+          "text_queue_age_ms": {
+            "type": "number",
+            "minimum": 0
+          },
+          "ready_queue_age_ms": {
+            "type": "number",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "dropped_events": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "missing_events": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "calibration_end",
+          "capture_first_frame",
+          "capture_ready",
+          "cycle_config",
+          "cycle_end",
+          "cycle_start",
+          "endpoint_detected",
+          "capture_stopped",
+          "first_audio_ready",
+          "first_complete_sentence",
+          "first_speech_pcm_accepted",
+          "first_speech_unit",
+          "llm_first_alphanumeric",
+          "ollama_complete",
+          "ollama_request_ready",
+          "piper_state",
+          "resource_cache_hit",
+          "resource_cache_miss",
+          "resource_policy",
+          "resource_state",
+          "route",
+          "speech_detected",
+          "stream_error"
+        ]
+      }
+    },
+    "residency": {
+      "const": "unknown_not_probed"
+    },
+    "acoustic_onset": {
+      "const": "unobserved"
+    },
+    "cache_accounting": {
+      "enum": [
+        "reported_consistent",
+        "unknown_or_invalid"
+      ]
+    },
+    "cache_counter_semantics": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "interpretation": {
+      "type": "string",
+      "maxLength": 512
+    },
+    "storage_dropped_reports": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "storage_write_errors": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

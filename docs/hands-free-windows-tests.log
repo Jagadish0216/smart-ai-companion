@@ -1,0 +1,520 @@
+Creating test database for alias 'default'...
+
+...AI engine unavailable: Cannot reach Ollama at http://localhost:11434: Connection refused
+..........AI engine unavailable: Cannot reach Ollama at http://localhost:11434: Connection refused
+......................................FFmpeg conversion failed (rc=1). Command: ffmpeg -y -i C:\Users\shankar\OneDrive\Desktop\Jagadish\3-1\smart-ai-companion\.test-tmp\tmp5ctj83co.webm -ar 16000 -ac 1 -c:a pcm_s16le C:\Users\shankar\OneDrive\Desktop\Jagadish\3-1\smart-ai-companion\.test-tmp\tmphsf3qoz6.wav
+stderr:
+invalid audio
+FFmpeg binary not found on PATH.
+FFmpeg conversion timed out after 15 s.
+....Browser STT failed
+..Browser speech synthesis failed
+.................Local AI generation timed out
+.AI engine unavailable: connection refused at private host
+.............Local AI generation timed out
+..........Online retrieval failed: OnlineRetrievalTimeoutError
+.Online retrieval failed: OnlineRetrievalProviderError
+...Online retrieval failed: OnlineRetrievalError
+.........................................................................................................................................AI engine unavailable: disconnect
+.........AI engine unavailable: disconnect
+.AI engine unavailable: offline
+...............AI engine unavailable: Cannot reach Ollama at http://localhost:11434: Connection refused
+..FFmpeg conversion failed (rc=1). Command: ffmpeg -y -i C:\Users\shankar\OneDrive\Desktop\Jagadish\3-1\smart-ai-companion\.test-tmp\tmpohru279n.webm -ar 16000 -ac 1 -c:a pcm_s16le C:\Users\shankar\OneDrive\Desktop\Jagadish\3-1\smart-ai-companion\.test-tmp\tmpnutns69m.wav
+stderr:
+Unknown format
+.FFmpeg binary not found on PATH.
+..Browser STT failed
+.TTS failed: Mock TTS Error
+...whisper.cpp timed out after 7 seconds.
+.....whisper.cpp failed. stderr: Error parsing model
+Found 1321 test(s).
+System check identified no issues (0 silenced).
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: I understood your request: 'Explain local AI.'. Please provide any additional context needed for a more specific answer.
+TTS chunks: 2
+Timing: record=0.001s normalize=0.000s stt=0.000s ai=0.324s ai_ttft=0.317s first_tts_text_ready=0.320s first_tts_unit_ready=0.320s first_audio_ready=0.325s ai_to_first_speech=0.325s first_speech=0.328s ai_total=0.324s tts=0.000s audio_prepare=0.005s playback=0.001s total=0.335s first_tts_chars=92 playback_chunks=2 playback_starvation_ms=0.922 max_playback_starvation_ms=0.922 num_predict=64
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: I understood your request: 'Explain local AI.'. Please provide any additional context needed for a more specific answer.
+..............................................................................Document upload storage unavailable
+.........................Online knowledge persistence failed
+.......Online knowledge retrieval failed
+..Online knowledge persistence failed
+...Online knowledge retrieval failed
+.Online knowledge retrieval failed
+Online knowledge retrieval failed
+TTS chunks: 2
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.319s ai_ttft=0.313s first_tts_text_ready=0.317s first_tts_unit_ready=0.317s first_audio_ready=0.320s ai_to_first_speech=0.321s first_speech=0.323s ai_total=0.319s tts=0.000s audio_prepare=0.005s playback=0.000s total=0.331s first_tts_chars=92 playback_chunks=2 playback_starvation_ms=1.713 max_playback_starvation_ms=1.713 num_predict=64
+Speak now...
+Speak now...
+Speak now...
+Speak now...
+Speak now...
+Capture VAD: noise_floor=0.0000 start_threshold=0.0200 continue_threshold=0.0200 max_wait_rms=0.0000 speech_duration=0.00s capture_duration=0.00s elapsed=0.10s stop_reason=start_timeout
+Speak now...
+Speak now...
+Speak now...
+Capture VAD: noise_floor=0.0000 start_threshold=0.0200 continue_threshold=0.0200 max_wait_rms=0.1250 speech_duration=0.04s capture_duration=0.08s elapsed=0.12s stop_reason=silence
+Capture complete: 0.1s audio.
+Speak now...
+Capture VAD: noise_floor=0.0000 start_threshold=0.0200 continue_threshold=0.0200 max_wait_rms=0.1250 speech_duration=0.02s capture_duration=0.06s elapsed=0.46s stop_reason=silence
+Capture complete: 0.3s audio.
+Speak now...
+Speak now...
+Capture VAD: noise_floor=0.0000 start_threshold=0.0200 continue_threshold=0.0200 max_wait_rms=0.1250 speech_duration=0.06s capture_duration=0.06s elapsed=0.06s stop_reason=max_duration
+Capture complete: 0.1s audio.
+Preparing microphone (1s warm-up, then 5s recording)...
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 2
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.004s ai_ttft=0.003s first_tts_text_ready=0.004s first_tts_unit_ready=0.004s first_audio_ready=0.006s ai_to_first_speech=0.008s first_speech=0.010s ai_total=0.004s tts=0.000s audio_prepare=0.009s playback=0.008s total=0.022s first_tts_chars=99 playback_chunks=2 playback_starvation_ms=1.925 max_playback_starvation_ms=1.925
+Preparing microphone (1s warm-up, then 5s recording)...
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 2
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.002s ai_ttft=0.002s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.005s ai_to_first_speech=0.005s first_speech=0.007s ai_total=0.002s tts=0.000s audio_prepare=0.006s playback=0.005s total=0.015s first_tts_chars=99 playback_chunks=2 playback_starvation_ms=1.359 max_playback_starvation_ms=1.359
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 2
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.002s ai_ttft=0.001s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.005s ai_to_first_speech=0.005s first_speech=0.008s ai_total=0.002s tts=0.000s audio_prepare=0.007s playback=0.007s total=0.020s first_tts_chars=99 playback_chunks=2 playback_starvation_ms=1.945 max_playback_starvation_ms=1.945
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 2
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.002s ai_ttft=0.002s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.004s ai_to_first_speech=0.005s first_speech=0.007s ai_total=0.002s tts=0.000s audio_prepare=0.005s playback=0.005s total=0.016s first_tts_chars=99 playback_chunks=2 playback_starvation_ms=1.355 max_playback_starvation_ms=1.355
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 2
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.003s ai_ttft=0.002s first_tts_text_ready=0.003s first_tts_unit_ready=0.003s first_audio_ready=0.008s ai_to_first_speech=0.009s first_speech=0.015s ai_total=0.003s tts=0.000s audio_prepare=0.009s playback=0.005s total=0.023s first_tts_chars=99 playback_chunks=2 playback_starvation_ms=1.654 max_playback_starvation_ms=1.654
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: A short answer.
+TTS chunks: 1
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.002s ai_ttft=0.002s first_tts_text_ready=0.003s first_tts_unit_ready=0.003s first_audio_ready=0.005s ai_to_first_speech=0.006s first_speech=0.009s ai_total=0.002s tts=0.000s audio_prepare=0.002s playback=0.005s total=0.018s first_tts_chars=15 playback_chunks=1 playback_starvation_ms=0.000 max_playback_starvation_ms=0.000
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: A short answer.
+TTS chunks: 1
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.002s ai_ttft=0.002s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.003s ai_to_first_speech=0.004s first_speech=0.006s ai_total=0.002s tts=0.000s audio_prepare=0.001s playback=0.004s total=0.013s first_tts_chars=15 playback_chunks=1 playback_starvation_ms=0.000 max_playback_starvation_ms=0.000
+Preparing microphone (1s warm-up, then speech-driven capture)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 2
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.003s ai_ttft=0.002s first_tts_text_ready=0.003s first_tts_unit_ready=0.003s first_audio_ready=0.005s ai_to_first_speech=0.006s first_speech=0.012s ai_total=0.003s tts=0.000s audio_prepare=0.005s playback=0.005s total=0.021s first_tts_chars=99 playback_chunks=2 playback_starvation_ms=1.226 max_playback_starvation_ms=1.226
+Preparing microphone (1s warm-up, then 5s recording)...
+You: A question.
+Preparing microphone (1s warm-up, then 5s recording)...
+You: A question.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech.
+Assistant: A sentence.
+Assistant: A sentence.
+Assistant: A sentence.
+Assistant: A sentence.
+Assistant: A sentence.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 2
+Assistant: Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence. Another sentence.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 2
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 2
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+........................................................................................................................sCompanion display write failed; will retry on a later update
+.Companion display write failed; will retry on a later update
+.Companion display update failed; voice interaction continues
+..Companion display update failed; voice interaction continues
+Companion display write failed; will retry on a later update
+TTS chunks: 2
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 3
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.002s ai_ttft=0.001s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.066s ai_to_first_speech=0.067s first_speech=0.069s ai_total=0.002s tts=0.000s audio_prepare=0.204s playback=0.243s total=0.324s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=32.606 max_playback_starvation_ms=16.660
+Preparing microphone (1s warm-up, then 5s recording)...
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Preparing microphone (1s warm-up, then speech-driven capture)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 3
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.004s ai_ttft=0.003s first_tts_text_ready=0.004s first_tts_unit_ready=0.004s first_audio_ready=0.007s ai_to_first_speech=0.007s first_speech=0.010s ai_total=0.004s tts=0.000s audio_prepare=0.009s playback=0.000s total=0.022s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=6.847 max_playback_starvation_ms=4.219
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 3
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.003s ai_ttft=0.002s first_tts_text_ready=0.003s first_tts_unit_ready=0.003s first_audio_ready=0.005s ai_to_first_speech=0.006s first_speech=0.008s ai_total=0.003s tts=0.000s audio_prepare=0.004s playback=0.000s total=0.016s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=2.663 max_playback_starvation_ms=1.585
+Injected text: Question?
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 2
+Timing: ai=0.004s ai_ttft=0.001s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.003s ai_to_first_speech=0.004s first_speech=0.005s ai_total=0.004s tts=0.000s audio_prepare=0.003s playback=0.000s total=0.011s first_tts_chars=99 playback_chunks=2 playback_starvation_ms=2.399 max_playback_starvation_ms=2.399
+Injected text: Question?
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 2
+Timing: ai=0.004s ai_ttft=0.001s first_tts_text_ready=0.001s first_tts_unit_ready=0.001s first_audio_ready=0.003s ai_to_first_speech=0.004s first_speech=0.005s ai_total=0.004s tts=0.000s audio_prepare=0.003s playback=0.000s total=0.010s first_tts_chars=99 playback_chunks=2 playback_starvation_ms=2.109 max_playback_starvation_ms=2.109
+Injected text: Question?
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 2
+Timing: ai=0.005s ai_ttft=0.002s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.004s ai_to_first_speech=0.005s first_speech=0.006s ai_total=0.005s tts=0.000s audio_prepare=0.003s playback=0.000s total=0.011s first_tts_chars=99 playback_chunks=2 playback_starvation_ms=2.116 max_playback_starvation_ms=2.116
+Injected text: Question?
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 2
+Timing: ai=0.004s ai_ttft=0.002s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.004s ai_to_first_speech=0.004s first_speech=0.006s ai_total=0.004s tts=0.000s audio_prepare=0.002s playback=0.000s total=0.011s first_tts_chars=99 playback_chunks=2 playback_starvation_ms=2.127 max_playback_starvation_ms=2.127
+Injected text: Question?
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 2
+Timing: ai=0.004s ai_ttft=0.001s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.003s ai_to_first_speech=0.004s first_speech=0.005s ai_total=0.004s tts=0.000s audio_prepare=0.003s playback=0.000s total=0.012s first_tts_chars=99 playback_chunks=2 playback_starvation_ms=2.410 max_playback_starvation_ms=2.410
+Injected text: Question?
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 2
+Timing: ai=0.003s ai_ttft=0.001s first_tts_text_ready=0.001s first_tts_unit_ready=0.001s first_audio_ready=0.002s ai_to_first_speech=0.003s first_speech=0.004s ai_total=0.003s tts=0.000s audio_prepare=0.002s playback=0.000s total=0.010s first_tts_chars=99 playback_chunks=2 playback_starvation_ms=2.288 max_playback_starvation_ms=2.288
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech.
+TTS chunks: 1
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.002s ai_ttft=0.001s first_tts_text_ready=0.003s first_tts_unit_ready=0.003s first_audio_ready=0.004s ai_to_first_speech=0.005s first_speech=0.007s ai_total=0.002s tts=0.000s audio_prepare=0.002s playback=0.000s total=0.011s first_tts_chars=99 playback_chunks=1 playback_starvation_ms=0.000 max_playback_starvation_ms=0.000
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech.
+TTS chunks: 1
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.001s ai_ttft=0.001s first_tts_text_ready=0.001s first_tts_unit_ready=0.001s first_audio_ready=0.003s ai_to_first_speech=0.003s first_speech=0.005s ai_total=0.001s tts=0.000s audio_prepare=0.001s playback=0.000s total=0.007s first_tts_chars=99 playback_chunks=1 playback_starvation_ms=0.000 max_playback_starvation_ms=0.000
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 3
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.002s ai_ttft=0.001s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.003s ai_to_first_speech=0.004s first_speech=0.006s ai_total=0.002s tts=0.000s audio_prepare=0.005s playback=0.000s total=0.013s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=3.399 max_playback_starvation_ms=2.583
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 3
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.003s ai_ttft=0.001s first_tts_text_ready=0.003s first_tts_unit_ready=0.003s first_audio_ready=0.005s ai_to_first_speech=0.005s first_speech=0.006s ai_total=0.003s tts=0.000s audio_prepare=0.006s playback=0.000s total=0.014s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=3.696 max_playback_starvation_ms=2.145
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 3
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.002s ai_ttft=0.001s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.075s ai_to_first_speech=0.076s first_speech=0.077s ai_total=0.002s tts=0.000s audio_prepare=0.177s playback=0.164s total=0.254s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=19.426 max_playback_starvation_ms=15.573
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 3
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.003s ai_ttft=0.001s first_tts_text_ready=0.003s first_tts_unit_ready=0.003s first_audio_ready=0.060s ai_to_first_speech=0.060s first_speech=0.062s ai_total=0.003s tts=0.000s audio_prepare=0.218s playback=0.241s total=0.313s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=24.536 max_playback_starvation_ms=22.169
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 3
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.004s ai_ttft=0.002s first_tts_text_ready=0.004s first_tts_unit_ready=0.004s first_audio_ready=0.069s ai_to_first_speech=0.070s first_speech=0.073s ai_total=0.004s tts=0.000s audio_prepare=0.190s playback=0.293s total=0.385s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=0.000 max_playback_starvation_ms=0.000
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 3
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.004s ai_ttft=0.002s first_tts_text_ready=0.003s first_tts_unit_ready=0.003s first_audio_ready=0.006s ai_to_first_speech=0.006s first_speech=0.010s ai_total=0.004s tts=0.000s audio_prepare=0.005s playback=0.000s total=0.020s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=3.580 max_playback_starvation_ms=2.464
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 3
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.002s ai_ttft=0.001s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.004s ai_to_first_speech=0.004s first_speech=0.006s ai_total=0.002s tts=0.000s audio_prepare=0.004s playback=0.000s total=0.013s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=2.315 max_playback_starvation_ms=1.328
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 3
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.002s ai_ttft=0.001s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.004s ai_to_first_speech=0.004s first_speech=0.006s ai_total=0.002s tts=0.000s audio_prepare=0.004s playback=0.000s total=0.013s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=2.000 max_playback_starvation_ms=1.111
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 3
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.003s ai_ttft=0.001s first_tts_text_ready=0.003s first_tts_unit_ready=0.003s first_audio_ready=0.005s ai_to_first_speech=0.005s first_speech=0.007s ai_total=0.003s tts=0.000s audio_prepare=0.003s playback=0.000s total=0.013s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=1.928 max_playback_starvation_ms=0.972
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 3
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.002s ai_ttft=0.001s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.004s ai_to_first_speech=0.004s first_speech=0.006s ai_total=0.002s tts=0.000s audio_prepare=0.003s playback=0.000s total=0.011s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=1.953 max_playback_starvation_ms=1.087
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 3
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.002s ai_ttft=0.001s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.003s ai_to_first_speech=0.004s first_speech=0.005s ai_total=0.002s tts=0.000s audio_prepare=0.004s playback=0.000s total=0.013s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=2.129 max_playback_starvation_ms=1.306
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 3
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.002s ai_ttft=0.001s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.003s ai_to_first_speech=0.004s first_speech=0.005s ai_total=0.002s tts=0.000s audio_prepare=0.004s playback=0.000s total=0.011s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=2.256 max_playback_starvation_ms=1.219
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 3
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.002s ai_ttft=0.001s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.003s ai_to_first_speech=0.004s first_speech=0.006s ai_total=0.002s tts=0.000s audio_prepare=0.004s playback=0.000s total=0.014s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=2.447 max_playback_starvation_ms=1.236
+Preparing microphone (1s warm-up, then 5s recording)...
+Preparing microphone (1s warm-up, then 5s recording)...
+Smart AI Companion voice loop
+Audio backend: pulse
+Input source: source
+Press Enter to record, or type q and press Enter to quit.
+Warming configured speech provider...
+
+Exiting voice loop.
+Smart AI Companion voice loop
+Audio backend: pulse
+Input source: source
+Press Enter to record, or type q and press Enter to quit.
+Warming configured speech provider...
+
+Exiting voice loop.
+Smart AI Companion voice loop
+Audio backend: pulse
+Input source: source
+Press Enter to record, or type q and press Enter to quit.
+Warming configured speech provider...
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 3
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.005s ai_ttft=0.003s first_tts_text_ready=0.005s first_tts_unit_ready=0.005s first_audio_ready=0.007s ai_to_first_speech=0.007s first_speech=0.009s ai_total=0.005s tts=0.000s audio_prepare=0.004s playback=0.000s total=0.016s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=2.124 max_playback_starvation_ms=1.091
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+.................................................................................................................................Companion display unavailable; will retry on a later update
+TTS chunks: 3
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.003s ai_ttft=0.001s first_tts_text_ready=0.003s first_tts_unit_ready=0.003s first_audio_ready=0.005s ai_to_first_speech=0.005s first_speech=0.007s ai_total=0.003s tts=0.000s audio_prepare=0.004s playback=0.000s total=0.012s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=1.910 max_playback_starvation_ms=1.062
+Exiting voice loop.
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+Companion display write failed; will retry on a later update
+TTS chunks: 3
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.003s ai_ttft=0.002s first_tts_text_ready=0.003s first_tts_unit_ready=0.003s first_audio_ready=0.004s ai_to_first_speech=0.005s first_speech=0.006s ai_total=0.003s tts=0.000s audio_prepare=0.004s playback=0.000s total=0.014s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=2.860 max_playback_starvation_ms=2.053
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 3
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.002s ai_ttft=0.001s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.004s ai_to_first_speech=0.005s first_speech=0.007s ai_total=0.002s tts=0.000s audio_prepare=0.004s playback=0.000s total=0.013s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=2.470 max_playback_starvation_ms=1.469
+Preparing microphone (1s warm-up, then 5s recording)...
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+..Companion display playback update failed; audio continues
+TTS chunks: 3
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.003s ai_ttft=0.002s first_tts_text_ready=0.003s first_tts_unit_ready=0.003s first_audio_ready=0.004s ai_to_first_speech=0.005s first_speech=0.007s ai_total=0.003s tts=0.000s audio_prepare=0.003s playback=0.000s total=0.014s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=1.785 max_playback_starvation_ms=1.096
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 3
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.002s ai_ttft=0.002s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.004s ai_to_first_speech=0.004s first_speech=0.008s ai_total=0.002s tts=0.000s audio_prepare=0.004s playback=0.000s total=0.015s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=2.827 max_playback_starvation_ms=1.978
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: A useful answer.
+TTS chunks: 1
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.002s ai_ttft=0.001s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.003s ai_to_first_speech=0.004s first_speech=0.006s ai_total=0.002s tts=0.000s audio_prepare=0.001s playback=0.000s total=0.010s first_tts_chars=16 playback_chunks=1 playback_starvation_ms=0.000 max_playback_starvation_ms=0.000
+Injected text: Explain local AI.
+Assistant: A useful answer.
+TTS chunks: 1
+Timing: ai=0.001s ai_ttft=0.001s first_tts_text_ready=0.001s first_tts_unit_ready=0.001s first_audio_ready=0.003s ai_to_first_speech=0.003s first_speech=0.005s ai_total=0.001s tts=0.000s audio_prepare=0.001s playback=0.000s total=0.008s first_tts_chars=16 playback_chunks=1 playback_starvation_ms=0.000 max_playback_starvation_ms=0.000
+You: Explain local AI.
+Assistant: A useful answer.
+TTS chunks: 1
+Timing: record=0.001s normalize=0.000s stt=0.000s ai=0.001s ai_ttft=0.001s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.003s ai_to_first_speech=0.003s first_speech=0.007s ai_total=0.001s tts=0.000s audio_prepare=0.001s playback=0.000s total=0.009s first_tts_chars=16 playback_chunks=1 playback_starvation_ms=0.000 max_playback_starvation_ms=0.000
+Injected text: Question?
+Assistant: Answer.
+TTS chunks: 1
+Timing: ai=0.001s ai_ttft=0.001s first_tts_text_ready=0.001s first_tts_unit_ready=0.001s first_audio_ready=0.003s ai_to_first_speech=0.003s first_speech=0.005s ai_total=0.001s tts=0.000s audio_prepare=0.001s playback=0.000s total=0.007s first_tts_chars=7 playback_chunks=1 playback_starvation_ms=0.000 max_playback_starvation_ms=0.000
+Injected text: Question?
+Assistant: Answer.
+TTS chunks: 1
+Timing: ai=0.001s ai_ttft=0.001s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.003s ai_to_first_speech=0.003s first_speech=0.005s ai_total=0.001s tts=0.000s audio_prepare=0.001s playback=0.000s total=0.007s first_tts_chars=7 playback_chunks=1 playback_starvation_ms=0.000 max_playback_starvation_ms=0.000
+Injected text: Question?
+Assistant: Answer.
+TTS chunks: 1
+Timing: ai=0.001s ai_ttft=0.001s first_tts_text_ready=0.001s first_tts_unit_ready=0.001s first_audio_ready=0.003s ai_to_first_speech=0.003s first_speech=0.004s ai_total=0.001s tts=0.000s audio_prepare=0.002s playback=0.000s total=0.007s first_tts_chars=7 playback_chunks=1 playback_starvation_ms=0.000 max_playback_starvation_ms=0.000
+Injected text: Question?
+Assistant: Answer.
+TTS chunks: 1
+Timing: ai=0.005s ai_ttft=0.005s first_tts_text_ready=0.005s first_tts_unit_ready=0.005s first_audio_ready=0.007s ai_to_first_speech=0.008s first_speech=0.009s ai_total=0.005s tts=0.000s audio_prepare=0.002s playback=0.000s total=0.011s first_tts_chars=7 playback_chunks=1 playback_starvation_ms=0.000 max_playback_starvation_ms=0.000
+Injected text: Question?
+Assistant: Answer.
+TTS chunks: 1
+Timing: ai=0.001s ai_ttft=0.001s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.003s ai_to_first_speech=0.003s first_speech=0.005s ai_total=0.001s tts=0.000s audio_prepare=0.001s playback=0.000s total=0.008s first_tts_chars=7 playback_chunks=1 playback_starvation_ms=0.000 max_playback_starvation_ms=0.000
+Injected text: Question?
+Assistant: Answer.
+TTS chunks: 1
+Timing: ai=0.006s ai_ttft=0.006s first_tts_text_ready=0.006s first_tts_unit_ready=0.006s first_audio_ready=0.008s ai_to_first_speech=0.008s first_speech=0.010s ai_total=0.006s tts=0.000s audio_prepare=0.002s playback=0.000s total=0.013s first_tts_chars=7 playback_chunks=1 playback_starvation_ms=0.000 max_playback_starvation_ms=0.000
+Injected text: Question?
+Assistant: Answer.
+TTS chunks: 1
+Timing: ai=0.001s ai_ttft=0.001s first_tts_text_ready=0.001s first_tts_unit_ready=0.001s first_audio_ready=0.003s ai_to_first_speech=0.003s first_speech=0.005s ai_total=0.001s tts=0.000s audio_prepare=0.001s playback=0.000s total=0.007s first_tts_chars=7 playback_chunks=1 playback_starvation_ms=0.000 max_playback_starvation_ms=0.000
+Injected text: Question?
+Assistant: Answer.
+TTS chunks: 1
+Timing: ai=0.002s ai_ttft=0.001s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.003s ai_to_first_speech=0.004s first_speech=0.005s ai_total=0.002s tts=0.000s audio_prepare=0.001s playback=0.000s total=0.008s first_tts_chars=7 playback_chunks=1 playback_starvation_ms=0.000 max_playback_starvation_ms=0.000
+Injected text: Question?
+Assistant: Answer.
+TTS chunks: 1
+Timing: ai=0.001s ai_ttft=0.001s first_tts_text_ready=0.001s first_tts_unit_ready=0.001s first_audio_ready=0.003s ai_to_first_speech=0.004s first_speech=0.005s ai_total=0.001s tts=0.000s audio_prepare=0.002s playback=0.000s total=0.008s first_tts_chars=7 playback_chunks=1 playback_starvation_ms=0.000 max_playback_starvation_ms=0.000
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech.
+TTS chunks: 1
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.002s ai_ttft=0.001s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.004s ai_to_first_speech=0.004s first_speech=0.007s ai_total=0.002s tts=0.000s audio_prepare=0.001s playback=0.000s total=0.011s first_tts_chars=99 playback_chunks=1 playback_starvation_ms=0.000 max_playback_starvation_ms=0.000
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech.
+TTS chunks: 1
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.001s ai_ttft=0.001s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.004s ai_to_first_speech=0.004s first_speech=0.006s ai_total=0.001s tts=0.000s audio_prepare=0.002s playback=0.000s total=0.009s first_tts_chars=99 playback_chunks=1 playback_starvation_ms=0.000 max_playback_starvation_ms=0.000
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech.
+TTS chunks: 1
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.002s ai_ttft=0.002s first_tts_text_ready=0.003s first_tts_unit_ready=0.003s first_audio_ready=0.004s ai_to_first_speech=0.005s first_speech=0.006s ai_total=0.002s tts=0.000s audio_prepare=0.001s playback=0.000s total=0.009s first_tts_chars=99 playback_chunks=1 playback_starvation_ms=0.000 max_playback_starvation_ms=0.000
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech.
+TTS chunks: 1
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.001s ai_ttft=0.001s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.003s ai_to_first_speech=0.003s first_speech=0.005s ai_total=0.001s tts=0.000s audio_prepare=0.001s playback=0.000s total=0.008s first_tts_chars=99 playback_chunks=1 playback_starvation_ms=0.000 max_playback_starvation_ms=0.000
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech.
+TTS chunks: 1
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.002s ai_ttft=0.002s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.003s ai_to_first_speech=0.004s first_speech=0.005s ai_total=0.002s tts=0.000s audio_prepare=0.001s playback=0.000s total=0.008s first_tts_chars=99 playback_chunks=1 playback_starvation_ms=0.000 max_playback_starvation_ms=0.000
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech.
+TTS chunks: 1
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.001s ai_ttft=0.001s first_tts_text_ready=0.001s first_tts_unit_ready=0.001s first_audio_ready=0.003s ai_to_first_speech=0.003s first_speech=0.005s ai_total=0.001s tts=0.000s audio_prepare=0.002s playback=0.000s total=0.008s first_tts_chars=99 playback_chunks=1 playback_starvation_ms=0.000 max_playback_starvation_ms=0.000
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech.
+TTS chunks: 1
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.003s ai_ttft=0.003s first_tts_text_ready=0.004s first_tts_unit_ready=0.004s first_audio_ready=0.005s ai_to_first_speech=0.005s first_speech=0.008s ai_total=0.003s tts=0.000s audio_prepare=0.001s playback=0.000s total=0.011s first_tts_chars=99 playback_chunks=1 playback_starvation_ms=0.000 max_playback_starvation_ms=0.000
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech.
+TTS chunks: 1
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.007s ai_ttft=0.007s first_tts_text_ready=0.007s first_tts_unit_ready=0.007s first_audio_ready=0.009s ai_to_first_speech=0.009s first_speech=0.011s ai_total=0.007s tts=0.000s audio_prepare=0.001s playback=0.000s total=0.014s first_tts_chars=99 playback_chunks=1 playback_starvation_ms=0.000 max_playback_starvation_ms=0.000
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 3
+Assistant: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TTS chunks: 1
+Assistant: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TTS chunks: 1
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+........Companion display update failed; voice interaction continues
+Companion display update failed; voice interaction continues
+TTS chunks: 3
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.005s ai_ttft=0.003s first_tts_text_ready=0.005s first_tts_unit_ready=0.005s first_audio_ready=0.008s ai_to_first_speech=0.010s first_speech=0.013s ai_total=0.005s tts=0.000s audio_prepare=0.012s playback=0.000s total=0.034s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=7.875 max_playback_starvation_ms=5.266
+Preparing microphone (1s warm-up, then 5s recording)...
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 3
+Timing: record=0.000s normalize=0.000s stt=0.000s ai=0.002s ai_ttft=0.001s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.003s ai_to_first_speech=0.004s first_speech=0.005s ai_total=0.002s tts=0.000s audio_prepare=0.003s playback=0.000s total=0.011s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=2.106 max_playback_starvation_ms=1.199
+Preparing microphone (1s warm-up, then 5s recording)...
+Preparing microphone (1s warm-up, then 5s recording)...
+Preparing microphone (1s warm-up, then 5s recording)...
+Preparing microphone (1s warm-up, then 5s recording)...
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Explain local AI.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+Assistant: A Raspberry Pi is a small, credit-card-sized computer used for learning and making projects.
+.....Companion display write failed; will retry on a later update
+...Companion display configuration unavailable; continuing without display
+Companion display configuration unavailable; continuing without display
+Companion display configuration unavailable; continuing without display
+.Companion display unavailable; will retry on a later update
+.Companion display unavailable; will retry on a later update
+..Companion display write failed; will retry on a later update
+...Companion display write failed; will retry on a later update
+.Companion display write failed; will retry on a later update
+TTS chunks: 1
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 2
+Preparing microphone (1s warm-up, then speech-driven capture)...
+You: PRIVATE_QUESTION_CANARY
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. PRIVATE_ANSWER_CANARY
+TTS chunks: 3
+Timing: record=0.002s normalize=0.001s stt=0.000s ai=0.003s ai_ttft=0.001s first_tts_text_ready=0.002s first_tts_unit_ready=0.002s first_audio_ready=0.006s ai_to_first_speech=0.007s first_speech=0.015s ai_total=0.003s tts=0.000s audio_prepare=0.009s playback=0.005s total=0.026s first_tts_chars=99 playback_chunks=3 playback_starvation_ms=4.194 max_playback_starvation_ms=2.170
+usage: manage.py [-h] [--latency-trace-dir LATENCY_TRACE_DIR]
+                 [--audio-file AUDIO_FILE | --text TEXT | --text-mode | --hands-free]
+
+Production voice loop with optional development input injection.
+
+options:
+  -h, --help            show this help message and exit
+  --latency-trace-dir LATENCY_TRACE_DIR
+                        Opt-in content-free timing reports in a dedicated
+                        bounded directory.
+  --audio-file AUDIO_FILE
+                        Run once using an audio file instead of microphone
+                        capture.
+  --text TEXT           Run once using text, bypassing capture, normalization
+                        and STT.
+  --text-mode           Interactively enter text while retaining the
+                        conversation.
+  --hands-free          Continuously wait for the offline wake word, then
+                        retain a bounded microphone request (requires enabled
+                        wake word and ALSA).
+Preparing microphone (1s warm-up, then 5s recording)...
+Keep quiet: calibrating capture noise for 0.5s...
+Keep quiet: calibrating capture noise for 0.5s...
+Capture VAD: noise_floor=0.0000 start_threshold=0.0200 continue_threshold=0.0050 max_wait_rms=0.0000 speech_duration=0.00s capture_duration=0.00s elapsed=0.06s stop_reason=start_timeout
+Speak now...
+Speak now...
+Speak now...
+Preparing microphone (1s warm-up, then 5s recording)...
+You: Hello
+Preparing microphone (1.25s warm-up, then speech-driven capture)...
+Assistant: An answer.
+TTS chunks: 1
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 2
+Assistant: Another completed sentence. Another completed sentence. Another completed sentence. Another completed sentence. Another completed sentence.
+Assistant: Local AI is temporarily unavailable because the device is protecting itself.
+TTS chunks: 1
+Assistant: Please clarify your request.
+TTS chunks: 1
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. Queued sentence.
+Assistant: Incomplete text
+Assistant: Solar panels convert sunlight into electricity by using photovoltaic cells,
+TTS chunks: 1
+Assistant: An answer.
+TTS chunks: 1
+Assistant: Unfinished text
+Assistant: This explanation begins with enough meaningful words to describe the process, with useful details; and continues with the final thought.
+TTS chunks: 2
+Assistant: A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit. The third complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 3
+Assistant: A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence.
+TTS chunks: 4
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. Second sentence. Last unfinished thought
+TTS chunks: 3
+Assistant: It's a small computer. It runs Linux. It has GPIO pins.
+TTS chunks: 1
+Assistant: The first complete sentence contains useful information and is long enough to start natural speech. The second complete sentence contains more useful information and enough connected words to form a natural post-first speech unit.
+TTS chunks: 2
+Assistant: An answer.
+TTS chunks: 1
+Assistant: A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence. A completed sentence.
+.......................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................
+----------------------------------------------------------------------
+Ran 1321 tests in 59.807s
+
+OK (skipped=1)
+Destroying test database for alias 'default'...

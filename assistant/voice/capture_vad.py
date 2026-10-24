@@ -58,6 +58,13 @@ class AdaptiveCaptureVAD:
         self.speech_started = False
         self.max_wait_rms = 0.0
         self.stop_reason = None
+        self.start_window_origin = 0.0
+        self.relative_start_threshold = None
+        self.relative_continue_threshold = None
+        self.candidates_started = 0
+        self.candidates_rejected = 0
+        self.candidates_accepted = 0
+        self._candidate_accepted_counted = False
         if adaptive:
             self._thresholds()
 
@@ -71,8 +78,14 @@ class AdaptiveCaptureVAD:
             not self.adaptive or self.speech_duration + 1e-9 >= self.min_speech_seconds
         )
 
-    def _thresholds(self):
-        self.noise_floor = median(self.noise_samples) if self.noise_samples else 0.0
+    def _count_acceptance(self):
+        if self.accepted and not self._candidate_accepted_counted:
+            self.candidates_accepted += 1
+            self._candidate_accepted_counted = True
+
+    def _thresholds(self, *, background_floor=None):
+        self.noise_floor = (background_floor if background_floor is not None else
+                            median(self.noise_samples) if self.noise_samples else 0.0)
         self.calibrated_noise_floor = self.noise_floor
         self.start_threshold = max(self.configured_start, min(1.0, self.noise_floor * 2.5 + 0.002))
         if self.max_start_threshold is not None:
@@ -80,18 +93,41 @@ class AdaptiveCaptureVAD:
         floor = min(self.noise_floor, self.start_threshold * 0.95)
         self.continue_threshold = floor + 0.25 * (self.start_threshold - floor)
 
-    def feed(self, rms, seconds):
+    def open_start_window(self):
+        """Opt-in lifecycle: preserve calibration, start a fresh bounded wait after cue."""
+        if not self.calibrated or self.speech_started or self.stop_reason:
+            raise ValueError("Cannot open speech window before valid calibration.")
+        self.start_window_origin = self.elapsed
+
+    def enable_relative_onset(self):
+        """Settled-fan only: a second gate requiring spectral corroboration."""
+        if not self.calibrated or self.noise_floor <= 0 or self.speech_started or self.stop_reason:
+            raise ValueError("Relative onset requires valid completed calibration.")
+        # Ratios are in power (not amplitude); spectral evidence is mandatory.
+        self.relative_start_threshold = max(self.configured_start * .5, self.noise_floor * math.sqrt(1.5))
+        self.relative_continue_threshold = max(self.configured_start * .4, self.noise_floor * math.sqrt(1.2))
+
+    def feed(self, rms, seconds, *, speech_evidence=False):
         if not math.isfinite(rms) or not 0 <= rms <= 1 or not math.isfinite(seconds) or seconds <= 0:
             raise ValueError("Capture VAD input must be normalized RMS and positive duration.")
         if self.stop_reason is not None:
             return "stop"
         was_calibrated = self.calibrated
         self.elapsed += seconds
+        if self.relative_start_threshold is not None:
+            above_start = (speech_evidence or self.speech_started) and rms >= self.relative_start_threshold
+            # Spectral novelty confirms ONSET, not every subsequent vowel.
+            # After onset, calibrated energy + the existing 60 ms resume and
+            # 0.8 s endpoint hold maintain continuity without counting quiet gaps.
+            above_continue = rms >= self.relative_continue_threshold
+        else:
+            above_start = rms >= self.start_threshold
+            above_continue = rms >= self.continue_threshold
         if not self.speech_started:
             if was_calibrated:
                 self.max_wait_rms = max(self.max_wait_rms, rms)
             # Includes calibration and rejected bursts: no fresh waiting budget.
-            if self.elapsed + 1e-9 >= self.start_timeout_seconds and (
+            if self.elapsed - self.start_window_origin + 1e-9 >= self.start_timeout_seconds and (
                 self.adaptive or rms < self.start_threshold
             ):
                 self.stop_reason = "start_timeout"
@@ -101,7 +137,7 @@ class AdaptiveCaptureVAD:
                 if self.calibrated:
                     self._thresholds()
                 return None
-            if rms >= self.start_threshold:
+            if above_start:
                 self.candidate_duration += seconds
                 if (
                     self.adaptive
@@ -113,10 +149,14 @@ class AdaptiveCaptureVAD:
                     return "stop"
                 if not self.adaptive or self.candidate_duration + 1e-9 >= self.confirm_seconds:
                     self.speech_started = True
+                    self.candidates_started += 1
                     self.capture_duration = self.candidate_duration
                     self.speech_duration = self.candidate_duration
+                    self._count_acceptance()
                     if self.capture_duration + 1e-9 >= self.max_seconds:
                         self.stop_reason = "max_duration"
+                        if not self.accepted:
+                            self.candidates_rejected += 1
                     return "start"
             else:
                 self.candidate_duration = 0.0
@@ -124,11 +164,11 @@ class AdaptiveCaptureVAD:
 
         self.capture_duration += seconds
         resume_pending = False
-        if rms >= self.start_threshold:
+        if above_start:
             self.speech_duration += seconds
             self.silence_duration = 0.0
             self.resume_duration = 0.0
-        elif self.adaptive and rms >= self.continue_threshold:
+        elif self.adaptive and above_continue:
             previous_resume = self.resume_duration
             self.resume_duration += seconds
             if self.resume_duration + 1e-9 >= 0.06:
@@ -143,9 +183,12 @@ class AdaptiveCaptureVAD:
         else:
             self.silence_duration += seconds
             self.resume_duration = 0.0
+        self._count_acceptance()
         # A minimum speech guard can never extend the maximum duration.
         if self.capture_duration + 1e-9 >= self.max_seconds:
             self.stop_reason = "max_duration"
+            if not self.accepted:
+                self.candidates_rejected += 1
             return "stop"
         # Allow an in-flight resume confirmation at the silence boundary, at
         # most 60 ms. Maximum duration above still wins without any extension.
@@ -154,9 +197,181 @@ class AdaptiveCaptureVAD:
                 self.stop_reason = "silence"
                 return "stop"
             # Reject a short burst and return to waiting within the original bound.
+            self.candidates_rejected += 1
+            self._candidate_accepted_counted = False
             self.speech_started = False
             self.capture_duration = self.speech_duration = 0.0
             self.candidate_duration = self.silence_duration = 0.0
             self.resume_duration = 0.0
             return "reset"
         return None
+
+
+class QuietCapturePreparation:
+    """Optional bounded preparation, shared by live capture and file replay.
+
+    Drain real warm-up frames, never insert silence. Sustained activity during
+    warm-up or a calibration median at/above the configured onset floor refuses
+    readiness; this is a conservative non-quiet gate, not a speech classifier.
+    No recalibration/retry, threshold lowering or suppression of a valid request.
+    """
+    ABSOLUTE_ACTIVITY_REFUSAL = True
+
+    def __init__(self, vad, warmup_seconds):
+        if not vad.adaptive or not math.isfinite(warmup_seconds) or warmup_seconds < 0:
+            raise ValueError("Calibrated readiness requires adaptive VAD and bounded warm-up.")
+        self.vad = vad
+        self.warmup_seconds = warmup_seconds
+        self.warmup_elapsed = 0.0
+        self.activity_seconds = 0.0
+        # Scalars plus at most 4096 frame RMS values; no PCM or per-frame export.
+        self.frame_count = self.above_count = 0
+        self.above_seconds = self.longest_activity_seconds = 0.0
+        self.rms_min = self.rms_max = None
+        self._rms = []
+        self.first_pcm_monotonic = self.refusal_monotonic = None
+        self.calibration_started = False
+        self.interruption = None
+
+    def diagnostics(self):
+        values = sorted(self._rms)
+        complete = self.frame_count == len(values)
+        return dict(
+            warmup_frames=self.frame_count,
+            warmup_rms_min=self.rms_min, warmup_rms_max=self.rms_max,
+            warmup_rms_median=median(values) if values and complete else None,
+            warmup_rms_p90=values[math.ceil(.9 * len(values)) - 1] if values and complete else None,
+            rms_statistics_complete=complete, rms_statistics_capacity=4096,
+            above_threshold_frames=self.above_count,
+            above_threshold_audio_seconds=self.above_seconds,
+            longest_above_threshold_audio_seconds=self.longest_activity_seconds,
+            activity_threshold=self.vad.configured_start,
+            first_pcm_to_activity_refusal_ms=(
+                (self.refusal_monotonic - self.first_pcm_monotonic) * 1000
+                if self.refusal_monotonic is not None and self.first_pcm_monotonic is not None else None),
+            startup_frames_before_activity_decision=(self.frame_count - 1
+                if self.vad.stop_reason == "preparation_activity" else None),
+            calibration_started=self.calibration_started,
+            refusal_reason=(self.vad.stop_reason if self.vad.stop_reason in
+                ("preparation_activity", "calibration_unreliable") else self.interruption),
+        )
+
+    def warming_up(self):
+        return self.warmup_elapsed + 1e-9 < self.warmup_seconds
+
+    def consume_warmup(self, rms, seconds):
+        self.frame_count += 1
+        self.rms_min = rms if self.rms_min is None else min(self.rms_min, rms)
+        self.rms_max = rms if self.rms_max is None else max(self.rms_max, rms)
+        if len(self._rms) < 4096:
+            self._rms.append(rms)
+        if rms >= self.vad.configured_start:
+            self.above_count += 1
+            self.above_seconds += seconds
+        self.warmup_elapsed += seconds
+        self.activity_seconds = self.activity_seconds + seconds if rms >= self.vad.configured_start else 0.0
+        self.longest_activity_seconds = max(self.longest_activity_seconds, self.activity_seconds)
+        if self.ABSOLUTE_ACTIVITY_REFUSAL and self.activity_seconds + 1e-9 >= self.vad.min_speech_seconds:
+            self.vad.stop_reason = "preparation_activity"
+
+    def calibration_usable(self):
+        if not self.vad.calibrated or self.vad.stop_reason:
+            return False
+        if self.vad.noise_floor >= self.vad.configured_start:
+            self.vad.stop_reason = "calibration_unreliable"
+            return False
+        return True
+
+
+class SettledFanPreparation(QuietCapturePreparation):
+    """Opt-in bounded startup drain with robust low-energy interval estimation.
+
+    A majority of representative background intervals is required; isolated peaks
+    neither dominate the floor nor require an unrealistically flat fan signal.
+    Energy alone cannot distinguish perfectly steady speech from ambient noise.
+    """
+    ABSOLUTE_ACTIVITY_REFUSAL = False
+    MIN_DRAIN_SECONDS = 1.5
+    WINDOW_SECONDS = 1.0
+    MAX_PREPARATION_SECONDS = 6.0
+    INTERVAL_FRAMES = 5  # 100 ms at the existing 20 ms native capture cadence.
+    MIN_BACKGROUND_FRACTION = 0.7
+    MIN_BACKGROUND_RMS = 0.0001  # Reject digital-zero/near-zero unusable input.
+    MAX_BACKGROUND_RISE_RATIO = 2.0
+
+    def __init__(self, vad, warmup_seconds):
+        super().__init__(vad, warmup_seconds)
+        if warmup_seconds > self.MAX_PREPARATION_SECONDS - self.WINDOW_SECONDS:
+            raise ValueError("Settled fan warm-up exceeds bounded preparation budget.")
+        self._window = deque(maxlen=50)
+        self._settled = False
+        self.settled_floor = None
+
+    def warming_up(self):
+        return not self._settled and self.vad.stop_reason is None
+
+    def consume_warmup(self, rms, seconds):
+        if (not math.isfinite(rms) or not 0 <= rms <= 1 or
+                not math.isfinite(seconds) or seconds <= 0):
+            self.vad.stop_reason = "preparation_unstable"
+            return
+        super().consume_warmup(rms, seconds)
+        if self.warmup_elapsed - seconds + 1e-9 >= max(self.MIN_DRAIN_SECONDS, self.warmup_seconds):
+            self._window.append((rms, seconds))
+        duration = sum(dt for _, dt in self._window)
+        if duration + 1e-9 >= self.WINDOW_SECONDS:
+            estimate = self.background_estimate([level for level, _ in self._window])
+            if estimate is not None:
+                self.settled_floor = estimate
+                self._settled = True
+        if not self._settled and self.warmup_elapsed + 1e-9 >= self.MAX_PREPARATION_SECONDS:
+            self.vad.stop_reason = "preparation_unstable"
+
+    def background_estimate(self, levels):
+        # Complete short intervals only. A single low frame is not a baseline;
+        # multiple low intervals must support it. No peak maximum or p90/p10 gate.
+        if len(levels) < self.INTERVAL_FRAMES * 3 or any(
+                not math.isfinite(level) or not 0 <= level <= 1 for level in levels):
+            return None
+        intervals = [median(levels[i:i+self.INTERVAL_FRAMES])
+                     for i in range(0, len(levels)-self.INTERVAL_FRAMES+1, self.INTERVAL_FRAMES)]
+        ordered = sorted(intervals)
+        seed = median(ordered[:math.ceil(len(ordered)/2)])
+        if not self.MIN_BACKGROUND_RMS <= seed < self.vad.configured_start:
+            return None
+        # Relative spread around the lower-energy seed, with a small additive
+        # allowance for a quiet ADC floor. The configured ceiling is unchanged.
+        ceiling = max(seed * 2, seed + .002)
+        background = [level for level in intervals
+                      if self.MIN_BACKGROUND_RMS <= level < self.vad.configured_start and level <= ceiling]
+        if len(background) < math.ceil(self.MIN_BACKGROUND_FRACTION * len(intervals)):
+            return None
+        return median(background)
+
+    def calibration_usable(self):
+        if not self.vad.calibrated or self.vad.stop_reason:
+            return False
+        floor = self.background_estimate(list(self.vad.noise_samples))
+        if (floor is None or self.settled_floor is None or
+                floor > self.settled_floor * self.MAX_BACKGROUND_RISE_RATIO):
+            self.vad.stop_reason = "calibration_unreliable"
+            return False
+        # The generic feed collected real calibration RMS values. Install the
+        # robust estimate using the existing onset/hysteresis formula; leave the
+        # samples intact and never invent silence or change legacy calibration.
+        self.vad._thresholds(background_floor=floor)
+        return True
+
+    def diagnostics(self):
+        result = super().diagnostics()
+        result.update(policy="settled_fan_v2", settled_background_rms=self.settled_floor,
+                      startup_drain_seconds=max(self.MIN_DRAIN_SECONDS, self.warmup_seconds),
+                      background_window_seconds=self.WINDOW_SECONDS,
+                      preparation_limit_seconds=self.MAX_PREPARATION_SECONDS,
+                      interval_frames=self.INTERVAL_FRAMES,
+                      min_background_fraction=self.MIN_BACKGROUND_FRACTION,
+                      min_background_rms=self.MIN_BACKGROUND_RMS,
+                      max_background_rise_ratio=self.MAX_BACKGROUND_RISE_RATIO)
+        if self.vad.stop_reason == "preparation_unstable":
+            result["refusal_reason"] = self.vad.stop_reason
+        return result

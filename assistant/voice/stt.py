@@ -5,6 +5,7 @@ Defines the base interface for transcription and implements a local provider
 using whisper.cpp.
 """
 
+from assistant import latency_trace as latency
 import logging
 import subprocess
 import os
@@ -67,6 +68,7 @@ class WhisperCppProvider(SpeechToTextProvider):
         self.vad_min_silence_ms = vad_min_silence_ms
         self.vad_speech_pad_ms = vad_speech_pad_ms
 
+    @latency.span("stt_cli")
     def transcribe(self, audio_file_path: str) -> str:
         if not os.path.exists(self.binary_path):
             raise STTError(f"whisper.cpp binary not found at: {self.binary_path}")

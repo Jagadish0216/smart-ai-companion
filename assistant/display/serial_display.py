@@ -1,5 +1,6 @@
 """Persistent, best-effort USB serial transport for existing ESP32 firmware."""
 
+from assistant import latency_trace as latency
 import logging
 import threading
 import time
@@ -68,6 +69,7 @@ class SerialCompanionDisplay(CompanionDisplay):
         except Exception:
             logger.warning("Companion display connection cleanup failed")
 
+    @latency.span("serial_write")
     def _send(self, command):
         payload = (command + "\n").encode("ascii")
         with self._lock:
