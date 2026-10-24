@@ -1007,7 +1007,10 @@ class VoiceInputInjectionTests(SimpleTestCase):
     def test_main_reaps_real_synthetic_worker_on_normal_and_exceptional_exit(self):
         for failed in (False, True):
             with self.subTest(failed=failed):
-                provider = PiperProvider("legacy", "fake-voice", timeout=5)
+                # Exercise cold spawn and the actual ready handshake with the
+                # production default budget. Five seconds is a synthesis budget,
+                # not a portable upper bound on cold Python startup on the Pi.
+                provider = PiperProvider("legacy", "fake-voice", timeout=30)
                 self.addCleanup(provider.close)
                 self.mocks["get_tts_provider"].return_value = provider
                 service = self.mocks["AssistantService.process_message_stream"]
@@ -1019,12 +1022,22 @@ class VoiceInputInjectionTests(SimpleTestCase):
                 def warm():
                     real_warm()
                     pid.append(provider._worker.pid)
+                    provider.timeout = 5
                 with patch("assistant.voice.tts.worker_main", fake_piper_worker), patch(
                     "assistant.voice.tts.os.path.exists", return_value=True), patch.object(provider, "warm", side_effect=warm), patch(
-                    "sys.stderr", new_callable=io.StringIO):
-                    self.assertEqual(voice_loop.main(["--text", "What is an ESP32?"]), 1 if failed else 0)
+                    "sys.stderr", new_callable=io.StringIO) as stderr:
+                    status = voice_loop.main(["--text", "What is an ESP32?"])
+                    # setUp mocks print globally, including calls to stderr.
+                    errors = [str(args[0]) for args, kwargs in self.mocks["builtins.print"].call_args_list
+                              if args and kwargs.get("file") is stderr]
+                    self.assertEqual(status, 1 if failed else 0, "\n".join(errors) + stderr.getvalue())
+                self.assertEqual(len(pid), 1, "The worker never completed its readiness handshake")
+                self.assertEqual(provider._request_id, 0 if failed else 1)
                 self.assertIsNone(provider._worker)
+                self.assertIsNone(provider._connection)
                 self.assertNotIn(pid[0], [child.pid for child in multiprocessing.active_children()])
+                self.assertFalse(any(thread.name in {"piper-ipc", "piper-shutdown"}
+                                     for thread in enumerate_threads()))
                 self.assert_reaped()
 
     def test_speech_cleanup_failure_does_not_prevent_display_cleanup(self):

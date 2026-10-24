@@ -377,17 +377,46 @@ class PersistentPiperLifecycleTests(SimpleTestCase):
         pid = self.provider._worker.pid
         self.provider.timeout = 0.15
         started = time.monotonic()
-        with self.assertRaisesRegex(TTSError, "TTS synthesis timed out"):
-            self.provider.synthesize("hang")
+        with self.assertLogs("assistant.voice.tts", level="WARNING") as logs:
+            with self.assertRaisesRegex(TTSError, r"TTS synthesis timed out.*Piper synthesis"):
+                self.provider.synthesize("hang")
+        self.assertIn("Piper synthesis", str(logs.output))
+        self.assertNotIn("hang", str(logs.output))
         self.assertLess(time.monotonic() - started, 3)
         self.assert_stopped(pid)
 
     def test_warmup_timeout_leaves_no_worker(self):
         self.provider.voice_path = "hang-load"
         self.provider.timeout = 0.15
-        with self.assertRaisesRegex(TTSError, "timed out"):
-            self.provider.warm()
+        with self.assertLogs("assistant.voice.tts", level="WARNING") as logs:
+            with self.assertRaisesRegex(TTSError, r"timed out.*Piper readiness"):
+                self.provider.warm()
+        self.assertIn("Piper readiness", str(logs.output))
+        self.assertNotIn("hang-load", str(logs.output))
         self.assert_stopped(None)
+
+    def test_cold_readiness_budget_is_separate_from_warm_synthesis_budget(self):
+        # Advance a virtual clock after the real ready frame instead of sleeping
+        # or depending on the host's CPU speed to simulate a six-second startup.
+        self.provider.timeout = 30
+        monotonic = time.monotonic
+        elapsed = [0]
+        exchange = self.provider._exchange
+
+        def receive(*args):
+            response = exchange(*args)
+            if args[0] is None:
+                elapsed[0] += 6
+            return response
+
+        with patch("assistant.voice.tts.time.monotonic", side_effect=lambda: monotonic() + elapsed[0]), patch.object(
+                self.provider, "_exchange", side_effect=receive):
+            self.provider.warm()
+            pid = self.provider._worker.pid
+            self.provider.timeout = 5
+            self.assertEqual(self.provider.synthesize("Ready"), wav_bytes("Ready"))
+        self.provider.close()
+        self.assert_stopped(pid)
 
     def test_crash_stale_malformed_invalid_wav_and_worker_error_fail_safely(self):
         for text in ("crash", "stale", "malformed", "invalidwav", "error"):

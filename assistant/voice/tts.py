@@ -189,7 +189,16 @@ class PiperProvider(TextToSpeechProvider):
                 if not valid or not isinstance(payload, dict):
                     raise TTSError("Piper worker communication failed.")
                 return payload
-        except BaseException:
+        except BaseException as exc:
+            # Only our controlled TTSError messages are safe to expose. Never
+            # include IPC payloads, synthesis text or arbitrary child errors.
+            if isinstance(exc, TTSError):
+                phase = "readiness" if message is None else "synthesis"
+                exitcode = self._worker.exitcode if self._worker is not None else None
+                detail = f"{exc} [Piper {phase}; exitcode={exitcode}]"
+                logger.warning("%s", detail)
+                self._stop_worker()
+                raise TTSError(detail) from exc
             self._stop_worker()
             raise
         finally:
