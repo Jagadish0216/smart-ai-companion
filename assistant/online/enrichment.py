@@ -20,7 +20,21 @@ _CACHE = OrderedDict()
 _LOCK = threading.Lock()
 _SLOT = threading.Lock()
 _DNS_SLOT = threading.Lock()
+_HOST_BACKOFF = OrderedDict()
 MAX_BYTES = 131072
+
+
+class PageUnavailable(ValueError):
+    def __init__(self, status):
+        self.status = status
+        super().__init__('Article unavailable')
+
+
+def cached_accessibility(url):
+    from .selection import canonical_url
+    with _LOCK:
+        cached = _CACHE.get(canonical_url(url))
+    return cached[1][3] if cached and cached[0] > time.monotonic() and len(cached[1]) > 3 else 'unchecked'
 
 
 def _timeout(deadline):
@@ -37,10 +51,13 @@ class ArticleMetadata(HTMLParser):
         self.modified = []
         self.json_parts = None
         self.page_url = page_url
+        self.redirect = False
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         if tag == 'meta':
+            if attrs.get('http-equiv','').lower() == 'refresh':
+                self.redirect = True
             key = (attrs.get('property') or attrs.get('name') or attrs.get('itemprop') or '').lower()
             value = attrs.get('content', '')
             if key in {'article:published_time', 'og:published_time', 'datepublished', 'pubdate', 'publishdate', 'publication_date', 'citation_publication_date', 'citation_date', 'dc.date.issued', 'dcterms.issued'}:
@@ -161,7 +178,9 @@ def fetch_metadata(url, deadline):
                     raise ValueError('Unsafe article redirect')
                 url = target
                 continue  # Validate and pin every redirect before any request.
-            if response.status != 200 or response.getheader('Content-Type', '').split(';')[0].strip().lower() not in {'text/html', 'application/xhtml+xml'}:
+            if response.status != 200:
+                raise PageUnavailable(response.status)
+            if response.getheader('Content-Type', '').split(';')[0].strip().lower() not in {'text/html', 'application/xhtml+xml'}:
                 raise ValueError('Not an HTML article')
             if response.getheader('Content-Encoding', 'identity').lower() != 'identity':
                 raise ValueError('Compressed article refused')
@@ -177,9 +196,13 @@ def fetch_metadata(url, deadline):
                 body.extend(chunk)
             if len(body) > MAX_BYTES:
                 raise ValueError('Article too large')
+            if re.search(rb'<title[^>]*>\s*(?:404|403|429|not found|page not found|access denied|just a moment|service unavailable|temporarily unavailable|too many requests|forbidden|captcha|error\b)', body, re.I):
+                raise ValueError('HTML error or challenge page')
             parser = ArticleMetadata(url)
             parser.feed(body.decode('utf-8', errors='replace'))
             parser.close()
+            if parser.redirect:
+                raise ValueError('HTML redirect refused')
             valid = [parse_publication_date(v) for v in parser.published]
             valid = [v for v in valid if v]
             return consistent_date(parser.published), consistent_date(parser.modified), len({v.date() for v in valid}) > 1
@@ -190,8 +213,8 @@ def fetch_metadata(url, deadline):
     raise ValueError('Too many article redirects')
 
 
-def enrich_results(results, query, deadline):
-    """Two relevant pages at most; shared 2s sub-budget and process-wide cache.
+def enrich_results(results, query, deadline, target=4):
+    """Four candidate attempts at most; unchanged shared 2s sub-budget.
 
     A nonblocking OS lock also caps cooperating Pi service workers to one fetch
     pipeline. Contention abstains instead of queuing. No changes to resource policy.
@@ -201,18 +224,38 @@ def enrich_results(results, query, deadline):
     terms = query_terms(query)
     enriched = list(results)
     attempts = 0
+    occurrences, order = {}, []
     for index, result in enumerate(results):
+        host = (urlsplit(result.url).hostname or '').removeprefix('www.')
+        order.append((occurrences.get(host,0), index))
+        occurrences[host] = occurrences.get(host,0)+1
+    # First promising article from each hostname before its second article.
+    for _, index in sorted(order):
+        result = results[index]
+        from .selection import is_article, canonical_url
+        from .grounding import select_current_evidence
+        from datetime import datetime, timezone
+        if len(select_current_evidence(enriched, query, datetime.now(timezone.utc))) >= target:
+            break
+        cache_key = canonical_url(result.url)
+        if not is_article(result):
+            continue
+        host = urlsplit(result.url).hostname
+        with _LOCK:
+            blocked = _HOST_BACKOFF.get(host, 0) > time.monotonic()
+        if blocked:
+            continue
         if urlsplit(result.url).path.strip('/').lower() in {'', 'news', 'blog', 'search', 'category', 'tag'}:
             continue  # Landing-page metadata cannot date linked articles.
         words = set(re.findall(r'[a-z0-9]+', (result.title + ' ' + result.content).lower()))
         if result.published_at or result.date_conflict or not terms or len(terms & words) < min(2, len(terms)) or re.search(r'\b(?:shop now|buy now|discount codes?|sponsored|special offers?)\b', result.content, re.I):
             continue
         with _LOCK:
-            cached = _CACHE.get(result.url)
+            cached = _CACHE.get(cache_key)
         if cached and cached[0] > time.monotonic():
             metadata = cached[1]
         else:
-            if attempts >= 2 or time.monotonic() >= deadline or not _SLOT.acquire(blocking=False):
+            if attempts >= 4 or time.monotonic() >= deadline or not _SLOT.acquire(blocking=False):
                 continue
             guard = None
             try:
@@ -226,18 +269,24 @@ def enrich_results(results, query, deadline):
                     os.lseek(guard, 0, 0)
                     msvcrt.locking(guard, msvcrt.LK_NBLCK, 1)
                 attempts += 1
-                metadata = fetch_metadata(result.url, deadline)
-            except (OSError, ValueError, http.client.HTTPException, RecursionError):
-                metadata = (None, None, False)
+                metadata = (*fetch_metadata(result.url, min(deadline, time.monotonic()+.65)), 'available')
+            except (OSError, ValueError, http.client.HTTPException, RecursionError) as failure:
+                if isinstance(failure, PageUnavailable) and failure.status in (403,429):
+                    with _LOCK:
+                        _HOST_BACKOFF[host] = time.monotonic()+60
+                        while len(_HOST_BACKOFF) > 32:
+                            _HOST_BACKOFF.popitem(last=False)
+                metadata = (None, None, False, 'unavailable')
             finally:
                 if guard is not None:
                     os.close(guard)
                 _SLOT.release()
             with _LOCK:
-                _CACHE[result.url] = (time.monotonic() + (300 if metadata[0] else 15), metadata)
-                _CACHE.move_to_end(result.url)
+                _CACHE[cache_key] = (time.monotonic() + (300 if metadata[0] else 15), metadata)
+                _CACHE.move_to_end(cache_key)
                 while len(_CACHE) > 64:
                     _CACHE.popitem(last=False)
-        published, modified, conflict = metadata
-        enriched[index] = replace(result, published_at=published, modified_at=modified or result.modified_at, publication_source='article_metadata' if published else '', date_conflict=conflict)
+        published, modified, conflict = metadata[:3]
+        accessibility = metadata[3] if len(metadata) > 3 else 'available'
+        enriched[index] = replace(result, published_at=published, modified_at=modified or result.modified_at, publication_source='article_metadata' if published else '', date_conflict=conflict, accessibility=accessibility)
     return enriched

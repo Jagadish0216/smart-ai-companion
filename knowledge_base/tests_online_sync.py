@@ -88,7 +88,7 @@ class OnlineSyncFixture(TestCase):
         self.retriever = MagicMock()
         self.retriever.retrieve.return_value = [result()]
         self.service = OnlineKnowledgeSyncService(retriever=self.retriever)
-        network = patch('assistant.online.searxng.request.urlopen', side_effect=AssertionError('No network in sync tests'))
+        network = patch('assistant.online.searxng._open_search', side_effect=AssertionError('No network in sync tests'))
         self.network = network.start()
         self.addCleanup(network.stop)
 

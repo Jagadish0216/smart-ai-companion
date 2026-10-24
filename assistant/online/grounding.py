@@ -48,7 +48,10 @@ def select_current_evidence(results, query, request_time):
     admitted = []
     seen = set()
     for result in results[:20]:
-        if not isinstance(result, OnlineRetrievalResult) or result.date_conflict or not _safe_public_url(result.url):
+        if not isinstance(result, OnlineRetrievalResult) or result.date_conflict or result.accessibility == 'unavailable' or not _safe_public_url(result.url):
+            continue
+        from .selection import is_article
+        if re.search(r'\b(?:news|headlines?)\b', query, re.I) and not is_article(result):
             continue
         content = result.content
         if not isinstance(content, str) or len(content.strip()) < 20:

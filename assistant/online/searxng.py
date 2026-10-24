@@ -37,6 +37,17 @@ _LOCK = threading.Lock()
 _SLOTS = threading.BoundedSemaphore(2)
 
 
+class _NoProviderRedirect(request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _open_search(search_request, *, timeout):
+    # A configured JSON endpoint must respond directly. Do not let urllib
+    # multiply per-attempt timeouts by following portal/provider redirects.
+    return request.build_opener(_NoProviderRedirect()).open(search_request, timeout=timeout)
+
+
 def clear_online_cache():
     """Clear process-local, bounded search/health caches (also used by tests)."""
     with _LOCK:
@@ -154,7 +165,14 @@ class SearXNGOnlineRetriever(OnlineRetriever):
                     if not any(parse.urlsplit(r.url).hostname in {"iana.org", "www.iana.org"} and "example" in r.content.lower() for r in probe):
                         raise OnlineRetrievalProviderError("External search health could not be verified.")
             from .enrichment import enrich_results
-            results = enrich_results(results, query, deadline)
+            results = enrich_results(results, query, deadline, min(4, self.max_results))
+            from .selection import rank_candidates, diverse_selection
+            from .grounding import select_current_evidence
+            results = rank_candidates(results, query)
+            fresh = select_current_evidence(results, query, datetime.now(timezone.utc))
+            remainder = [item for item in results if item not in fresh and item.accessibility != 'unavailable']
+            selected = diverse_selection(fresh, self.max_results)
+            results = selected + diverse_selection(remainder, self.max_results - len(selected)) if len(selected) < self.max_results else selected
             with _LOCK:
                 _remember(_HEALTH, self.base_url, (time.monotonic() + 30, True), 8)
                 _remember(_CACHE, key, (time.monotonic() + (freshness_seconds(query) if results else 5), tuple(results)))
@@ -185,12 +203,11 @@ class SearXNGOnlineRetriever(OnlineRetriever):
         )
 
         try:
-            with request.urlopen(
+            with _open_search(
                 search_request,
                 timeout=min(3.0, remaining),
             ) as response:
-                # urllib follows redirects by default. Reject portal/login pages
-                # before parsing; never submit authentication or follow HTML.
+                # Defense in depth for alternate transports/test doubles.
                 geturl = getattr(response, "geturl", None)
                 if callable(geturl) and parse.urlsplit(geturl())[:2] != parse.urlsplit(search_request.full_url)[:2]:
                     raise OnlineRetrievalResponseError("Online provider redirected to another origin.")
@@ -270,15 +287,8 @@ class SearXNGOnlineRetriever(OnlineRetriever):
                 date_conflict=conflict,
                 modified_at=consistent_date([raw_result.get('dateModified'), raw_result.get('modifiedDate')]),
             ))
-        terms = query_terms(bounded_query)
-        # Rank a bounded candidate pool before applying the result limit, so a
-        # generic landing-page hit cannot crowd out a relevant dated source.
-        results.sort(key=lambda item: (
-            not bool(re.search(r'\b(?:shop now|buy now|discount codes?|sponsored|special offers?)\b', item.content, re.I)),
-            len(terms & set(re.findall(r"[a-z0-9]+", (item.title + " " + item.content).lower()))),
-            item.published_at.timestamp() if item.published_at else 0,
-        ), reverse=True)
-        return results[:self.max_results]
+        from .selection import rank_candidates
+        return rank_candidates(results, bounded_query)
 
 
 class _TransientProviderError(OnlineRetrievalProviderError):

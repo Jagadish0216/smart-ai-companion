@@ -35,7 +35,7 @@ class DateTests(SimpleTestCase):
     def test_conflicting_dates_are_not_resolved_by_selecting_newest(self):
         self.assertIsNone(consistent_date(['2020-01-01', NOW.isoformat()]))
 
-    @patch('assistant.online.searxng.request.urlopen')
+    @patch('assistant.online.searxng._open_search')
     def test_actual_searxng_fields_and_invalid_primary_fallback(self, http):
         for key in ('publishedDate', 'pubdate', 'published_date', 'datePublished', 'date_of_publication'):
             clear_online_cache()
@@ -140,7 +140,7 @@ class EnrichmentTests(SimpleTestCase):
         self.assertEqual(fetch.call_count,1)
         e._CACHE.clear(); fetch.reset_mock()
         e.enrich_results([replace(source(),url=source().url+str(i)) for i in range(8)], QUERY,time.monotonic()+4)
-        self.assertEqual(fetch.call_count,2)
+        self.assertEqual(fetch.call_count,4)
 
     @patch('assistant.online.enrichment.fetch_metadata', side_effect=TimeoutError())
     def test_failures_are_cached_without_fabricated_date(self, fetch):
@@ -176,7 +176,7 @@ class EnrichedServiceTests(TestCase):
     @patch('assistant.services.django_timezone.now', return_value=NOW)
     @patch('assistant.services.get_engine')
     @patch('assistant.online.enrichment.fetch_metadata', return_value=(NOW,None,False))
-    @patch('assistant.online.searxng.request.urlopen')
+    @patch('assistant.online.searxng._open_search')
     def test_streaming_and_nonstreaming_use_enriched_provenance(self,http,fetch,engine,clock):
         install_resource_report(self,online_allowed=True)
         response = MagicMock(); response.__enter__.return_value=response

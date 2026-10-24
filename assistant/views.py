@@ -76,7 +76,7 @@ def _public_assistant_metadata(metadata):
             for source in metadata.get("rag_sources", [])
         ]
     if "online_sources" in metadata:
-        allowed_source_fields = {"title", "url", "provider", "retrieved_at", "published_at", "modified_at", "publication_source"}
+        allowed_source_fields = {"title", "url", "provider", "retrieved_at", "published_at", "modified_at", "publication_source", "accessibility"}
         payload["online_sources"] = []
         for source in metadata.get("online_sources", []):
             if not isinstance(source, dict):

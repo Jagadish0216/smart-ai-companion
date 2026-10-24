@@ -65,7 +65,7 @@ class ProviderResilienceTests(SimpleTestCase):
         self.addCleanup(enrichment.stop)
         self.retriever = SearXNGOnlineRetriever(base_url="http://127.0.0.1:8888", timeout_seconds=4, max_results=4)
 
-    @patch("assistant.online.searxng.request.urlopen")
+    @patch("assistant.online.searxng._open_search")
     def test_retry_transient_then_cache_across_retriever_instances(self, http):
         http.side_effect = [socket.timeout(), Response([raw_result()])]
         first = self.retriever.retrieve("Acme CEO")
@@ -74,7 +74,7 @@ class ProviderResilienceTests(SimpleTestCase):
         self.assertEqual(http.call_count, 2)
         self.assertTrue(all(0 < c.kwargs["timeout"] <= 3 for c in http.call_args_list))
 
-    @patch("assistant.online.searxng.request.urlopen")
+    @patch("assistant.online.searxng._open_search")
     def test_no_internet_cooldown_and_bounded_retry(self, http):
         http.side_effect = URLError("private connection detail")
         for query in ("Acme CEO", "other news"):
@@ -82,7 +82,7 @@ class ProviderResilienceTests(SimpleTestCase):
                 self.retriever.retrieve(query)
         self.assertEqual(http.call_count, 2)
 
-    @patch("assistant.online.searxng.request.urlopen")
+    @patch("assistant.online.searxng._open_search")
     def test_captive_portal_html_and_redirect_never_retry(self, http):
         for response in (Response(body=b"<html>Login required</html>"), Response([raw_result()], url="http://college.invalid/login")):
             clear_online_cache()
@@ -92,7 +92,7 @@ class ProviderResilienceTests(SimpleTestCase):
                 self.retriever.retrieve("Acme CEO")
             self.assertEqual(http.call_count, 1)
 
-    @patch("assistant.online.searxng.request.urlopen")
+    @patch("assistant.online.searxng._open_search")
     def test_auth_and_rate_limits_are_not_retried(self, http):
         for code in (401, 403, 429):
             clear_online_cache()
@@ -102,14 +102,14 @@ class ProviderResilienceTests(SimpleTestCase):
                 self.retriever.retrieve("Acme CEO")
             self.assertEqual(http.call_count, 1)
 
-    @patch("assistant.online.searxng.request.urlopen")
+    @patch("assistant.online.searxng._open_search")
     def test_empty_local_endpoint_is_not_external_connectivity(self, http):
         http.return_value = Response()
         with self.assertRaises(OnlineRetrievalProviderError):
             self.retriever.retrieve("Acme CEO")
         self.assertEqual(http.call_count, 2)  # query + one real canary
 
-    @patch("assistant.online.searxng.request.urlopen")
+    @patch("assistant.online.searxng._open_search")
     def test_empty_results_with_healthy_external_search_and_health_cache(self, http):
         canary = Response([{"title": "IANA", "url": "https://www.iana.org/help/example-domains", "content": "IANA reserves example domains for documentation."}])
         http.side_effect = [Response(), canary, Response()]
@@ -117,14 +117,14 @@ class ProviderResilienceTests(SimpleTestCase):
         self.assertEqual(self.retriever.retrieve("Other CEO"), [])
         self.assertEqual(http.call_count, 3)
 
-    @patch("assistant.online.searxng.request.urlopen")
+    @patch("assistant.online.searxng._open_search")
     def test_one_alternative_query_only(self, http):
         http.side_effect = [Response(), Response([raw_result()])]
         self.assertEqual(len(self.retriever.retrieve("What is Acme CEO?")), 1)
         self.assertEqual(http.call_count, 2)
         self.assertIn("q=Acme+CEO", http.call_args.args[0].full_url)
 
-    @patch("assistant.online.searxng.request.urlopen")
+    @patch("assistant.online.searxng._open_search")
     def test_defensive_parsing_dedup_and_script_sanitization(self, http):
         result = raw_result()
         http.return_value = Response([None, "bad", result, result, {**result, "url": "https://example.net", "content": result["content"]}, {**result, "url": "http://127.0.0.1/private"}, {**result, "url": "https://example.net/real", "content": "<script>secret</script>Different useful Acme information."}])
@@ -132,7 +132,7 @@ class ProviderResilienceTests(SimpleTestCase):
         self.assertEqual(len(results), 2)
         self.assertNotIn("secret", results[1].content)
 
-    @patch("assistant.online.searxng.request.urlopen")
+    @patch("assistant.online.searxng._open_search")
     def test_relevant_results_rank_before_generic_first_hits(self, http):
         http.return_value = Response([
             {"title": "Generic page", "url": "https://example.net", "content": "Browse the information on this site."},
@@ -141,7 +141,7 @@ class ProviderResilienceTests(SimpleTestCase):
         self.retriever.max_results = 1
         self.assertEqual(self.retriever.retrieve("Acme CEO")[0].title, "Acme CEO appointment")
 
-    @patch("assistant.online.searxng.request.urlopen")
+    @patch("assistant.online.searxng._open_search")
     def test_malformed_types_and_bounded_response(self, http):
         for body in (b"[]", b"null", b'{"results": {}}', b"x" * 1_000_001):
             clear_online_cache()
@@ -150,7 +150,7 @@ class ProviderResilienceTests(SimpleTestCase):
                 self.retriever.retrieve("Acme CEO")
 
     @patch("assistant.online.searxng.time.monotonic")
-    @patch("assistant.online.searxng.request.urlopen")
+    @patch("assistant.online.searxng._open_search")
     def test_total_budget_prevents_a_retry_after_slow_response(self, http, clock):
         clock.return_value = 100
         def slow(*args, **kwargs):
@@ -163,7 +163,7 @@ class ProviderResilienceTests(SimpleTestCase):
         self.assertEqual(http.call_count, 1)
 
     @patch("assistant.online.searxng.time.monotonic")
-    @patch("assistant.online.searxng.request.urlopen")
+    @patch("assistant.online.searxng._open_search")
     def test_negative_health_expiry_allows_recovery(self, http, clock):
         clock.return_value = 100
         http.side_effect = URLError("offline")
@@ -175,7 +175,7 @@ class ProviderResilienceTests(SimpleTestCase):
         self.assertEqual(len(self.retriever.retrieve("Acme CEO")), 1)
 
     @patch("assistant.online.searxng.time.monotonic")
-    @patch("assistant.online.searxng.request.urlopen")
+    @patch("assistant.online.searxng._open_search")
     def test_freshness_ttl_and_cache_bound(self, http, clock):
         clock.return_value = 100
         http.return_value = Response([raw_result()])
@@ -199,7 +199,7 @@ class EndToEndTests(TestCase):
 
     @patch("assistant.services.django_timezone.now", return_value=NOW)
     @patch("assistant.services.get_engine")
-    @patch("assistant.online.searxng.request.urlopen")
+    @patch("assistant.online.searxng._open_search")
     def test_transport_and_voice_matrix(self, http, engine_factory, _now):
         result = AIEngineResult(text="Acme's CEO is Alice Smith, as reported on October 24.", engine="local", latency_ms=12, ttft_ms=2)
         engine = MagicMock()

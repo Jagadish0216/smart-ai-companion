@@ -81,7 +81,7 @@ class OnlineProviderTests(SimpleTestCase):
     def test_provider_implements_replaceable_interface(self):
         self.assertIsInstance(self.make_retriever(), OnlineRetriever)
 
-    @patch("assistant.online.searxng.request.urlopen")
+    @patch("assistant.online.searxng._open_search")
     def test_successful_retrieval_returns_bounded_sanitized_results(self, urlopen):
         payload = {
             "query": "latest Python release",
@@ -122,12 +122,12 @@ class OnlineProviderTests(SimpleTestCase):
         })
         self.assertLessEqual(urlopen.call_args.kwargs["timeout"], 3)
 
-    @patch("assistant.online.searxng.request.urlopen", side_effect=socket.timeout())
+    @patch("assistant.online.searxng._open_search", side_effect=socket.timeout())
     def test_timeout_is_reported_as_typed_failure(self, _urlopen):
         with self.assertRaises(OnlineRetrievalTimeoutError):
             self.make_retriever().retrieve("latest news")
 
-    @patch("assistant.online.searxng.request.urlopen")
+    @patch("assistant.online.searxng._open_search")
     def test_http_error_is_reported_as_provider_failure(self, urlopen):
         urlopen.side_effect = error.HTTPError(
             "https://example.invalid",
@@ -139,19 +139,19 @@ class OnlineProviderTests(SimpleTestCase):
         with self.assertRaises(OnlineRetrievalProviderError):
             self.make_retriever().retrieve("latest news")
 
-    @patch("assistant.online.searxng.request.urlopen")
+    @patch("assistant.online.searxng._open_search")
     def test_connection_failure_is_reported_as_provider_error(self, urlopen):
         urlopen.side_effect = error.URLError("offline")
         with self.assertRaises(OnlineRetrievalProviderError):
             self.make_retriever().retrieve("latest news")
 
-    @patch("assistant.online.searxng.request.urlopen")
+    @patch("assistant.online.searxng._open_search")
     def test_malformed_response_is_rejected(self, urlopen):
         urlopen.return_value = _FakeHTTPResponse(b"not-json")
         with self.assertRaises(OnlineRetrievalResponseError):
             self.make_retriever().retrieve("latest news")
 
-    @patch("assistant.online.searxng.request.urlopen")
+    @patch("assistant.online.searxng._open_search")
     def test_zero_useful_results_returns_empty_list(self, urlopen):
         urlopen.side_effect = [
             _FakeHTTPResponse(json.dumps({"results": []}).encode()),
@@ -159,7 +159,7 @@ class OnlineProviderTests(SimpleTestCase):
         ]
         self.assertEqual(self.make_retriever().retrieve("latest news"), [])
 
-    @patch("assistant.online.searxng.request.urlopen")
+    @patch("assistant.online.searxng._open_search")
     def test_malformed_result_entries_are_ignored_safely(self, urlopen):
         urlopen.return_value = _FakeHTTPResponse(json.dumps({
             "results": [

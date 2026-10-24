@@ -276,7 +276,7 @@ class GenerationInstructionOrderingTests(TestCase):
         engine = LocalLLMEngine(model=plan.configured_model)
         rag = RetrievedChunk(1, 1, "test:prefix", "prefix.md", 0, "Local reference.", 1.0)
         online = OnlineRetrievalResult(
-            "News search reference", "https://example.com", "Today's news search contains current facts.", "searxng",
+            "News search reference", "https://example.com/article", "Today's news search contains current facts.", "searxng",
             datetime(2026, 10, 6, tzinfo=timezone.utc),
             published_at=datetime.now(timezone.utc),
         )
