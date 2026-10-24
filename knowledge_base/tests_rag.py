@@ -329,7 +329,7 @@ class RagAssistantServiceTests(TemporaryMediaTestCase):
         mock_get_engine.return_value = engine
 
         conversation, text, metadata, error = AssistantService.process_message(
-            "What is edge computing?"
+            "According to my notes, what is edge computing?"
         )
 
         call = engine.generate.call_args
@@ -351,7 +351,7 @@ class RagAssistantServiceTests(TemporaryMediaTestCase):
         self.assertEqual(
             list(conversation.messages.order_by("id").values_list("sender", "text")),
             [
-                ("USER", "What is edge computing?"),
+                ("USER", "According to my notes, what is edge computing?"),
                 ("AI", "Browser-formatted grounded response."),
             ],
         )
@@ -376,6 +376,6 @@ class RagAssistantServiceTests(TemporaryMediaTestCase):
         self.assertFalse(metadata["rag_used"])
         self.assertEqual(metadata["rag_sources"], [])
         self.assertEqual(metadata["rag_chunks"], 0)
-        self.assertIn("Runtime capabilities:", instruction)
+        self.assertIn("admit uncertainty", instruction)
         self.assertNotIn("trusted local knowledge", instruction)
         self.assertNotIn(EDGE_KNOWLEDGE, instruction)

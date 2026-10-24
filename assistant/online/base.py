@@ -21,6 +21,9 @@ class OnlineRetrievalResult:
     publication_source: str = ""
     date_conflict: bool = False
     accessibility: str = "unchecked"
+    release_at: datetime | None = None
+    release_evidence: str = ""
+    verified_at: datetime | None = None
 
     def source_metadata(self) -> dict:
         """Return public-safe attribution data without copied web content."""
@@ -33,6 +36,8 @@ class OnlineRetrievalResult:
             "modified_at": self.modified_at.isoformat() if self.modified_at else None,
             "publication_source": self.publication_source,
             "accessibility": self.accessibility,
+            "release_at": self.release_at.isoformat() if self.release_at else None,
+            "verified_at": self.verified_at.isoformat() if self.verified_at else None,
         }
 
 

@@ -11,6 +11,7 @@ import threading
 import time
 from collections import OrderedDict
 from dataclasses import replace
+from datetime import datetime, timezone
 from html.parser import HTMLParser
 from urllib.parse import urlsplit, urljoin
 
@@ -205,7 +206,11 @@ def fetch_metadata(url, deadline):
                 raise ValueError('HTML redirect refused')
             valid = [parse_publication_date(v) for v in parser.published]
             valid = [v for v in valid if v]
-            return consistent_date(parser.published), consistent_date(parser.modified), len({v.date() for v in valid}) > 1
+            from .evidence_policy import release_statement
+            from .searxng import _plain_text
+            release_date, release_text = release_statement(_plain_text(body.decode('utf-8',errors='replace')), url)
+            basic = (consistent_date(parser.published), consistent_date(parser.modified), len({v.date() for v in valid}) > 1)
+            return basic + (release_date,release_text) if release_date else basic
         finally:
             if guard is not None:
                 guard.cancel()
@@ -234,7 +239,6 @@ def enrich_results(results, query, deadline, target=4):
         result = results[index]
         from .selection import is_article, canonical_url
         from .grounding import select_current_evidence
-        from datetime import datetime, timezone
         if len(select_current_evidence(enriched, query, datetime.now(timezone.utc))) >= target:
             break
         cache_key = canonical_url(result.url)
@@ -248,7 +252,9 @@ def enrich_results(results, query, deadline, target=4):
         if urlsplit(result.url).path.strip('/').lower() in {'', 'news', 'blog', 'search', 'category', 'tag'}:
             continue  # Landing-page metadata cannot date linked articles.
         words = set(re.findall(r'[a-z0-9]+', (result.title + ' ' + result.content).lower()))
-        if result.published_at or result.date_conflict or not terms or len(terms & words) < min(2, len(terms)) or re.search(r'\b(?:shop now|buy now|discount codes?|sponsored|special offers?)\b', result.content, re.I):
+        from .evidence_policy import official_catalog, evidence_category
+        needs_catalog = official_catalog(result.url) and evidence_category(query)=='release'
+        if (result.published_at and not needs_catalog) or result.date_conflict or not terms or len(terms & words) < min(2, len(terms)) or re.search(r'\b(?:shop now|buy now|discount codes?|sponsored|special offers?)\b', result.content, re.I):
             continue
         with _LOCK:
             cached = _CACHE.get(cache_key)
@@ -269,7 +275,8 @@ def enrich_results(results, query, deadline, target=4):
                     os.lseek(guard, 0, 0)
                     msvcrt.locking(guard, msvcrt.LK_NBLCK, 1)
                 attempts += 1
-                metadata = (*fetch_metadata(result.url, min(deadline, time.monotonic()+.65)), 'available')
+                fetched = fetch_metadata(result.url, min(deadline, time.monotonic()+(1.25 if needs_catalog else .65)))
+                metadata = (*fetched[:3], 'available', *(fetched[3:] if len(fetched)>3 else (None,'')), datetime.now(timezone.utc))
             except (OSError, ValueError, http.client.HTTPException, RecursionError) as failure:
                 if isinstance(failure, PageUnavailable) and failure.status in (403,429):
                     with _LOCK:
@@ -282,11 +289,11 @@ def enrich_results(results, query, deadline, target=4):
                     os.close(guard)
                 _SLOT.release()
             with _LOCK:
-                _CACHE[cache_key] = (time.monotonic() + (300 if metadata[0] else 15), metadata)
+                _CACHE[cache_key] = (time.monotonic() + (300 if metadata[0] or len(metadata)>4 and metadata[4] else 15), metadata)
                 _CACHE.move_to_end(cache_key)
                 while len(_CACHE) > 64:
                     _CACHE.popitem(last=False)
         published, modified, conflict = metadata[:3]
         accessibility = metadata[3] if len(metadata) > 3 else 'available'
-        enriched[index] = replace(result, published_at=published, modified_at=modified or result.modified_at, publication_source='article_metadata' if published else '', date_conflict=conflict, accessibility=accessibility)
+        enriched[index] = replace(result, published_at=published, modified_at=modified or result.modified_at, publication_source='article_metadata' if published else '', date_conflict=conflict, accessibility=accessibility, release_at=metadata[4] if len(metadata)>4 else None, release_evidence=metadata[5] if len(metadata)>5 else '', verified_at=metadata[6] if len(metadata)>6 else None)
     return enriched

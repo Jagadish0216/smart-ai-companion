@@ -259,11 +259,11 @@ class QueryRouterServiceTests(RouterTestCase):
         mock_get_engine.return_value = engine
 
         conversation, _text, metadata, error = AssistantService.process_message(
-            "What is edge computing?"
+            "According to my notes, what is edge computing?"
         )
 
         self.assertIsNone(error)
-        retriever.retrieve.assert_called_once_with("What is edge computing?")
+        retriever.retrieve.assert_called_once_with("edge computing")
         instruction = engine.generate.call_args.kwargs["system_instruction"]
         self.assertEqual(instruction.count(EDGE_KNOWLEDGE), 1)
         self.assertEqual(metadata["route"], "local_rag")

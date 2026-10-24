@@ -48,7 +48,8 @@ from .policy import (
     VOICE_SAFETY_INSTRUCTION,
     build_runtime_capability_registry,
 )
-from .routing import QueryRoute, QueryRouteDecision, QueryRouter
+from .routing import QueryRoute, QueryRouteDecision, QueryRouter, requests_local_knowledge
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -296,7 +297,7 @@ def _prepare_message(
         required_capability=(
             response_plan.required_capability if response_plan is not None else None
         ),
-        allow_implicit_rag=response_plan.allow_implicit_rag if response_plan is not None else True,
+        allow_implicit_rag=False,
     )
     latency.mark("route", route=route_decision.route.value)
     routing_ms = round((time.perf_counter() - routing_started) * 1000)
@@ -480,6 +481,15 @@ def _prepare_message(
     history = memory_history + history
 
     rag_results = select_rag_context(list(route_decision.rag_results))
+    local_knowledge = requests_local_knowledge(query)
+    project_scope = bool(re.search(r'\b(project|setup|wiring|gpio|pins?|hardware|board)\b', query, re.I))
+    explanation = bool(re.search(r'\b(?:explain|why|works?)\b|\bhow (?:does|do|is|are|can|would)\b', query, re.I))
+    document_only = bool(re.search(r'\b(documents?|notes|files|knowledge base|only)\b', query, re.I))
+    project_general = local_knowledge and project_scope and explanation and not document_only
+    if local_knowledge:
+        effective_instruction = _combine_instructions(effective_instruction,
+            'Project-specific facts require supplied local evidence; state missing project details as unknown. Clearly label any general explanation as general knowledge.'
+            if project_general else 'Answer this document-scoped request from supplied local evidence only. If none is supplied, say the documents are unavailable or insufficient. Do not invent document contents.')
     effective_instruction = _build_generation_instruction(
         registry=registry,
         base_instruction=effective_instruction,
@@ -487,6 +497,8 @@ def _prepare_message(
         response_plan=response_plan,
         online_instruction=online_instruction,
         rag_detailed=route_decision.response_mode == ResponseMode.DETAILED,
+        rag_allow_general=project_general,
+        general_only=route_decision.route == QueryRoute.LOCAL and not local_knowledge,
     )
     return PreparedAssistantRequest(
         conversation=conversation,
@@ -514,10 +526,12 @@ def _build_generation_instruction(
     response_plan: ResponsePlan | None,
     online_instruction: str | None,
     rag_detailed: bool = False,
+    rag_allow_general: bool = False,
+    general_only: bool = False,
 ) -> str:
     """Voice gets invariant safety and relevant context, never the inventory."""
     grounding = (
-        VOICE_SAFETY_INSTRUCTION if response_plan and response_plan.is_voice
+        VOICE_SAFETY_INSTRUCTION if general_only or response_plan and response_plan.is_voice
         else registry.build_grounding_instruction()
     )
     if response_plan and response_plan.is_voice and response_plan.required_capability:
@@ -529,7 +543,7 @@ def _build_generation_instruction(
     return _combine_instructions(
         grounding,
         base_instruction,
-        build_rag_instruction(rag_results, concise=not rag_detailed) if rag_results else None,
+        build_rag_instruction(rag_results, concise=not rag_detailed, allow_general=rag_allow_general) if rag_results else None,
         (
             response_plan.rag_system_instruction
             if rag_results and response_plan is not None

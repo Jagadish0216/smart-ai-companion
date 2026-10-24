@@ -292,8 +292,8 @@ class AssistantPolicyServiceTests(TestCase):
         self.assertIsNone(error)
         self.assertEqual(text, "Sure, talk to you later.")
         self.assertNotIn("remind", text.lower())
-        self.assertIn("Reminders/alarms/timers", instruction)
-        self.assertIn("Never claim, offer or imply unavailable capabilities", instruction)
+        self.assertIn("explicit results supplied for this request", instruction)
+        self.assertIn("Never invent facts/relationships", instruction)
         self.assertEqual(conversation.messages.count(), 2)
 
     @patch("assistant.services.get_engine")

@@ -643,7 +643,7 @@ class AssistantServiceRequestInstructionTests(TestCase):
         self.assertEqual(text, "Normal response")
         call_kwargs = engine.generate.call_args.kwargs
         self.assertIn(
-            "Runtime capabilities:",
+            "explicit results supplied for this request",
             call_kwargs["system_instruction"],
         )
         self.assertEqual(call_kwargs["num_predict"], 128)
@@ -672,7 +672,7 @@ class AssistantServiceRequestInstructionTests(TestCase):
         self.assertEqual(text, "Concise spoken response.")
         request_instruction = engine.generate.call_args.kwargs["system_instruction"]
         self.assertIn(instruction, request_instruction)
-        self.assertIn("Runtime capabilities:", request_instruction)
+        self.assertIn("explicit results supplied for this request", request_instruction)
         self.assertEqual(
             list(
                 conversation.messages

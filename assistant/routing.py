@@ -77,6 +77,13 @@ def normalize_rag_query(query: str) -> str:
     return candidate.rstrip(" .?!")
 
 
+def requests_local_knowledge(query: str) -> bool:
+    from .policy import _LOCAL_KNOWLEDGE_INTENT
+    past_hardware = re.search(r'\b(?:did|have) (?:we|i)\b',query,re.I) and re.search(r'\b(?:gpio|pins?|wiring|board|setup|hardware|model)\b',query,re.I)
+    return bool(past_hardware or _LOCAL_KNOWLEDGE_INTENT.search(query) or _RAG_WRAPPERS.match(' '.join(query.split())) or re.search(
+        r"\b(?:my|our|attached|uploaded|supplied)\s+(?:project|notes|documents|files|knowledge|setup|wiring)\b|\b(?:this project|local documents|knowledge base)\b", query, re.I))
+
+
 class QueryRouter:
     """Route one query without LLM classification or mutable global state."""
 
@@ -151,7 +158,7 @@ class QueryRouter:
     def _local_decision(self, query, registry, response_mode, required_capability, allow_implicit_rag):
         rag_latency_ms = 0
         retrieval_query = None
-        if allow_implicit_rag and registry.is_available(Capability.LOCAL_RAG):
+        if (allow_implicit_rag or requests_local_knowledge(query)) and registry.is_available(Capability.LOCAL_RAG):
             rag_started = time.perf_counter()
             retrieval_query = normalize_rag_query(query)
             rag_results = self._retrieve(retrieval_query)
@@ -184,7 +191,7 @@ class QueryRouter:
             return True
         # Personal/project requests must never leak into public search merely
         # because their documents mention a price, release or schedule.
-        if _RAG_WRAPPERS.match(normalized) or re.search(r"\b(?:my|our|attached|uploaded)\b|\bthis (?:project|repository)\b|\blocal (?:files|documents|notes)\b", normalized):
+        if requests_local_knowledge(normalized) or re.search(r"\b(?:my|our|attached|uploaded)\b|\bthis (?:project|repository)\b|\blocal (?:files|documents|notes)\b", normalized):
             return False
         if re.fullmatch(r"(?:hi|hello|hey|thanks|thank you|good morning|good evening|how are you(?: today)?)[ .!?]*", normalized):
             return False

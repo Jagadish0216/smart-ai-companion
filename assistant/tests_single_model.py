@@ -178,12 +178,12 @@ class VoiceContextTests(TestCase):
             self.assertEqual(body["options"]["num_predict"], 64)
             self.assertEqual(body["model"], MODEL)
 
-    def test_web_prompt_retains_full_registry_and_default_engine_system(self):
+    def test_web_prompt_uses_compact_safety_and_default_engine_system(self):
         from .ai_engine.local import SYSTEM_PROMPT
         self.request("What is MQTT?", voice=False)
         instruction = self.engine.generate_stream.call_args.kwargs["system_instruction"]
-        self.assertIn("Runtime capabilities:", instruction)
-        self.assertIn("ESP32 DHT11 temperature", instruction)
+        self.assertNotIn("Runtime capabilities:", instruction)
+        self.assertIn("explicit results supplied for this request", instruction)
         messages = LocalLLMEngine()._build_messages("What is MQTT?", [], instruction)
         self.assertTrue(messages[0]["content"].startswith(SYSTEM_PROMPT + "\n\n"))
 
@@ -224,8 +224,8 @@ class VoiceContextTests(TestCase):
         registry = build_runtime_capability_registry(online_allowed=True).with_availability(
             Capability.ONLINE_RETRIEVAL, True)
         result = OnlineRetrievalResult(
-            title="Release", url="https://example.com/releases", content="The latest release is 9.9.",
-            provider="searxng", retrieved_at=datetime.now(timezone.utc))
+            title="Software Release", url="https://example.com/releases", content="The latest release is 9.9.",
+            provider="searxng", retrieved_at=datetime.now(timezone.utc), published_at=datetime.now(timezone.utc))
         retriever = MagicMock()
         retriever.retrieve.return_value = [result]
         install_resource_report(self, online_allowed=True)

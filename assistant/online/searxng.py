@@ -165,6 +165,13 @@ class SearXNGOnlineRetriever(OnlineRetriever):
                     if not any(parse.urlsplit(r.url).hostname in {"iana.org", "www.iana.org"} and "example" in r.content.lower() for r in probe):
                         raise OnlineRetrievalProviderError("External search health could not be verified.")
             from .enrichment import enrich_results
+            from .evidence_policy import evidence_category, official_catalog
+            if results and evidence_category(query)=='release' and re.search(r'\braspberry\s+pi\s+os\b',query,re.I):
+                catalog=next((r for r in results if official_catalog(r.url)),None)
+                if catalog is None:
+                    catalog=OnlineRetrievalResult('Official Raspberry Pi OS catalog','https://www.raspberrypi.com/software/operating-systems/',
+                        'Official Raspberry Pi OS download catalog. Release details require page verification.', 'official_catalog',datetime.now(timezone.utc))
+                results=[catalog]+[r for r in results if not official_catalog(r.url)][:19]
             results = enrich_results(results, query, deadline, min(4, self.max_results))
             from .selection import rank_candidates, diverse_selection
             from .grounding import select_current_evidence
