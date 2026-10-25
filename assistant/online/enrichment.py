@@ -2,6 +2,7 @@
 import http.client
 import ipaddress
 import json
+import logging
 import os
 import re
 import socket
@@ -23,12 +24,48 @@ _SLOT = threading.Lock()
 _DNS_SLOT = threading.Lock()
 _HOST_BACKOFF = OrderedDict()
 MAX_BYTES = 262144
+logger = logging.getLogger(__name__)
+
+
+def fetch_failure_reason(failure):
+    """Fixed labels only: exception text can contain private network details."""
+    from .partial_html import PartialEvidenceError
+    if isinstance(failure, PartialEvidenceError):
+        return failure.reason
+    if getattr(failure, 'deadline_exhausted', False):
+        return 'timeout'
+    if isinstance(failure, PageUnavailable):
+        return 'http_'+str(failure.status)
+    if isinstance(failure, TimeoutError):
+        return 'timeout'
+    if isinstance(failure, ssl.SSLError):
+        return 'tls_error'
+    messages = {'Unsafe article URL': 'unsafe_url', 'Unsafe article address': 'unsafe_address',
+                'Nonstandard article port': 'unsafe_port', 'Unsafe article redirect': 'unsafe_redirect',
+                'Not an HTML article': 'unsupported_type', 'Compressed article refused': 'unsupported_compression',
+                'HTML error or challenge page': 'challenge_page', 'HTML redirect refused': 'html_redirect'}
+    messages.update({'Incomplete article response': 'incomplete_response', 'Invalid article length': 'invalid_length'})
+    if isinstance(failure, ValueError):
+        return messages.get(str(failure), 'invalid_page')
+    return 'network_or_parse_error'
 
 
 class PageUnavailable(ValueError):
     def __init__(self, status):
         self.status = status
         super().__init__('Article unavailable')
+
+
+def _check_partial(result, page, published, conflict, query, topic, needs_catalog):
+    if not page.get('partial_response'):
+        return
+    from .partial_html import PartialEvidenceError
+    from .grounding import has_conflicting_claims
+    if (topic == 'officeholder' or needs_catalog or not published or conflict
+            or page.get('partial_scope') != 'closed_article'):
+        raise PartialEvidenceError('partial_scope_unsupported')
+    if has_conflicting_claims([replace(result, content=page.get('text', ''))], query):
+        raise PartialEvidenceError('partial_conflicting_claims')
 
 
 def cached_accessibility(url):
@@ -166,6 +203,30 @@ def public_target(url, deadline=None):
 
 
 def fetch_metadata(url, deadline):
+    started = time.monotonic()
+    try:
+        value = _fetch_metadata(url, deadline)
+    except (OSError, ValueError, http.client.HTTPException, RecursionError) as failure:
+        logger.info('Article fetch completed', extra={'article_fetch': {
+            'outcome': 'rejected', 'reason': fetch_failure_reason(failure),
+            'http_status': failure.status if isinstance(failure, PageUnavailable) else None,
+            'bytes_read': getattr(failure, 'bytes_read', 0),
+            'partial_response': getattr(failure, 'partial_response', False),
+            'redirect_hops': getattr(failure, 'redirect_hops', 0),
+            'elapsed_ms': round((time.monotonic()-started)*1000),
+        }})
+        raise
+    page = value[5]
+    logger.info('Article fetch completed', extra={'article_fetch': {
+        'outcome': 'partial' if page.get('partial_response') else 'complete',
+        'reason': 'closed_article' if page.get('partial_response') else 'complete_response',
+        'bytes_read': page.get('bytes_read', 0), 'redirect_hops': page.get('redirect_hops', 0),
+        'elapsed_ms': round((time.monotonic()-started)*1000),
+    }})
+    return value
+
+
+def _fetch_metadata(url, deadline):
     for hop in range(3):
         if time.monotonic() >= deadline:
             raise TimeoutError()
@@ -175,6 +236,7 @@ def fetch_metadata(url, deadline):
             raise TimeoutError()
         connection = http.client.HTTPConnection(parsed.hostname, port, timeout=_timeout(deadline))
         guard = None
+        body = None
         try:
             # No second DNS lookup: TLS still verifies the original hostname.
             connection.sock = socket.create_connection((address, port), timeout=_timeout(deadline))
@@ -211,6 +273,10 @@ def fetch_metadata(url, deadline):
                 raise ValueError('Not an HTML article')
             if response.getheader('Content-Encoding', 'identity').lower() != 'identity':
                 raise ValueError('Compressed article refused')
+            declared = response.getheader('Content-Length', '')
+            if declared and (not isinstance(declared, str) or not declared.isdigit() or len(declared) > 20):
+                raise ValueError('Invalid article length')
+            declared = int(declared) if declared else None
             body = bytearray()
             while len(body) <= MAX_BYTES:
                 remaining = deadline - time.monotonic()
@@ -221,10 +287,17 @@ def fetch_metadata(url, deadline):
                 if not chunk:
                     break
                 body.extend(chunk)
-            if len(body) > MAX_BYTES:
-                raise ValueError('Article too large')
+            if len(body) <= MAX_BYTES and declared is not None and declared != len(body):
+                raise ValueError('Incomplete article response')
             if re.search(rb'<title[^>]*>\s*(?:404|403|429|not found|page not found|access denied|just a moment|service unavailable|temporarily unavailable|too many requests|forbidden|captcha|error\b)', body, re.I):
                 raise ValueError('HTML error or challenge page')
+            if len(body) > MAX_BYTES:
+                from .partial_html import extract_partial_article
+                partial = extract_partial_article(body[:MAX_BYTES], url, deadline)
+                partial[5].update(bytes_read=len(body), redirect_hops=hop)
+                return partial
+            if time.monotonic() >= deadline:
+                raise TimeoutError()
             parser = ArticleMetadata(url)
             parser.feed(body.decode('utf-8', errors='replace'))
             parser.close()
@@ -244,8 +317,17 @@ def fetch_metadata(url, deadline):
                 parser.published.append(value)
             valid = [stamp for value in parser.published if (stamp := parse_publication_date(value))]
             basic = (consistent_date(parser.published), consistent_date(parser.modified), len({v.date() for v in valid}) > 1)
+            if time.monotonic() >= deadline:
+                raise TimeoutError()
             return basic + (release_date, release_text, {'text': text[:12000], 'url': url,
+                            'partial_response': False, 'bytes_read': len(body), 'redirect_hops': hop,
                             'event_at': consistent_date(parser.events)})
+        except (OSError, ValueError, http.client.HTTPException, RecursionError) as failure:
+            failure.bytes_read = len(body) if body is not None else 0
+            failure.partial_response = body is not None and len(body) > MAX_BYTES
+            failure.redirect_hops = hop
+            failure.deadline_exhausted = time.monotonic() >= deadline
+            raise
         finally:
             if guard is not None:
                 guard.cancel()
@@ -253,7 +335,7 @@ def fetch_metadata(url, deadline):
     raise ValueError('Too many article redirects')
 
 
-def enrich_results(results, query, deadline, target=4, attempt_budget=None):
+def enrich_results(results, query, deadline, target=4, attempt_budget=None, diagnostics=None):
     """Four candidate attempts at most; unchanged shared 2s sub-budget.
 
     A nonblocking OS lock also caps cooperating Pi service workers to one fetch
@@ -271,13 +353,21 @@ def enrich_results(results, query, deadline, target=4, attempt_budget=None):
     attempts = 0
     if attempt_budget is None:
         attempt_budget = [4]
-    occurrences, order = {}, []
-    for index, result in enumerate(results):
-        host = (urlsplit(result.url).hostname or '').removeprefix('www.')
-        order.append((occurrences.get(host,0), index))
-        occurrences[host] = occurrences.get(host,0)+1
-    # First promising article from each hostname before its second article.
-    for _, index in sorted(order):
+    from .selection import enrichment_order
+    if diagnostics is None:
+        diagnostics = {}
+    def count(group, label):
+        counters = diagnostics.setdefault(group, {})
+        counters[label] = counters.get(label, 0)+1
+    order = enrichment_order(results, query)
+    for _, kind, deferred in order:
+        count('candidate_classes', kind)
+        if deferred:
+            count('candidate_decisions', 'deferred_low_value')
+    # Preserve host diversity within each reporting-priority tier.
+    for index, kind, deferred in order:
+        if deferred:
+            continue
         result = results[index]
         from .selection import is_article, canonical_url
         from .grounding import select_current_evidence
@@ -287,32 +377,62 @@ def enrich_results(results, query, deadline, target=4, attempt_budget=None):
                         and r.evidence_kind in {'fetched_reference', 'fetched_report'}
                         and r.publication_source == 'article_metadata']
         if len(admitted) >= target:
+            count('candidate_decisions', 'evidence_target_met')
             break
         cache_key = canonical_url(result.url)
         official = official_office_page(result.url, query)
         if topic == 'officeholder' and not official:
+            count('candidate_decisions', 'not_official_profile')
             continue  # Dated reporting cannot verify the present office roster.
         if not is_article(result) and not official:
+            count('candidate_decisions', 'not_article')
             continue
         host = urlsplit(result.url).hostname
         with _LOCK:
             blocked = _HOST_BACKOFF.get(host, 0) > time.monotonic()
         if urlsplit(result.url).path.strip('/').lower() in {'', 'news', 'blog', 'search', 'category', 'tag'}:
+            count('candidate_decisions', 'landing_page')
             continue  # Landing-page metadata cannot date linked articles.
         words = normalized_words(result.title + ' ' + result.content)
         from .evidence_policy import official_catalog, evidence_category
         needs_catalog = official_catalog(result.url) and evidence_category(query)=='release'
-        if (result.published_at and not needs_catalog and not topic and not needs_fact_body) or result.date_conflict or (not official and len(terms & words) < min(2, len(terms))) or re.search(r'\b(?:shop now|buy now|discount codes?|sponsored|special offers?)\b', result.content, re.I):
+        if result.date_conflict:
+            count('candidate_decisions', 'conflicting_search_dates')
+            continue
+        if result.published_at and not needs_catalog and not topic and not needs_fact_body:
+            count('candidate_decisions', 'search_date_sufficient')
+            continue
+        if not official and len(terms & words) < min(2, len(terms)):
+            count('candidate_decisions', 'irrelevant')
+            continue
+        if re.search(r'\b(?:shop now|buy now|discount codes?|sponsored|special offers?)\b', result.content, re.I):
+            count('candidate_decisions', 'promotion')
             continue
         with _LOCK:
             cached = _CACHE.get(cache_key)
         if blocked and not (cached and cached[0] > time.monotonic()):
+            count('candidate_decisions', 'host_backoff')
             enriched[index] = replace(result, accessibility='unavailable')
             continue
         if cached and cached[0] > time.monotonic():
             metadata = cached[1]
+            count('fetch_outcomes', 'metadata_cache_hit')
+            if len(metadata) > 8 and metadata[3] == 'available':
+                try:
+                    _check_partial(result, metadata[8], metadata[0], metadata[2], query, topic, needs_catalog)
+                except ValueError as failure:
+                    count('fetch_failures', fetch_failure_reason(failure))
+                    enriched[index] = replace(result, accessibility='unavailable', partial_response=True)
+                    continue
         else:
-            if attempts >= 4 or attempt_budget[0] <= 0 or time.monotonic() >= deadline or not _SLOT.acquire(blocking=False):
+            if attempts >= 4 or attempt_budget[0] <= 0:
+                count('candidate_decisions', 'attempt_limit')
+                continue
+            if time.monotonic() >= deadline:
+                count('candidate_decisions', 'deadline')
+                continue
+            if not _SLOT.acquire(blocking=False):
+                count('candidate_decisions', 'fetch_busy')
                 continue
             guard = None
             try:
@@ -327,9 +447,13 @@ def enrich_results(results, query, deadline, target=4, attempt_budget=None):
                     msvcrt.locking(guard, msvcrt.LK_NBLCK, 1)
                 attempts += 1
                 attempt_budget[0] -= 1
+                count('fetch_candidates', kind)
                 fetched = fetch_metadata(result.url, min(deadline, time.monotonic()+(1.25 if needs_catalog or topic else .65)))
+                if len(fetched) > 5:
+                    _check_partial(result, fetched[5], fetched[0], fetched[2], query, topic, needs_catalog)
                 metadata = (*fetched[:3], 'available', *(fetched[3:5] if len(fetched)>3 else (None,'')),
                             datetime.now(timezone.utc), None, fetched[5] if len(fetched)>5 else {})
+                count('fetch_outcomes', 'partial_response' if len(fetched)>5 and fetched[5].get('partial_response') else 'complete_response')
             except (OSError, ValueError, http.client.HTTPException, RecursionError) as failure:
                 if isinstance(failure, PageUnavailable) and failure.status in (403,429):
                     with _LOCK:
@@ -337,7 +461,8 @@ def enrich_results(results, query, deadline, target=4, attempt_budget=None):
                         while len(_HOST_BACKOFF) > 32:
                             _HOST_BACKOFF.popitem(last=False)
                 metadata = (None, None, False, 'unavailable', None, '', None,
-                            failure.status if isinstance(failure, PageUnavailable) else None)
+                            failure.status if isinstance(failure, PageUnavailable) else None,
+                            {'failure_reason': fetch_failure_reason(failure)})
             finally:
                 if guard is not None:
                     os.close(guard)
@@ -347,6 +472,8 @@ def enrich_results(results, query, deadline, target=4, attempt_budget=None):
                 _CACHE.move_to_end(cache_key)
                 while len(_CACHE) > 64:
                     _CACHE.popitem(last=False)
+        if len(metadata) > 8 and metadata[8].get('failure_reason'):
+            count('fetch_failures', metadata[8]['failure_reason'])
         published, modified, conflict = metadata[:3]
         accessibility = metadata[3] if len(metadata) > 3 else 'available'
         enriched[index] = replace(result, published_at=published, modified_at=modified or result.modified_at, publication_source='article_metadata' if published else '', date_conflict=conflict, accessibility=accessibility, release_at=metadata[4] if len(metadata)>4 else None, release_evidence=metadata[5] if len(metadata)>5 else '', verified_at=metadata[6] if len(metadata)>6 else None)
@@ -366,6 +493,8 @@ def enrich_results(results, query, deadline, target=4, attempt_budget=None):
                 publication_source='article_metadata' if published else result.publication_source,
                 date_conflict=conflict or mismatch, event_at=page.get('event_at'), entertainment_status=status,
                 claim_status=classify_claims(claim) if claim and topic != 'officeholder' else '',
+                partial_response=page.get('partial_response') is True,
                 evidence_kind=('official_current_state' if official_office_page(final_url, query)
                                else 'fetched_report' if topic == 'entertainment' else 'fetched_reference') if claim else '')
+    logger.info('Article candidate prioritization', extra={'article_candidates': {key: dict(values) for key, values in diagnostics.items()}})
     return enriched

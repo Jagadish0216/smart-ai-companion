@@ -151,6 +151,7 @@ class SearXNGOnlineRetriever(OnlineRetriever):
                 if (valid or not cached[1] or category == 'technical') and not has_conflicting_claims(valid, query):
                     self.diagnostics = dict(cached[2]) if len(cached) > 2 else {}
                     self.diagnostics.update(timings, cache_hit=True, cache_ms=round((time.monotonic()-now)*1000))
+                    self.diagnostics['article_diagnostics'] = {'fetch_outcomes': {'result_cache_hit': 1}}
                     return valid
         timings['cache_ms'] = round((time.monotonic()-now)*1000)
         if not _SLOTS.acquire(blocking=False):
@@ -158,6 +159,7 @@ class SearXNGOnlineRetriever(OnlineRetriever):
         fallback_started = None
         search_attempted = False
         search_calls = 0
+        article_diagnostics = {}
         direct_elapsed = 0.0
         def search(candidate):
             nonlocal search_attempted, search_calls
@@ -181,7 +183,7 @@ class SearXNGOnlineRetriever(OnlineRetriever):
                 candidate_page = OnlineRetrievalResult('Official officeholder profile', official_url,
                     'Official officeholder profile; current role requires page verification.', self.provider_name, datetime.now(timezone.utc))
                 started = time.monotonic()
-                direct = enrich_results([candidate_page], query, enrichment_deadline, 1, attempt_budget)
+                direct = enrich_results([candidate_page], query, enrichment_deadline, 1, attempt_budget, article_diagnostics)
                 direct_elapsed = time.monotonic()-started
                 timings['direct_fetch_ms'] = round(direct_elapsed*1000)
                 selection_started = time.monotonic()
@@ -244,7 +246,7 @@ class SearXNGOnlineRetriever(OnlineRetriever):
             # Discovery consumes the total deadline, not a fresh page allowance.
             enrichment_deadline = min(deadline, time.monotonic() + max(0, 2.0-direct_elapsed))
             enrichment_started = time.monotonic()
-            results = enrich_results(results, query, enrichment_deadline, min(4, self.max_results), attempt_budget)
+            results = enrich_results(results, query, enrichment_deadline, min(4, self.max_results), attempt_budget, article_diagnostics)
             timings['enrichment_ms'] += round((time.monotonic()-enrichment_started)*1000)
             page_remaining = max(0, 2.0-direct_elapsed-(time.monotonic()-enrichment_started))
             from .selection import rank_candidates, diverse_selection
@@ -261,7 +263,7 @@ class SearXNGOnlineRetriever(OnlineRetriever):
                         discovered = [r for r in discovered if r.url not in known]
                         enrichment_started = time.monotonic()
                         enrichment_deadline = min(deadline, enrichment_started+page_remaining)
-                        results += enrich_results(discovered, query, enrichment_deadline, min(4, self.max_results), attempt_budget)
+                        results += enrich_results(discovered, query, enrichment_deadline, min(4, self.max_results), attempt_budget, article_diagnostics)
                         timings['enrichment_ms'] += round((time.monotonic()-enrichment_started)*1000)
                     except (OnlineRetrievalProviderError, OnlineRetrievalTimeoutError, OnlineRetrievalResponseError):
                         pass  # Preserve the original evidence and honest abstention.
@@ -301,6 +303,7 @@ class SearXNGOnlineRetriever(OnlineRetriever):
                     _remember(_HEALTH, self.base_url, (time.monotonic() + 10, False), 8)
             raise
         finally:
+            self.diagnostics['article_diagnostics'] = article_diagnostics
             if fallback_started is not None:
                 self.diagnostics['fallback_ms'] = round((time.monotonic()-fallback_started)*1000)
             _SLOTS.release()

@@ -50,7 +50,7 @@ def source_supported_answer(query, results, request_time):
     event = 'announcement' if action == 'announced' else 'release' if action in {'release', 'released'} else 'launch'
     claims = []
     for result in accepted:
-        if (result.accessibility != 'available' or result.evidence_kind not in {'fetched_report', 'fetched_reference'}
+        if (result.partial_response or result.accessibility != 'available' or result.evidence_kind not in {'fetched_report', 'fetched_reference'}
                 or result.publication_source != 'article_metadata' or not result.published_at
                 or not result.verified_at or not 0 <= (request_time-result.verified_at).total_seconds() <= 300
                 or urlsplit(result.verified_url).scheme != 'https'

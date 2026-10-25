@@ -378,6 +378,7 @@ def load_verified_current(query):
                 verified_url=data.get('verified_url', ''), evidence_kind=data.get('evidence_kind', ''),
                 entertainment_status=data.get('entertainment_status', ''),
                 claim_status=data.get('claim_status', ''),
+                partial_response=data.get('partial_response') is True,
                 publication_source=data.get('publication_source', ''), accessibility='available'))
         except (OSError, ValueError, TypeError, AttributeError, StopIteration):
             continue

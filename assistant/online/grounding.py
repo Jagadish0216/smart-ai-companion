@@ -92,6 +92,12 @@ def select_current_evidence(results, query, request_time):
         if terms and len(terms & words) < min(2, len(terms)):
             continue
         published = result.published_at
+        if result.partial_response and (not published or result.publication_source != 'article_metadata'
+                or result.evidence_kind not in {'fetched_reference', 'fetched_report'}
+                or result.accessibility != 'available' or not result.verified_at
+                or not 0 <= (now-result.verified_at).total_seconds() <= 300
+                or not result.verified_url.startswith('https://')):
+            continue
         if category != 'technical' and result.evidence_kind in {'fetched_reference', 'fetched_report'}:
             if not result.verified_at or not 0 <= (now-result.verified_at).total_seconds() <= 300:
                 continue
@@ -253,6 +259,8 @@ def build_online_grounding_instruction(
             f"Release date (not publication): {result.release_at.isoformat() if result.release_at else 'unknown'}\n"
             f"Page verification time: {result.verified_at.isoformat() if result.verified_at else 'not checked'}\n"
             f"Evidence kind: {result.evidence_kind or 'search evidence'}; Report status: {result.claim_status or result.entertainment_status or 'not independently verified'}\n"
+            + ('Response scope: partial HTML; only the closed article subtree was inspected. Unread document content is unknown.\n' if result.partial_response else '')
+            +
             f"Event date (not publication): {result.event_at.isoformat() if result.event_at else 'unknown'}\n"
             "Snippet: "
         )

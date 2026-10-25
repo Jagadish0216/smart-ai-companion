@@ -30,6 +30,7 @@ class OnlineRetrievalResult:
     entertainment_status: str = ''
     event_at: datetime | None = None
     claim_status: str = ''
+    partial_response: bool = False
 
     def source_metadata(self) -> dict:
         """Return public-safe attribution data without copied web content."""
@@ -50,6 +51,7 @@ class OnlineRetrievalResult:
             "entertainment_status": self.entertainment_status,
             "event_at": self.event_at.isoformat() if self.event_at else None,
             "claim_status": self.claim_status,
+            "partial_response": self.partial_response,
         }
 
 
