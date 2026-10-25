@@ -209,6 +209,10 @@ class QueryRouter:
             return False
         if current_topic(normalized):
             return True
+        from .online.facts import factual_question
+        fact = factual_question(normalized)
+        if fact and not fact['past']:
+            return True
         if re.search(r"^(?:what (?:is|are) (?:an? |the )?(?:news|weather|forecast|schedule|ranking|release|president|chief minister|prime minister|governor|mayor|ceo|stock market|price elasticity|version control|(?:electrical |electric )?current)|what does .+ mean)[?.!]*$", normalized):
             return False
         if re.search(r"^(?:explain\b|define\b|what (?:does .+ mean|is (?:an? |the concept of )?)|how (?:does|do)\b)", normalized):

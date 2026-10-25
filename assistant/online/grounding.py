@@ -19,6 +19,17 @@ def has_conflicting_claims(results, query):
     the grounding instruction's uncertainty rule, not automated adjudication.
     """
     patterns = []
+    from .facts import dated_claims
+    events = {}
+    for result in results:
+        # Rumours are not contradictory confirmations; they remain explicitly
+        # labelled uncertain evidence and disqualify the direct-answer path.
+        if re.search(r'\b(?:rumou?rs?|reportedly|unconfirmed|speculation|may(?!\s+\d)|might|could)\b', result.content, re.I):
+            continue
+        for subject, event, stamp, denied, _ in dated_claims(result.content):
+            events.setdefault((subject, event), set()).add((stamp.date(), denied))
+    if any(len(values) > 1 for values in events.values()):
+        return True
     if evidence_category(query) == 'entertainment':
         dates_by_film = {}
         for result in results:
@@ -61,6 +72,7 @@ def select_current_evidence(results, query, request_time):
     if re.search(r"\b(prices?|scores?|status|live|traffic|stocks?)\b", query, re.I):
         age_limit = 15 * 60
     terms = query_terms(query)
+    from .intent import normalized_words
     admitted = []
     seen = set()
     for result in results[:20]:
@@ -76,10 +88,13 @@ def select_current_evidence(results, query, request_time):
             continue
         if len(content) < 120 and re.search(r"\b(?:coverage|news and analysis|latest news and updates|read more|click here)\b", content, re.I):
             continue
-        words = set(re.findall(r"[a-z0-9]+", (result.title + " " + content).lower()))
+        words = normalized_words(result.title + " " + content)
         if terms and len(terms & words) < min(2, len(terms)):
             continue
         published = result.published_at
+        if category != 'technical' and result.evidence_kind in {'fetched_reference', 'fetched_report'}:
+            if not result.verified_at or not 0 <= (now-result.verified_at).total_seconds() <= 300:
+                continue
         if published and (published-now).total_seconds()>300:
             continue
         if category in {'officeholder', 'entertainment'}:
@@ -100,6 +115,18 @@ def select_current_evidence(results, query, request_time):
                 continue
             if result.evidence_kind != 'fetched_report' or not result.entertainment_status:
                 continue
+            if re.search(r'\b(?:releases?|releasing)\b', query, re.I) and re.search(r'\b(?:today|this week)\b', query, re.I):
+                from .facts import dated_claims
+                dates = [stamp.date() for _, event, stamp, _, _ in dated_claims(content) if event == 'release']
+                start = now.date()
+                from datetime import timedelta
+                if re.search(r'\bthis week\b', query, re.I):
+                    start -= timedelta(days=start.weekday())
+                    end = start+timedelta(days=6)
+                else:
+                    end = start
+                if dates and not any(start <= date <= end for date in dates):
+                    continue
             # Entertainment still requires a recent publication date below.
         if category == 'technical' and result.accessibility == 'available':
             admitted.append(result)
@@ -139,9 +166,11 @@ def select_current_evidence(results, query, request_time):
         if published is None:
             continue
         age = (now - _normalized_request_time(published)).total_seconds()
-        if age < -300 or age > age_limit or result.url in seen:
+        identity = (result.url, result.content)
+        if age < -300 or age > age_limit or identity in seen:
             continue
-        seen.add(result.url)
+        # Keep incompatible claims from one URL visible to conflict admission.
+        seen.add(identity)
         admitted.append(result)
         if len(admitted) == 4:
             break
@@ -223,7 +252,7 @@ def build_online_grounding_instruction(
             f"Modified (not publication): {result.modified_at.isoformat() if result.modified_at else 'unknown'}\n"
             f"Release date (not publication): {result.release_at.isoformat() if result.release_at else 'unknown'}\n"
             f"Page verification time: {result.verified_at.isoformat() if result.verified_at else 'not checked'}\n"
-            f"Evidence kind: {result.evidence_kind or 'search evidence'}; Report status: {result.entertainment_status or 'not applicable'}\n"
+            f"Evidence kind: {result.evidence_kind or 'search evidence'}; Report status: {result.claim_status or result.entertainment_status or 'not independently verified'}\n"
             f"Event date (not publication): {result.event_at.isoformat() if result.event_at else 'unknown'}\n"
             "Snippet: "
         )
@@ -266,6 +295,9 @@ def build_online_grounding_instruction(
         " An official current-state page supports only the present role explicitly stated in its fetched text, not an appointment date."
         " Entertainment reports describe what that source reports: distinguish rumours, announced projects, scheduled releases and completed releases."
         " Do not promote reported or rumoured projects to confirmed facts, assume a scheduled date was met, or use event dates as publication dates."
+        " For every topic, distinguish what a source confirms, schedules, reports, denies or speculates."
+        " An old scheduled date is outdated scheduling evidence, never proof that an event happened."
+        " A publication date supports recency of a report, not independent verification of its claims."
     )
     return (
         f"{_ONLINE_SECURITY_INSTRUCTION}\n\n"

@@ -538,6 +538,19 @@ def _prepare_message(
                 stage_ms={**stage_ms, "online_ms": online_latency_ms},
             )
     stage_ms["online_ms"] = online_latency_ms
+    if online_results:
+        from .online.facts import source_supported_answer
+        factual_answer = source_supported_answer(query, retrieved_results, request_time)
+        if factual_answer:
+            return _persist_direct_response(
+                conversation, factual_answer, route_decision, engine='online',
+                latency_ms=online_latency_ms, online_latency_ms=online_latency_ms,
+                execution_plan=execution_plan, execution_started=execution_started,
+                stage_ms=stage_ms,
+                metadata_updates={'online_used': True, 'online_results': len(online_results),
+                                  'online_sources': [r.source_metadata() for r in online_results],
+                                  'source_supported_direct': True, 'mode': 'online'},
+            )
     # Evidence, not earlier conversational claims, supports current answers.
     if online_results:
         history = []
@@ -752,6 +765,7 @@ def _log_request_performance(prepared: PreparedAssistantRequest, metadata: dict)
             "sources_access_denied", "fresh_evidence_accepted",
             "search_ms", "enrichment_ms", "evidence_selection_ms", "cache_ms", "cache_hit",
             "direct_fetch_ms", "fallback_ms",
+            "source_supported_direct",
             "resource_profile", "effective_model",
             "num_predict", "max_output_tokens", "eval_count", "output_limit_reached",
             "memory_used", "memory_messages", "memory_chars", "memory_ms",
@@ -910,6 +924,7 @@ def _persist_direct_response(
                     "sources_access_denied", "fresh_evidence_accepted",
                     "search_ms", "enrichment_ms", "evidence_selection_ms", "cache_ms", "cache_hit",
                     "direct_fetch_ms", "fallback_ms",
+                    "source_supported_direct",
                 )
             }
         },

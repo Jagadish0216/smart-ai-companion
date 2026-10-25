@@ -377,6 +377,7 @@ def load_verified_current(query):
                 release_evidence=content.strip() if data.get('evidence_kind') == 'official_release_catalog' else '',
                 verified_url=data.get('verified_url', ''), evidence_kind=data.get('evidence_kind', ''),
                 entertainment_status=data.get('entertainment_status', ''),
+                claim_status=data.get('claim_status', ''),
                 publication_source=data.get('publication_source', ''), accessibility='available'))
         except (OSError, ValueError, TypeError, AttributeError, StopIteration):
             continue

@@ -105,17 +105,20 @@ class ProviderResilienceTests(SimpleTestCase):
     @patch("assistant.online.searxng._open_search")
     def test_empty_local_endpoint_is_not_external_connectivity(self, http):
         http.return_value = Response()
-        with self.assertRaises(OnlineRetrievalProviderError):
-            self.retriever.retrieve("Acme CEO")
-        self.assertEqual(http.call_count, 2)  # query + one real canary
+        self.assertEqual(self.retriever.retrieve("Acme CEO"), [])
+        self.assertEqual(http.call_count, 2)  # Original intent and one alternative.
+        from assistant.online.searxng import _HEALTH
+        self.assertNotIn(self.retriever.base_url, _HEALTH)
 
     @patch("assistant.online.searxng._open_search")
-    def test_empty_results_with_healthy_external_search_and_health_cache(self, http):
-        canary = Response([{"title": "IANA", "url": "https://www.iana.org/help/example-domains", "content": "IANA reserves example domains for documentation."}])
-        http.side_effect = [Response(), canary, Response()]
+    def test_empty_query_cache_avoids_repeated_or_unrelated_discovery(self, http):
+        http.return_value = Response()
         self.assertEqual(self.retriever.retrieve("Acme CEO"), [])
+        self.assertEqual(self.retriever.retrieve("Acme CEO"), [])
+        self.assertEqual(http.call_count, 2)
         self.assertEqual(self.retriever.retrieve("Other CEO"), [])
-        self.assertEqual(http.call_count, 3)
+        self.assertEqual(http.call_count, 4)
+        self.assertTrue(all('IANA' not in call.args[0].full_url for call in http.call_args_list))
 
     @patch("assistant.online.searxng._open_search")
     def test_one_alternative_query_only(self, http):
@@ -178,7 +181,9 @@ class ProviderResilienceTests(SimpleTestCase):
     @patch("assistant.online.searxng._open_search")
     def test_freshness_ttl_and_cache_bound(self, http, clock):
         clock.return_value = 100
-        http.return_value = Response([raw_result()])
+        fresh = raw_result()
+        fresh.update(content='Acme price is $10 for the standard product.', publishedDate=datetime.now(timezone.utc).isoformat())
+        http.return_value = Response([fresh])
         self.retriever.retrieve("Acme price")
         clock.return_value = 114
         self.retriever.retrieve("Acme price")

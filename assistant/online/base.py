@@ -29,6 +29,7 @@ class OnlineRetrievalResult:
     evidence_kind: str = ''
     entertainment_status: str = ''
     event_at: datetime | None = None
+    claim_status: str = ''
 
     def source_metadata(self) -> dict:
         """Return public-safe attribution data without copied web content."""
@@ -48,6 +49,7 @@ class OnlineRetrievalResult:
             "evidence_kind": self.evidence_kind,
             "entertainment_status": self.entertainment_status,
             "event_at": self.event_at.isoformat() if self.event_at else None,
+            "claim_status": self.claim_status,
         }
 
 

@@ -143,7 +143,7 @@ class AcquisitionTests(SimpleTestCase):
         for language in ('Telugu', 'Hindi', 'Tamil', 'Malayalam'):
             query = language+' movie releases this week'
             item = source(ACTOR, title=language+' releases', content=language+' movie release calendar and upcoming films.', url='https://publisher.example/'+language)
-            text = language+' film Example Movie will release on 2026-10-30.'
+            text = language+' film Example Movie will release on '+NOW.date().isoformat()+'.'
             fetch.return_value = (NOW, None, False, None, '', {'text': text, 'url': item.url})
             admitted = select_current_evidence(e.enrich_results([item], query, time.monotonic()+2), query, NOW)
             self.assertEqual(admitted[0].content, text)

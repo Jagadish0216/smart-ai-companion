@@ -235,10 +235,15 @@ def fetch_metadata(url, deadline):
             from .evidence_policy import release_statement
             from .searxng import _plain_text
             release_date, release_text = release_statement(_plain_text(body.decode('utf-8',errors='replace')), url)
-            basic = (consistent_date(parser.published), consistent_date(parser.modified), len({v.date() for v in valid}) > 1)
             visible = PageText()
             visible.feed(body.decode('utf-8', errors='replace'))
             text = '\n'.join(clean for line in ''.join(visible.parts).splitlines() if (clean := ' '.join(line.split())))
+            # Only explicitly labelled publication dates in the visible article
+            # header; never URL/title years, event dates, or "updated" labels.
+            for value in re.findall(r'(?im)^Published(?: on)?\s*:?\s*((?:20\d{2}-\d{2}-\d{2}|\d{1,2} [A-Za-z]+ 20\d{2}|[A-Za-z]+ \d{1,2},? 20\d{2}))\b', text[:1200]):
+                parser.published.append(value)
+            valid = [stamp for value in parser.published if (stamp := parse_publication_date(value))]
+            basic = (consistent_date(parser.published), consistent_date(parser.modified), len({v.date() for v in valid}) > 1)
             return basic + (release_date, release_text, {'text': text[:12000], 'url': url,
                             'event_at': consistent_date(parser.events)})
         finally:
@@ -255,8 +260,11 @@ def enrich_results(results, query, deadline, target=4, attempt_budget=None):
     pipeline. Contention abstains instead of queuing. No changes to resource policy.
     """
     from .searxng import query_terms
-    from .current_sources import current_topic, official_office_page, page_evidence
+    from .intent import normalized_words
+    from .facts import factual_question
+    from .current_sources import current_topic, official_office_page, page_evidence, classify_claims
     topic = current_topic(query)
+    needs_fact_body = bool(factual_question(query))
     deadline = min(deadline, time.monotonic() + 2.0)
     terms = query_terms(query)
     enriched = list(results)
@@ -273,7 +281,12 @@ def enrich_results(results, query, deadline, target=4, attempt_budget=None):
         result = results[index]
         from .selection import is_article, canonical_url
         from .grounding import select_current_evidence
-        if len(select_current_evidence(enriched, query, datetime.now(timezone.utc))) >= target:
+        admitted = select_current_evidence(enriched, query, datetime.now(timezone.utc))
+        if needs_fact_body:
+            admitted = [r for r in admitted if r.accessibility == 'available'
+                        and r.evidence_kind in {'fetched_reference', 'fetched_report'}
+                        and r.publication_source == 'article_metadata']
+        if len(admitted) >= target:
             break
         cache_key = canonical_url(result.url)
         official = official_office_page(result.url, query)
@@ -286,10 +299,10 @@ def enrich_results(results, query, deadline, target=4, attempt_budget=None):
             blocked = _HOST_BACKOFF.get(host, 0) > time.monotonic()
         if urlsplit(result.url).path.strip('/').lower() in {'', 'news', 'blog', 'search', 'category', 'tag'}:
             continue  # Landing-page metadata cannot date linked articles.
-        words = set(re.findall(r'[a-z0-9]+', (result.title + ' ' + result.content).lower()))
+        words = normalized_words(result.title + ' ' + result.content)
         from .evidence_policy import official_catalog, evidence_category
         needs_catalog = official_catalog(result.url) and evidence_category(query)=='release'
-        if (result.published_at and not needs_catalog and not topic) or result.date_conflict or not terms or (not official and len(terms & words) < min(2, len(terms))) or re.search(r'\b(?:shop now|buy now|discount codes?|sponsored|special offers?)\b', result.content, re.I):
+        if (result.published_at and not needs_catalog and not topic and not needs_fact_body) or result.date_conflict or (not official and len(terms & words) < min(2, len(terms))) or re.search(r'\b(?:shop now|buy now|discount codes?|sponsored|special offers?)\b', result.content, re.I):
             continue
         with _LOCK:
             cached = _CACHE.get(cache_key)
@@ -352,6 +365,7 @@ def enrich_results(results, query, deadline, target=4, attempt_budget=None):
                 published_at=published or result.published_at,
                 publication_source='article_metadata' if published else result.publication_source,
                 date_conflict=conflict or mismatch, event_at=page.get('event_at'), entertainment_status=status,
+                claim_status=classify_claims(claim) if claim and topic != 'officeholder' else '',
                 evidence_kind=('official_current_state' if official_office_page(final_url, query)
                                else 'fetched_report' if topic == 'entertainment' else 'fetched_reference') if claim else '')
     return enriched

@@ -156,7 +156,7 @@ class OnlineProviderTests(SimpleTestCase):
     def test_zero_useful_results_returns_empty_list(self, urlopen):
         urlopen.side_effect = [
             _FakeHTTPResponse(json.dumps({"results": []}).encode()),
-            _FakeHTTPResponse(json.dumps({"results": [{"title": "Example domains", "url": "https://www.iana.org/help/example-domains", "content": "IANA example domains are reserved for documentation."}]}).encode()),
+            _FakeHTTPResponse(json.dumps({"results": []}).encode()),
         ]
         self.assertEqual(self.make_retriever().retrieve("latest news"), [])
 

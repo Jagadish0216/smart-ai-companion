@@ -1,0 +1,62 @@
+[
+  {
+    "id": "telugu",
+    "query": "Please tell me about Tollywood movie releases this week",
+    "text": "Telugu films\nSaffron Road will release on {today}.",
+    "status": "reported_scheduled"
+  },
+  {
+    "id": "tamil",
+    "query": "Can you tell me about Tamil movie releases this week?",
+    "text": "Tamil cinema\nPaper Moon will release on {today}.",
+    "status": "reported_scheduled"
+  },
+  {
+    "id": "malayalam",
+    "query": "What are the Mollywood movie releases today?",
+    "text": "Malayalam films\nRiver Boat will release on {today}.",
+    "status": "reported_scheduled"
+  },
+  {
+    "id": "hindi",
+    "query": "Bollywood movie releases this week",
+    "text": "Hindi films\nOpen Door will release on {today}.",
+    "status": "reported_scheduled"
+  },
+  {
+    "id": "actor",
+    "query": "Can you tell me about actor Prabhas latest movie announcements?",
+    "text": "Prabhas began filming the announced film Example Journey.",
+    "status": "reported_production"
+  },
+  {
+    "id": "actor_tamil",
+    "query": "What are Vijay's upcoming Tamil movies?",
+    "text": "Tamil actor Vijay will star in the announced film Example Horizon.",
+    "status": "reported_announcement"
+  },
+  {
+    "id": "affairs",
+    "query": "Current affairs today",
+    "text": "The Example Assembly announced a public debate on a proposed transport plan.",
+    "status": "reported_announcement"
+  },
+  {
+    "id": "ai",
+    "query": "Latest AI technology developments",
+    "text": "Artificial intelligence technology researchers announced an open evaluation of Example Model.",
+    "status": "reported_announcement"
+  },
+  {
+    "id": "science",
+    "query": "What happened in science news today?",
+    "text": "Scientists discovered a new laboratory method in a published research experiment.",
+    "status": "reported_claim"
+  },
+  {
+    "id": "technology",
+    "query": "Latest technology news",
+    "text": "The Example technology team announced a new open hardware research platform.",
+    "status": "reported_announcement"
+  }
+]

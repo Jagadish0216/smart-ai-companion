@@ -71,10 +71,12 @@ def freshness_seconds(query):
 
 
 def query_terms(query):
+    from .intent import normalized_words
     stop = set("what whats s who is are the a an of in on at to for me tell please latest current currently today now recent version release news weather price score status and how much does it cost search browse look up web internet online this".split())
     stop.update('january february march april may june july august september october november december'.split())
     stop.update('actor actress movie movies film films working project projects upcoming next releases updates week month year'.split())
-    return {term for term in re.findall(r"[a-z0-9]+", query.lower()) if not re.fullmatch(r'20\d{2}', term)} - stop
+    stop.update('can could would did you about give show list happened happening doing any some new recently released releasing announce announced announces announcement development affairs cinema entertainment production scheduled schedule when will was has been with from by'.split())
+    return {term for term in normalized_words(query) if not re.fullmatch(r'20\d{2}', term)} - stop
 
 
 class _HTMLTextExtractor(HTMLParser):
@@ -130,9 +132,13 @@ class SearXNGOnlineRetriever(OnlineRetriever):
         key = (self.base_url, self.max_results, hashlib.sha256(bounded_query.casefold().encode()).digest())
         now = time.monotonic()
         deadline = now + min(self.timeout_seconds, 8.0)
-        from .current_sources import known_office_profile, current_topic
+        from .current_sources import known_office_profile
         from .enrichment import enrich_results
         from .grounding import select_current_evidence, has_conflicting_claims
+        from .evidence_policy import evidence_category
+        from .intent import search_queries
+        discovery = search_queries(bounded_query)
+        category = evidence_category(query)
         official_url = known_office_profile(query)
         timings = {'search_ms': 0, 'enrichment_ms': 0, 'evidence_selection_ms': 0,
                    'direct_fetch_ms': 0, 'fallback_ms': 0,
@@ -141,8 +147,8 @@ class SearXNGOnlineRetriever(OnlineRetriever):
             cached = _CACHE.get(key)
             if cached and cached[0] > now:
                 valid = (select_current_evidence(list(cached[1]), query, datetime.now(timezone.utc))
-                         if current_topic(query) == 'officeholder' else list(cached[1]))
-                if (valid or current_topic(query) != 'officeholder') and not has_conflicting_claims(valid, query):
+                         if category != 'technical' else list(cached[1]))
+                if (valid or not cached[1] or category == 'technical') and not has_conflicting_claims(valid, query):
                     self.diagnostics = dict(cached[2]) if len(cached) > 2 else {}
                     self.diagnostics.update(timings, cache_hit=True, cache_ms=round((time.monotonic()-now)*1000))
                     return valid
@@ -151,14 +157,16 @@ class SearXNGOnlineRetriever(OnlineRetriever):
             raise OnlineRetrievalProviderError("Online search is busy.")
         fallback_started = None
         search_attempted = False
+        search_calls = 0
         direct_elapsed = 0.0
         def search(candidate):
-            nonlocal search_attempted
+            nonlocal search_attempted, search_calls
             started = time.monotonic()
             try:
-                if started >= deadline:
+                if started >= deadline or search_calls >= 2:
                     raise OnlineRetrievalTimeoutError('Online search budget exhausted.')
                 search_attempted = True
+                search_calls += 1
                 found = self._search(candidate, deadline)
                 if time.monotonic() >= deadline:
                     raise OnlineRetrievalTimeoutError('Online search budget exhausted.')
@@ -203,9 +211,9 @@ class SearXNGOnlineRetriever(OnlineRetriever):
             if health and health[0] > time.monotonic() and not health[1]:
                 raise OnlineRetrievalProviderError('Online search is temporarily unavailable.')
             # Two search attempts total, shared deadline. No retries for auth,
-            # malformed JSON or portal redirects. A second empty-query attempt
-            # only removes conversational filler, never adds invented entities.
-            candidate = bounded_query
+            # malformed JSON or portal redirects. Alternatives retain user
+            # entities and add only intent-specific discovery terms.
+            candidate = discovery[0]
             for attempt in range(2):
                 try:
                     results = search(candidate)
@@ -215,20 +223,11 @@ class SearXNGOnlineRetriever(OnlineRetriever):
                     continue
                 if results:
                     break
-                alternative = re.sub(r"^(?:please\s+)?(?:(?:can|could) you\s+)?(?:tell me\s+|what(?:'s| is| are)\s+)", "", candidate, flags=re.I).strip(" ?.")
-                if alternative == candidate or not alternative:
+                alternative = discovery[1] if len(discovery) > 1 else ''
+                if attempt or not alternative or alternative == candidate:
                     break
                 candidate = alternative
-            if not results:
-                with _LOCK:
-                    health = _HEALTH.get(self.base_url)
-                if not health or health[0] <= time.monotonic() or not health[1]:
-                    # A running local SearXNG with no working external engines
-                    # is NOT an online success. Validate real search, not TCP.
-                    probe = search("IANA example domains")
-                    if not any(parse.urlsplit(r.url).hostname in {"iana.org", "www.iana.org"} and "example" in r.content.lower() for r in probe):
-                        raise OnlineRetrievalProviderError("External search health could not be verified.")
-            from .evidence_policy import evidence_category, official_catalog
+            from .evidence_policy import official_catalog
             retrieved_count = len(results)
             if official_url:
                 # A known roster URL is a candidate, never a source until fetched.
@@ -247,22 +246,13 @@ class SearXNGOnlineRetriever(OnlineRetriever):
             enrichment_started = time.monotonic()
             results = enrich_results(results, query, enrichment_deadline, min(4, self.max_results), attempt_budget)
             timings['enrichment_ms'] += round((time.monotonic()-enrichment_started)*1000)
+            page_remaining = max(0, 2.0-direct_elapsed-(time.monotonic()-enrichment_started))
             from .selection import rank_candidates, diverse_selection
             fresh = select_current_evidence(results, query, datetime.now(timezone.utc))
-            category = evidence_category(query)
-            if retrieved_count and not fresh and category in {'current', 'release', 'officeholder', 'entertainment'} and deadline-time.monotonic() > .15:
+            if retrieved_count and not fresh and search_calls < 2 and page_remaining > .05 and attempt_budget[0] > 0 and category in {'current', 'release', 'officeholder', 'entertainment'} and deadline-time.monotonic() > .15:
                 # One additional discovery call only, sharing the original 8s
                 # deadline. Never retry a denied page or bypass its restriction.
-                alternative = (
-                    bounded_query + ' release notes site:raspberrypi.com/news/'
-                    if category == 'release' and re.search(r'\braspberry\s+pi\s+os\b', query, re.I)
-                    else re.sub(r'\bnews\b', 'headlines', bounded_query, flags=re.I)
-                    if re.search(r'\bnews\b', bounded_query, re.I)
-                    else bounded_query + ' release notes' if category == 'release'
-                    else bounded_query + ' site:telangana.gov.in/government/chief-minister' if category == 'officeholder' and re.search(r'\btelangana\b', query, re.I)
-                    else bounded_query + ' site:pmindia.gov.in/en/pms-profile' if category == 'officeholder' and re.search(r'\bindia\b', query, re.I)
-                    else bounded_query + ' official announcement' if category == 'entertainment' else ''
-                )
+                alternative = discovery[1] if len(discovery) > 1 else ''
                 if alternative and alternative != candidate:
                     try:
                         discovered = search(alternative)
@@ -270,6 +260,7 @@ class SearXNGOnlineRetriever(OnlineRetriever):
                         known = {r.url for r in results}
                         discovered = [r for r in discovered if r.url not in known]
                         enrichment_started = time.monotonic()
+                        enrichment_deadline = min(deadline, enrichment_started+page_remaining)
                         results += enrich_results(discovered, query, enrichment_deadline, min(4, self.max_results), attempt_budget)
                         timings['enrichment_ms'] += round((time.monotonic()-enrichment_started)*1000)
                     except (OnlineRetrievalProviderError, OnlineRetrievalTimeoutError, OnlineRetrievalResponseError):
@@ -298,8 +289,10 @@ class SearXNGOnlineRetriever(OnlineRetriever):
             results = selected + diverse_selection(remainder, self.max_results - len(selected)) if len(selected) < self.max_results else selected
             self.diagnostics['evidence_selection_ms'] += round((time.monotonic()-selection_started)*1000)
             with _LOCK:
-                _remember(_HEALTH, self.base_url, (time.monotonic() + 30, True), 8)
-                _remember(_CACHE, key, (time.monotonic() + (freshness_seconds(query) if results else 5), tuple(results), dict(self.diagnostics)))
+                if retrieved_count:
+                    _remember(_HEALTH, self.base_url, (time.monotonic() + 30, True), 8)
+                cache_results = results if fresh or category == 'technical' else []
+                _remember(_CACHE, key, (time.monotonic() + (freshness_seconds(query) if cache_results else 5), tuple(cache_results), dict(self.diagnostics)))
             return results
         except (OnlineRetrievalProviderError, OnlineRetrievalTimeoutError, OnlineRetrievalResponseError):
             self.diagnostics = dict(timings)
@@ -321,8 +314,8 @@ class SearXNGOnlineRetriever(OnlineRetriever):
             "q": bounded_query,
             "format": "json",
         }
-        if re.search(r'\b(news|headlines?)\b', bounded_query, re.I):
-            parameters.update(categories='news', time_range='day')
+        from .intent import search_filters
+        parameters.update(search_filters(bounded_query))
         query_string = parse.urlencode(parameters)
         search_request = request.Request(
             f"{self.base_url}/search?{query_string}",

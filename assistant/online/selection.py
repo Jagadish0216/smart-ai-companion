@@ -17,6 +17,7 @@ def is_article(result):
 
 def rank_candidates(results, query):
     from .searxng import query_terms
+    from .intent import normalized_words
     from .grounding import select_current_evidence
     terms = query_terms(query)
     seen = set()
@@ -29,7 +30,7 @@ def rank_candidates(results, query):
         if identity in seen:
             continue
         seen.add(identity)
-        words = set(re.findall(r'[a-z0-9]+',(result.title+' '+result.content).lower()))
+        words = normalized_words(result.title+' '+result.content)
         overlap = len(terms & words)
         informative = len(result.content.split()) >= 4 and not re.search(r'\b(?:shop now|buy now|sponsored|discount codes?|special offers?|read more|click here)\b',result.content,re.I)
         host = urlsplit(result.url).hostname or ''
