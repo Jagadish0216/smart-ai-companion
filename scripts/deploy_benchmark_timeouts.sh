@@ -9,6 +9,18 @@ set -euo pipefail
 id "$DEPLOY_USER" >/dev/null
 cd /home/jagadish/apps/smart-ai-companion
 as_user() { runuser -u "$DEPLOY_USER" -- "$@"; }
+python_test() {
+  # Do not load the appliance's demo.env into the regression process. This
+  # explicit profile supplies deterministic audio settings and an in-memory DB.
+  as_user venv/bin/python manage.py test --settings=config.test_settings "$@"
+}
+patch_already_applied() {
+  # A Pi cherry-pick has a different SHA; recognize stable patch equivalence too.
+  if as_user git merge-base --is-ancestor "$REVIEWED_COMMIT" HEAD; then
+    return 0
+  fi
+  [[ "$(as_user git cherry HEAD "$REVIEWED_COMMIT" "${REVIEWED_COMMIT}^")" == "- $REVIEWED_COMMIT" ]]
+}
 python_user() {
   # Match the existing voice unit's EnvironmentFile order without sourcing shell
   # code, printing credentials, editing settings or creating root-owned DB files.
@@ -22,23 +34,30 @@ for name in (".env", "/etc/smart-ai-companion/demo.env"):
 os.execv(sys.executable,[sys.executable,*sys.argv[1:]])
 ' "$@"
 }
-[[ "$(as_user git rev-parse HEAD)" == afef8395f25d127e9572eb8ee6289e908f814e9f ]] || { echo 'Unexpected baseline; stop for review'; exit 1; }
 [[ "$(as_user git branch --show-current)" == feature/adaptive-online-retrieval ]] || { echo 'Unexpected branch'; exit 1; }
 [[ -z "$(as_user git status --porcelain --untracked-files=no)" ]] || { echo 'Tracked changes exist; nothing discarded'; exit 1; }
 # Untracked knowledge and assets are allowed; no reset, stash, clean or migration.
-systemctl is-active --quiet smart-ai-companion.service
-systemctl is-active --quiet smart-ai-companion-voice.service
 as_user venv/bin/python - "$REVIEWED_COMMIT" <<'PY'
 import subprocess, sys
 sha=sys.argv[1]
-allowed={'assistant/model_benchmark.py','assistant/management/commands/benchmark_models.py',
-         'assistant/tests_benchmark_timeouts.py','assistant/tests_model_source_reliability.py',
-         'docs/model-benchmark-timeouts.md','scripts/deploy_benchmark_timeouts.sh'}
+allowed={'assistant/test_support.py','assistant/tests_voice_stream.py',
+         'assistant/tests_pi_deployment_isolation.py','config/test_settings.py',
+         'docs/pi-deployment-test-isolation.md','scripts/deploy_benchmark_timeouts.sh'}
 if len(subprocess.check_output(['git','rev-list','--parents','-n','1',sha],text=True).split())!=2:
     raise SystemExit('Expected one non-merge fix commit')
 paths=set(subprocess.check_output(['git','diff-tree','--no-commit-id','--name-only','-r',sha],text=True).splitlines())
 if not paths or not paths<=allowed:raise SystemExit('Unexpected changed paths')
 PY
+apply_fix=true
+if patch_already_applied; then
+  apply_fix=false
+  echo 'Reviewed fix already applied; reuse it and rerun validation/quick comparison without another cherry-pick.'
+  [[ "$(as_user git rev-parse HEAD^)" == 53fca5636879d21d6ba8ea4d69182e6ab4af8c28 ]] || { echo 'Additional deployment history exists; stop for review'; exit 1; }
+else
+  [[ "$(as_user git rev-parse HEAD)" == 53fca5636879d21d6ba8ea4d69182e6ab4af8c28 ]] || { echo 'Unexpected baseline; stop for review'; exit 1; }
+fi
+systemctl is-active --quiet smart-ai-companion.service
+systemctl is-active --quiet smart-ai-companion-voice.service
 signature() {
 as_user venv/bin/python - <<'PY'
 import hashlib,pathlib
@@ -51,16 +70,24 @@ print(h.hexdigest())
 PY
 }
 before=$(signature)
-as_user git cherry-pick "$REVIEWED_COMMIT"
-tag=benchmark-timeouts-${REVIEWED_COMMIT:0:12}
-as_user git tag "$tag" HEAD
+if [[ "$apply_fix" == true ]]; then
+  as_user git cherry-pick "$REVIEWED_COMMIT"
+fi
+tag=pi-test-isolation-${REVIEWED_COMMIT:0:12}
+if as_user git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; then
+  [[ "$(as_user git rev-parse "$tag^{commit}")" == "$(as_user git rev-parse HEAD)" ]] || { echo 'Rollback tag points elsewhere; stop for review'; exit 1; }
+else
+  as_user git tag "$tag" HEAD
+fi
 printf 'Applied: %s\nRollback tag: %s\n' "$(as_user git rev-parse HEAD)" "$tag"
 restore_services() {
   status=$?
   trap - EXIT INT TERM
   # This supervisor already holds privileges: restoration cannot be blocked by
   # an expired sudo timestamp after a slow benchmark or failed Ollama cleanup.
-  if ! timeout 120s systemctl start smart-ai-companion.service smart-ai-companion-voice.service; then
+  if ! timeout 120s systemctl start smart-ai-companion.service smart-ai-companion-voice.service ||
+     ! timeout 10s systemctl is-active --quiet smart-ai-companion.service ||
+     ! timeout 10s systemctl is-active --quiet smart-ai-companion-voice.service; then
     echo 'SERVICE RESTORATION FAILED: inspect systemctl status and journalctl locally.' >&2
     [[ $status != 0 ]] || status=1
   fi
@@ -71,7 +98,8 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 # Voice must release its existing microphone lock before voice-related tests.
 timeout 120s systemctl stop smart-ai-companion-voice.service
-python_user manage.py test \
+python_test \
+ assistant.tests_pi_deployment_isolation \
  assistant.tests_benchmark_timeouts assistant.tests_model_source_reliability \
  assistant.tests_voice assistant.tests_voice_loop assistant.tests_voice_stream \
  assistant.tests_push_to_talk assistant.tests_hands_free assistant.tests_interruption \
@@ -81,6 +109,7 @@ python_user manage.py test \
  assistant.tests_execution_policy system.tests_resource_manager knowledge_base.tests_rag \
  knowledge_base.tests_online_sync conversations.tests_memory assistant.tests_policy \
  assistant.tests_short_answer_thermal assistant.tests_single_model assistant.tests --noinput
+as_user venv/bin/python manage.py check --settings=config.test_settings
 python_user manage.py check
 as_user git diff --check
 [[ "$(signature)" == "$before" ]] || { echo 'Protected assets changed; stop'; exit 1; }

@@ -18,6 +18,7 @@ from django.test import SimpleTestCase, TestCase, override_settings
 from assistant.execution_policy import CONSTRAINED_RESOURCE_STATUS, REDUCED_RESOURCE_STATUS
 from assistant.ai_engine import AIEngineResult, AIEngineStreamEvent
 from assistant.services import AssistantService
+from assistant.test_support import VOICE_LOOP_TEST_SETTINGS
 from assistant.voice.processes import AudioCancelledError, run_cancellable
 from assistant.voice.tts import MockTTSProvider, PiperProvider, TextToSpeechProvider, TTSError
 from conversations.models import Conversation, Message
@@ -223,12 +224,14 @@ class FirstClauseBufferTests(SimpleTestCase):
             units.extend(buffer.feed("", final=True))
             self.assertEqual(" ".join(units), text)
 
-    @override_settings(VOICE_AUDIO_BACKEND="pulse", VOICE_INPUT_SOURCE="source",
-                       VOICE_STREAM_FIRST_CHUNK_MIN_CHARS="65", VOICE_STREAM_FIRST_CHUNK_TARGET_CHARS="110")
+    @override_settings(**VOICE_LOOP_TEST_SETTINGS)
+    @override_settings(VOICE_STREAM_FIRST_CHUNK_MIN_CHARS="65", VOICE_STREAM_FIRST_CHUNK_TARGET_CHARS="110")
     def test_first_chunk_settings_and_validation(self):
         config = voice_loop.VoiceLoopConfig.from_settings()
         self.assertEqual(config.stream_first_chunk_min_chars, 65)
         self.assertEqual(config.stream_first_chunk_target_chars, 110)
+        self.assertEqual((config.audio_backend, config.playback_profile), ('pulse', 'legacy'))
+        self.assertFalse(config.capture_ready_lifecycle)
         for minimum, target in ((0, 100), (-1, 100), (60, 59)):
             with self.subTest(minimum=minimum, target=target), self.assertRaises(voice_loop.VoiceLoopError):
                 voice_loop.VoiceLoopConfig("source", stream_first_chunk_min_chars=minimum,
@@ -408,9 +411,13 @@ class StreamingBufferTests(SimpleTestCase):
         spoken.extend(buffer.feed("", final=True))
         self.assertEqual(" ".join(spoken), voice_loop.sanitize_text_for_speech(text))
 
-    @override_settings(VOICE_STREAM_TTS_TARGET_CHARS="220", VOICE_AUDIO_BACKEND="pulse", VOICE_INPUT_SOURCE="source")
+    @override_settings(**VOICE_LOOP_TEST_SETTINGS)
+    @override_settings(VOICE_STREAM_TTS_TARGET_CHARS="220")
     def test_target_setting_and_validation(self):
-        self.assertEqual(voice_loop.VoiceLoopConfig.from_settings().stream_tts_target_chars, 220)
+        config = voice_loop.VoiceLoopConfig.from_settings()
+        self.assertEqual(config.stream_tts_target_chars, 220)
+        self.assertEqual((config.audio_backend, config.playback_profile), ('pulse', 'legacy'))
+        self.assertFalse(config.capture_ready_lifecycle)
         with self.assertRaisesRegex(voice_loop.VoiceLoopError, "VOICE_STREAM_TTS_TARGET_CHARS"):
             voice_loop.VoiceLoopConfig("source", stream_tts_target_chars=0).validate()
 
