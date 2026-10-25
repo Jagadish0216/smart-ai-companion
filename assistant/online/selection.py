@@ -34,9 +34,11 @@ def rank_candidates(results, query):
         informative = len(result.content.split()) >= 4 and not re.search(r'\b(?:shop now|buy now|sponsored|discount codes?|special offers?|read more|click here)\b',result.content,re.I)
         host = urlsplit(result.url).hostname or ''
         primary = {'raspberry','pi'} <= terms and (host == 'raspberrypi.com' or host.endswith('.raspberrypi.com'))
+        from .current_sources import official_office_page
+        official = official_office_page(result.url, query)
         fresh = bool(select_current_evidence([result],query,datetime.now(timezone.utc)))
         date_quality = 2 if fresh else 1 if result.published_at is None and not result.date_conflict else 0
-        score = (overlap >= min(2,len(terms)) if terms else True, informative, is_article(result), overlap, date_quality, primary)
+        score = (official, overlap >= min(2,len(terms)) if terms else True, informative, is_article(result), date_quality, overlap, primary)
         ranked.append((score,result))
     ranked.sort(key=lambda pair: pair[0], reverse=True)
     return [result for _,result in ranked[:20]]

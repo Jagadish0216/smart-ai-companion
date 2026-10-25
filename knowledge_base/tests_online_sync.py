@@ -458,6 +458,7 @@ class OnlinePersistenceIntegrationTests(OnlineSyncFixture):
     def test_auto_persist_uses_only_grounding_selected_results_without_second_request(self):
         install_resource_report(self, online_allowed=True)
         first, second = result(), result(url='https://example.org/other')
+        first = replace(first, published_at=NOW, verified_at=NOW, accessibility='available')
         engine = MagicMock()
         engine.generate.return_value = AIEngineResult(text='A grounded answer.', engine='local', model='test', mode='offline', latency_ms=1)
         with patch('assistant.services.get_online_retriever', return_value=self.retriever), patch(

@@ -19,9 +19,17 @@ def has_conflicting_claims(results, query):
     the grounding instruction's uncertainty rule, not automated adjudication.
     """
     patterns = []
-    for role in ("CEO", "president", "prime minister", "governor", "mayor"):
+    if evidence_category(query) == 'entertainment':
+        dates_by_film = {}
+        for result in results:
+            for film, date in re.findall(r'\b(?:film|movie)\s+([A-Z][\w ]{1,70}?)\s+(?i:will release|was released|has been released|is scheduled to release)\s+on\s+(20\d{2}-\d{2}-\d{2})', result.content):
+                dates_by_film.setdefault(film.strip().casefold(), set()).add(date)
+        if any(len(dates) > 1 for dates in dates_by_film.values()):
+            return True
+    for role in ("CEO", "president", "chief minister", "prime minister", "governor", "mayor"):
         if re.search(r"\b" + role + r"\b", query, re.I):
-            patterns.append(r"(?i:\b" + role + r"\s+(?:is|:)\s*)([A-Z][\w'-]+(?: [A-Z][\w'-]+){0,3})")
+            patterns.append(r"(?i:\b" + role + r"\s*(?:of\s+(?:Telangana|India)\s*)?(?:is|:)\s*)([A-Z][\w.'-]+(?: [A-Z][\w.'-]+){0,3})")
+            patterns.append(r"([A-Z][\w.'-]+(?: [A-Z][\w.'-]+){0,3})(?i:\s+is\s+(?:the\s+)?(?:current\s+)?" + role + r"\b)")
     if re.search(r"\b(?:price|cost)\b", query, re.I):
         patterns.append(r"(?i:\b(?:price|cost)\s*(?:is|:)?\s*)([$€£]\s*\d[\d,.]*)")
     if re.search(r"\bscore\b", query, re.I):
@@ -68,6 +76,25 @@ def select_current_evidence(results, query, request_time):
         published = result.published_at
         if published and (published-now).total_seconds()>300:
             continue
+        if category in {'officeholder', 'entertainment'}:
+            from .current_sources import official_office_page
+            if (result.accessibility != 'available' or not result.verified_at
+                    or not 0 <= (now-result.verified_at).total_seconds() <= 300):
+                continue
+            if category == 'officeholder':
+                if (result.evidence_kind != 'official_current_state'
+                        or not official_office_page(result.verified_url, query)
+                        or re.search(r'\bas of\b', query, re.I)):
+                    continue
+                # The fetched, scoped official roster establishes present state;
+                # neither its publication nor modification date is an appointment date.
+                admitted.append(result)
+                if len(admitted) == 4:
+                    break
+                continue
+            if result.evidence_kind != 'fetched_report' or not result.entertainment_status:
+                continue
+            # Entertainment still requires a recent publication date below.
         if category == 'technical' and result.accessibility == 'available':
             admitted.append(result)
             if len(admitted)==4:
@@ -190,6 +217,8 @@ def build_online_grounding_instruction(
             f"Modified (not publication): {result.modified_at.isoformat() if result.modified_at else 'unknown'}\n"
             f"Release date (not publication): {result.release_at.isoformat() if result.release_at else 'unknown'}\n"
             f"Page verification time: {result.verified_at.isoformat() if result.verified_at else 'not checked'}\n"
+            f"Evidence kind: {result.evidence_kind or 'search evidence'}; Report status: {result.entertainment_status or 'not applicable'}\n"
+            f"Event date (not publication): {result.event_at.isoformat() if result.event_at else 'unknown'}\n"
             "Snippet: "
         )
         footer = f"\n--- SOURCE {index} END ---"
@@ -228,6 +257,9 @@ def build_online_grounding_instruction(
         "An official release catalog supports only its explicitly listed release facts; "
         "a Debian version is not a separate Raspberry Pi OS version number. "
         "Never infer a historical latest version from a current catalog snapshot."
+        " An official current-state page supports only the present role explicitly stated in its fetched text, not an appointment date."
+        " Entertainment reports describe what that source reports: distinguish rumours, announced projects, scheduled releases and completed releases."
+        " Do not promote reported or rumoured projects to confirmed facts, assume a scheduled date was met, or use event dates as publication dates."
     )
     return (
         f"{_ONLINE_SECURITY_INSTRUCTION}\n\n"

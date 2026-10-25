@@ -37,7 +37,7 @@ from .devices.intents import map_device_command
 from .devices.types import DeviceAction, DeviceCommand, SensorReading
 from .online.base import OnlineRetrievalError, OnlineRetrievalResult
 from .online.factory import get_online_retriever
-from knowledge_base.online_sync import persist_used_online_results
+from knowledge_base.online_sync import persist_used_online_results, load_verified_current
 from .online.grounding import build_online_grounding_instruction, select_current_evidence, has_conflicting_claims
 from .execution_policy import AIExecutionPlan, get_ai_execution_plan, select_voice_budget
 from .policy import (
@@ -318,6 +318,8 @@ def _prepare_message(
         "sources_unavailable": 0,
         "sources_access_denied": 0,
         "fresh_evidence_accepted": 0,
+        "search_ms": 0, "enrichment_ms": 0, "evidence_selection_ms": 0,
+        "cache_hit": False, "cache_ms": 0,
         "fallback_reason": "online_unavailable" if route_decision.route == QueryRoute.ONLINE else "",
         "generation_ms": 0,
     }
@@ -338,6 +340,38 @@ def _prepare_message(
             "This is an offline request. My local knowledge may be outdated, "
             "so I can't verify current facts, scores or prices without online evidence."
         )
+        # An explicit offline request may quote unexpired, previously verified
+        # evidence, with its actual verification time. It never triggers HTTP.
+        cache_started = time.perf_counter()
+        offline_query = re.sub(r'^(?:answer offline(?: only)?|offline only)\s*[:,-]?\s*', '', query, flags=re.I)
+        try:
+            cached = load_verified_current(offline_query)
+        except Exception:
+            cached = []
+        stage_ms['cache_ms'] = round((time.perf_counter()-cache_started)*1000)
+        if cached:
+            cached = cached[:1]
+            stage_ms.update(cache_hit=True, fallback_reason='offline_verified_cache')
+            return _persist_direct_response(conversation,
+                'Cached source evidence (not a live check):\n' + '\n'.join(
+                    f'Last verified {r.verified_at.isoformat()}: {r.content}' for r in cached),
+                route_decision, engine='lexical', execution_plan=execution_plan,
+                execution_started=execution_started, stage_ms=stage_ms,
+                metadata_updates={'online_sources': [r.source_metadata() for r in cached]})
+    if direct_response and route_decision.route == QueryRoute.ONLINE:
+        cache_started = time.perf_counter()
+        try:
+            cached = load_verified_current(query)[:1]
+        except Exception:
+            cached = []
+        stage_ms['cache_ms'] = round((time.perf_counter()-cache_started)*1000)
+        if cached:
+            stage_ms.update(cache_hit=True, fallback_reason='online_unavailable_verified_cache')
+            return _persist_direct_response(conversation,
+                f'Cached source evidence (not a live check). Last verified {cached[0].verified_at.isoformat()}: {cached[0].content}',
+                route_decision, engine='lexical', execution_plan=execution_plan,
+                execution_started=execution_started, stage_ms=stage_ms,
+                metadata_updates={'online_sources': [r.source_metadata() for r in cached]})
     if direct_response:
         metadata_updates = None
         if (
@@ -413,21 +447,39 @@ def _prepare_message(
         stage_ms.update(online_attempted=True, fallback_reason="")
         retrieval_started = time.perf_counter()
         try:
-            retriever = get_online_retriever()
-            retrieved_results = retriever.retrieve(query)
-            stage_ms.update(provider_reachable=True, results_retrieved=len(retrieved_results))
+            cache_started = time.perf_counter()
+            try:
+                retrieved_results = load_verified_current(query)
+            except Exception:
+                logger.warning('Verified current cache unavailable; trying online retrieval')
+                retrieved_results = []
+            stage_ms['cache_ms'] = round((time.perf_counter()-cache_started)*1000)
+            stage_ms['cache_hit'] = bool(retrieved_results)
+            if retrieved_results:
+                stage_ms['online_attempted'] = False
+                stage_ms['sources_verified'] = len(retrieved_results)
+            retriever = None
+            if not retrieved_results:
+                retriever = get_online_retriever()
+                retrieved_results = retriever.retrieve(query)
+                stage_ms.update(provider_reachable=True, results_retrieved=len(retrieved_results))
             diagnostics = getattr(retriever, 'diagnostics', {})
             if isinstance(diagnostics, dict):
-                for key in ('results_retrieved', 'sources_verified', 'sources_unavailable', 'sources_access_denied'):
+                for key in ('results_retrieved', 'sources_verified', 'sources_unavailable', 'sources_access_denied',
+                            'search_ms', 'enrichment_ms', 'evidence_selection_ms', 'cache_ms'):
                     value = diagnostics.get(key)
                     if type(value) is int and value >= 0:
                         stage_ms[key] = value
+                if diagnostics.get('cache_hit') is True:
+                    stage_ms['cache_hit'] = True
             request_time = django_timezone.localtime(django_timezone.now())
+            selection_started = time.perf_counter()
             retrieved_results = select_current_evidence(retrieved_results, query, request_time)
             stage_ms['fresh_evidence_accepted'] = len(retrieved_results)
             if has_conflicting_claims(retrieved_results, query):
                 stage_ms["fallback_reason"] = "conflicting_evidence"
                 raise OnlineRetrievalError("Current sources disagree.")
+            stage_ms['evidence_selection_ms'] += round((time.perf_counter()-selection_started)*1000)
             online_latency_ms = round((time.perf_counter() - retrieval_started) * 1000)
             online_instruction, online_results = build_online_grounding_instruction(
                 retrieved_results,
@@ -440,10 +492,17 @@ def _prepare_message(
                 raise OnlineRetrievalError("The online provider returned no useful results.")
             stage_ms['online_success'] = True
             try:
-                persist_used_online_results(query, online_results)
+                if retriever is not None:
+                    persist_used_online_results(query, online_results)
             except Exception:
                 logger.warning("Automatic online knowledge persistence unavailable")
         except OnlineRetrievalError as exc:
+            diagnostics = getattr(retriever, 'diagnostics', {})
+            if isinstance(diagnostics, dict):
+                for key in ('search_ms', 'enrichment_ms', 'evidence_selection_ms', 'cache_ms'):
+                    value = diagnostics.get(key)
+                    if type(value) is int and value >= 0:
+                        stage_ms[key] = value
             stage_ms["fallback_reason"] = stage_ms["fallback_reason"] or "online_unavailable"
             online_latency_ms = round((time.perf_counter() - retrieval_started) * 1000)
             logger.warning("Online retrieval failed: %s", exc.__class__.__name__)
@@ -689,6 +748,7 @@ def _log_request_performance(prepared: PreparedAssistantRequest, metadata: dict)
             "request_ttft_ms", "online_attempted", "online_success", "online_results", "fallback_reason",
             "provider_reachable", "results_retrieved", "sources_verified", "sources_unavailable",
             "sources_access_denied", "fresh_evidence_accepted",
+            "search_ms", "enrichment_ms", "evidence_selection_ms", "cache_ms", "cache_hit",
             "resource_profile", "effective_model",
             "num_predict", "max_output_tokens", "eval_count", "output_limit_reached",
             "memory_used", "memory_messages", "memory_chars", "memory_ms",
@@ -845,6 +905,7 @@ def _persist_direct_response(
                     "online_attempted", "online_success", "online_results", "fallback_reason", "generation_ms",
                     "provider_reachable", "results_retrieved", "sources_verified", "sources_unavailable",
                     "sources_access_denied", "fresh_evidence_accepted",
+                    "search_ms", "enrichment_ms", "evidence_selection_ms", "cache_ms", "cache_hit",
                 )
             }
         },

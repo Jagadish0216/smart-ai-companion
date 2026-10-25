@@ -22,7 +22,7 @@ _LOCK = threading.Lock()
 _SLOT = threading.Lock()
 _DNS_SLOT = threading.Lock()
 _HOST_BACKOFF = OrderedDict()
-MAX_BYTES = 131072
+MAX_BYTES = 262144
 
 
 class PageUnavailable(ValueError):
@@ -53,6 +53,7 @@ class ArticleMetadata(HTMLParser):
         self.json_parts = None
         self.page_url = page_url
         self.redirect = False
+        self.events = []
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
@@ -61,7 +62,7 @@ class ArticleMetadata(HTMLParser):
                 self.redirect = True
             key = (attrs.get('property') or attrs.get('name') or attrs.get('itemprop') or '').lower()
             value = attrs.get('content', '')
-            if key in {'article:published_time', 'og:published_time', 'datepublished', 'pubdate', 'publishdate', 'publication_date', 'citation_publication_date', 'citation_date', 'dc.date.issued', 'dcterms.issued'}:
+            if key in {'article:published_time', 'og:published_time', 'datepublished', 'pubdate', 'publishdate', 'publish-date', 'publication_date', 'citation_publication_date', 'citation_date', 'dc.date.issued', 'dcterms.issued', 'parsely-pub-date', 'sailthru.date'}:
                 self.published.append(value)
             elif key in {'article:modified_time', 'datemodified', 'last-modified'}:
                 self.modified.append(value)
@@ -100,6 +101,8 @@ class ArticleMetadata(HTMLParser):
                     if belongs and isinstance(types, list) and any(t in {'Article', 'NewsArticle', 'BlogPosting', 'TechArticle', 'Report'} for t in types if isinstance(t, str)):
                         self.published.append(node.get('datePublished'))
                         self.modified.append(node.get('dateModified'))
+                    if belongs and isinstance(types, list) and any(t in {'Event', 'ScreeningEvent', 'Movie'} for t in types if isinstance(t, str)):
+                        self.events.append(node.get('startDate'))
                     for key in ('@graph', 'mainEntity'):
                         if key in node:
                             stack.append(node[key])
@@ -107,6 +110,29 @@ class ArticleMetadata(HTMLParser):
             pass
         finally:
             self.json_parts = None
+
+
+class PageText(HTMLParser):
+    """Visible body blocks only; never execute scripts or use navigation as evidence."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts, self.hidden = [], []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in {'script', 'style', 'template', 'nav', 'header', 'footer', 'head', 'title', 'iframe'}:
+            self.hidden.append(tag)
+        if tag in {'p', 'div', 'h1', 'h2', 'h3', 'li', 'tr', 'br'} and not self.hidden:
+            self.parts.append('\n')
+
+    def handle_endtag(self, tag):
+        if self.hidden and tag == self.hidden[-1]:
+            self.hidden.pop()
+        if tag in {'p', 'div', 'h1', 'h2', 'h3', 'li', 'tr'} and not self.hidden:
+            self.parts.append('\n')
+
+    def handle_data(self, data):
+        if not self.hidden:
+            self.parts.append(data)
 
 
 def public_target(url, deadline=None):
@@ -210,7 +236,11 @@ def fetch_metadata(url, deadline):
             from .searxng import _plain_text
             release_date, release_text = release_statement(_plain_text(body.decode('utf-8',errors='replace')), url)
             basic = (consistent_date(parser.published), consistent_date(parser.modified), len({v.date() for v in valid}) > 1)
-            return basic + (release_date,release_text) if release_date else basic
+            visible = PageText()
+            visible.feed(body.decode('utf-8', errors='replace'))
+            text = '\n'.join(clean for line in ''.join(visible.parts).splitlines() if (clean := ' '.join(line.split())))
+            return basic + (release_date, release_text, {'text': text[:12000], 'url': url,
+                            'event_at': consistent_date(parser.events)})
         finally:
             if guard is not None:
                 guard.cancel()
@@ -225,6 +255,8 @@ def enrich_results(results, query, deadline, target=4, attempt_budget=None):
     pipeline. Contention abstains instead of queuing. No changes to resource policy.
     """
     from .searxng import query_terms
+    from .current_sources import current_topic, official_office_page, page_evidence
+    topic = current_topic(query)
     deadline = min(deadline, time.monotonic() + 2.0)
     terms = query_terms(query)
     enriched = list(results)
@@ -244,7 +276,10 @@ def enrich_results(results, query, deadline, target=4, attempt_budget=None):
         if len(select_current_evidence(enriched, query, datetime.now(timezone.utc))) >= target:
             break
         cache_key = canonical_url(result.url)
-        if not is_article(result):
+        official = official_office_page(result.url, query)
+        if topic == 'officeholder' and not official:
+            continue  # Dated reporting cannot verify the present office roster.
+        if not is_article(result) and not official:
             continue
         host = urlsplit(result.url).hostname
         with _LOCK:
@@ -254,7 +289,7 @@ def enrich_results(results, query, deadline, target=4, attempt_budget=None):
         words = set(re.findall(r'[a-z0-9]+', (result.title + ' ' + result.content).lower()))
         from .evidence_policy import official_catalog, evidence_category
         needs_catalog = official_catalog(result.url) and evidence_category(query)=='release'
-        if (result.published_at and not needs_catalog) or result.date_conflict or not terms or len(terms & words) < min(2, len(terms)) or re.search(r'\b(?:shop now|buy now|discount codes?|sponsored|special offers?)\b', result.content, re.I):
+        if (result.published_at and not needs_catalog and not topic) or result.date_conflict or not terms or (not official and len(terms & words) < min(2, len(terms))) or re.search(r'\b(?:shop now|buy now|discount codes?|sponsored|special offers?)\b', result.content, re.I):
             continue
         with _LOCK:
             cached = _CACHE.get(cache_key)
@@ -279,8 +314,9 @@ def enrich_results(results, query, deadline, target=4, attempt_budget=None):
                     msvcrt.locking(guard, msvcrt.LK_NBLCK, 1)
                 attempts += 1
                 attempt_budget[0] -= 1
-                fetched = fetch_metadata(result.url, min(deadline, time.monotonic()+(1.25 if needs_catalog else .65)))
-                metadata = (*fetched[:3], 'available', *(fetched[3:] if len(fetched)>3 else (None,'')), datetime.now(timezone.utc))
+                fetched = fetch_metadata(result.url, min(deadline, time.monotonic()+(1.25 if needs_catalog or topic else .65)))
+                metadata = (*fetched[:3], 'available', *(fetched[3:5] if len(fetched)>3 else (None,'')),
+                            datetime.now(timezone.utc), None, fetched[5] if len(fetched)>5 else {})
             except (OSError, ValueError, http.client.HTTPException, RecursionError) as failure:
                 if isinstance(failure, PageUnavailable) and failure.status in (403,429):
                     with _LOCK:
@@ -294,7 +330,7 @@ def enrich_results(results, query, deadline, target=4, attempt_budget=None):
                     os.close(guard)
                 _SLOT.release()
             with _LOCK:
-                _CACHE[cache_key] = (time.monotonic() + (300 if metadata[0] or len(metadata)>4 and metadata[4] else 15), metadata)
+                _CACHE[cache_key] = (time.monotonic() + (300 if metadata[0] or len(metadata)>4 and metadata[4] or len(metadata)>8 and metadata[8].get('text') else 15), metadata)
                 _CACHE.move_to_end(cache_key)
                 while len(_CACHE) > 64:
                     _CACHE.popitem(last=False)
@@ -303,4 +339,19 @@ def enrich_results(results, query, deadline, target=4, attempt_budget=None):
         enriched[index] = replace(result, published_at=published, modified_at=modified or result.modified_at, publication_source='article_metadata' if published else '', date_conflict=conflict, accessibility=accessibility, release_at=metadata[4] if len(metadata)>4 else None, release_evidence=metadata[5] if len(metadata)>5 else '', verified_at=metadata[6] if len(metadata)>6 else None)
         if len(metadata) > 7:
             enriched[index] = replace(enriched[index], http_status=metadata[7])
+        if accessibility == 'available' and needs_catalog and enriched[index].release_evidence:
+            enriched[index] = replace(enriched[index], evidence_kind='official_release_catalog',
+                verified_url=metadata[8].get('url', result.url) if len(metadata)>8 else result.url)
+        if not needs_catalog and accessibility == 'available' and (topic or len(metadata) > 8 and metadata[8]):
+            page = metadata[8] if len(metadata) > 8 else {}
+            # Validate the final redirected URL's authority, not only the search URL.
+            final_url = page.get('url', '')
+            claim, status = page_evidence(page.get('text', ''), final_url, query)
+            mismatch = bool(published and result.published_at and published.date() != result.published_at.date())
+            enriched[index] = replace(enriched[index], content=claim, verified_url=final_url,
+                published_at=published or result.published_at,
+                publication_source='article_metadata' if published else result.publication_source,
+                date_conflict=conflict or mismatch, event_at=page.get('event_at'), entertainment_status=status,
+                evidence_kind=('official_current_state' if official_office_page(final_url, query)
+                               else 'fetched_report' if topic == 'entertainment' else 'fetched_reference') if claim else '')
     return enriched

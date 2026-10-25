@@ -25,6 +25,10 @@ class OnlineRetrievalResult:
     release_evidence: str = ""
     verified_at: datetime | None = None
     http_status: int | None = None
+    verified_url: str = ''
+    evidence_kind: str = ''
+    entertainment_status: str = ''
+    event_at: datetime | None = None
 
     def source_metadata(self) -> dict:
         """Return public-safe attribution data without copied web content."""
@@ -40,6 +44,10 @@ class OnlineRetrievalResult:
             "release_at": self.release_at.isoformat() if self.release_at else None,
             "verified_at": self.verified_at.isoformat() if self.verified_at else None,
             "http_status": self.http_status,
+            "verified_url": self.verified_url,
+            "evidence_kind": self.evidence_kind,
+            "entertainment_status": self.entertainment_status,
+            "event_at": self.event_at.isoformat() if self.event_at else None,
         }
 
 

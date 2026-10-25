@@ -7,13 +7,13 @@ import heapq
 import re
 from abc import ABC, abstractmethod
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from django.conf import settings
 from django.db.models import Q
 from django.utils import timezone
 
-from .models import KnowledgeChunk
+from .models import KnowledgeChunk, Document
 
 
 def usable_knowledge_filter():
@@ -39,6 +39,8 @@ class RetrievedChunk:
     chunk_index: int
     content: str
     score: float
+    last_synced_at: object = None
+    expires_at: object = None
 
     def source_metadata(self) -> dict:
         return {
@@ -47,6 +49,8 @@ class RetrievedChunk:
             "title": self.title,
             "chunk_index": self.chunk_index,
             "score": self.score,
+            "last_synced_at": self.last_synced_at.isoformat() if self.last_synced_at else None,
+            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
         }
 
 
@@ -134,7 +138,7 @@ class LexicalRetriever(KnowledgeRetriever):
             elif rank[:4] > best[0][:4]:
                 heapq.heapreplace(best, rank)
 
-        return sorted(
+        selected = sorted(
             (entry[-1] for entry in best),
             key=lambda result: (
                 -result.score,
@@ -143,6 +147,16 @@ class LexicalRetriever(KnowledgeRetriever):
                 result.chunk_id,
             ),
         )
+        online_ids = {r.document_id for r in selected if r.source_identifier.startswith('online:')}
+        if online_ids:
+            stamps = {d.pk: d for d in Document.objects.filter(pk__in=online_ids, source_type='ONLINE')
+                      .only('id', 'last_synced_at', 'expires_at')}
+            selected = [replace(r, last_synced_at=stamps[r.document_id].last_synced_at,
+                expires_at=stamps[r.document_id].expires_at,
+                content=f'Saved online evidence; last synchronized (not necessarily verified): {stamps[r.document_id].last_synced_at}; '
+                        f'expires: {stamps[r.document_id].expires_at}. This is not a live check.\n{r.content}')
+                if r.document_id in stamps else r for r in selected]
+        return selected
 
 
 def _tokenize(text: str) -> list[str]:

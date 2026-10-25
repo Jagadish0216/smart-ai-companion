@@ -5,6 +5,10 @@ from .dates import parse_publication_date
 
 
 def evidence_category(query):
+    from .current_sources import current_topic
+    topic = current_topic(query)
+    if topic:
+        return topic
     if re.search(r'\b(news|headlines?|breaking|weather|prices?|scores?|status|traffic|stocks?|live)\b',query,re.I):
         return 'current'
     if re.search(r'\b(versions?|releases?)\b',query,re.I):

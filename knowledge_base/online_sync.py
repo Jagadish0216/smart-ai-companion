@@ -6,6 +6,7 @@ import hashlib
 import ipaddress
 import logging
 import math
+import json
 from urllib.parse import urlsplit, urlunsplit
 
 from django.conf import settings
@@ -118,6 +119,9 @@ def validated_result(value):
         return None
     if not isinstance(value.retrieved_at, datetime) or timezone.is_naive(value.retrieved_at):
         return None
+    for stamp in (value.published_at, value.modified_at, value.verified_at, value.release_at, value.event_at):
+        if stamp is not None and (not isinstance(stamp, datetime) or timezone.is_naive(stamp)):
+            return None
     url = canonical_source_url(value.url)
     title = _plain_text(value.title[:2048])[:255] if isinstance(value.title, str) else ''
     snippet = _plain_text(value.content[:16000])[:6000] if isinstance(value.content, str) else ''
@@ -133,9 +137,14 @@ def source_identity(provider, url):
 
 
 def source_content(result):
-    # Observation timestamps live in metadata, never in the hashed/file content:
-    # unchanged snippets must not rewrite files or churn chunks on each refresh.
-    return f'Title: {result.title}\nSource: {result.url}\n\nSnippet:\n{result.content}\n'
+    # Legacy technical snippets retain their content-only hash. Verified page
+    # snapshots also save auditable provenance in the existing sync file; cache
+    # reads never rewrite it or manufacture a new verification time.
+    provenance = ''
+    if result.evidence_kind and result.verified_at:
+        data = result.source_metadata()
+        provenance = 'Verified evidence: ' + json.dumps(data, sort_keys=True) + '\n'
+    return f'Title: {result.title}\nSource: {result.url}\n{provenance}\nSnippet:\n{result.content}\n'
 
 
 class OnlineKnowledgeSyncService:
@@ -180,8 +189,10 @@ class OnlineKnowledgeSyncService:
                     document.source_title = result.title
                     document.sync_query = query
                     document.retrieved_at = result.retrieved_at
-                    document.last_synced_at = timezone.now()
+                    document.last_synced_at = result.verified_at or timezone.now()
                     document.expires_at = result.retrieved_at + timedelta(hours=self.config.ttl_hours)
+                    if result.evidence_kind and result.verified_at:
+                        document.expires_at = min(document.expires_at, result.verified_at + timedelta(minutes=5))
                     document.content_hash = digest
                     document.sync_error_message = ''
                     document.save(update_fields=('source_title', 'sync_query', 'retrieved_at', 'last_synced_at',
@@ -208,6 +219,15 @@ class OnlineKnowledgeSyncService:
             if result is None:
                 counts.failed += 1
                 continue
+            from assistant.online.grounding import select_current_evidence, has_conflicting_claims
+            from assistant.online.evidence_policy import evidence_category
+            from assistant.routing import QueryRouter
+            if QueryRouter.requires_online(query) and evidence_category(query) != 'technical':
+                if (not result.verified_at or result.accessibility != 'available'
+                        or not select_current_evidence([result], query, timezone.now())
+                        or has_conflicting_claims([r for r in results if isinstance(r, OnlineRetrievalResult)], query)):
+                    counts.failed += 1
+                    continue
             key = (result.provider, result.url)
             if key in seen:
                 continue
@@ -320,3 +340,45 @@ def persist_used_online_results(query, results):
         OnlineKnowledgeSyncService().persist_results(query, results)
     except Exception:
         logger.warning('Automatic online knowledge persistence unavailable')
+
+
+def load_verified_current(query):
+    """Exact-query, unexpired SQLite cache. Old snippets never become verified pages."""
+    from assistant.online.evidence_policy import evidence_category
+    from assistant.online.dates import parse_publication_date
+    from assistant.online.grounding import select_current_evidence, has_conflicting_claims
+    if evidence_category(query) == 'technical':
+        return []
+    documents = Document.objects.filter(source_type='ONLINE', status='INDEXED',
+        sync_query=normalized_query(query), expires_at__gt=timezone.now()).order_by('-last_synced_at')[:4]
+    values = []
+    for doc in documents:
+        try:
+            # The existing local sync file preserves provenance across lexical
+            # chunk boundaries. Bound reads and check the saved digest.
+            with doc.file.open('rb') as saved:
+                payload = saved.read(16001)
+            if len(payload) > 16000 or hashlib.sha256(payload).hexdigest() != doc.content_hash:
+                continue
+            head, content = payload.decode('utf-8').split('\nSnippet:\n', 1)
+            if not 20 <= len(content.strip()) <= 1200:
+                continue
+            record = next(line[len('Verified evidence: '):] for line in head.splitlines() if line.startswith('Verified evidence: '))
+            data = json.loads(record)
+            if data.get('url') != doc.source_url or data.get('provider') != doc.provider:
+                continue
+            values.append(OnlineRetrievalResult(title=doc.source_title, url=doc.source_url,
+                content=content.strip(), provider=doc.provider, retrieved_at=doc.retrieved_at,
+                published_at=parse_publication_date(data.get('published_at')),
+                modified_at=parse_publication_date(data.get('modified_at')),
+                verified_at=parse_publication_date(data.get('verified_at')),
+                event_at=parse_publication_date(data.get('event_at')),
+                release_at=parse_publication_date(data.get('release_at')),
+                release_evidence=content.strip() if data.get('evidence_kind') == 'official_release_catalog' else '',
+                verified_url=data.get('verified_url', ''), evidence_kind=data.get('evidence_kind', ''),
+                entertainment_status=data.get('entertainment_status', ''),
+                publication_source=data.get('publication_source', ''), accessibility='available'))
+        except (OSError, ValueError, TypeError, AttributeError, StopIteration):
+            continue
+    accepted = select_current_evidence(values, query, timezone.now())
+    return [] if has_conflicting_claims(accepted, query) else accepted

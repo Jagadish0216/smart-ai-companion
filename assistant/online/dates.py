@@ -20,7 +20,8 @@ def parse_publication_date(value):
         except (ValueError, TypeError, OverflowError):
             date = None
         if date is None:
-            for fmt in ("%B %d, %Y", "%b %d, %Y", "%d %B %Y", "%d %b %Y", "%Y-%m-%d %H:%M:%S%z"):
+            for fmt in ("%B %d, %Y", "%b %d, %Y", "%d %B %Y", "%d %b %Y", "%Y-%m-%d %H:%M:%S%z",
+                        "%Y/%m/%d", "%d %b %Y %H:%M:%S %z", "%B %d, %Y %I:%M %p %z"):
                 try:
                     date = datetime.strptime(value, fmt)
                     break

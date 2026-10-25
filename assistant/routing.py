@@ -204,7 +204,12 @@ class QueryRouter:
             return False
         if re.search(r"\b(?:who was|who were|history of|historical|in (?:19\d{2}|200\d))\b", normalized):
             return False
-        if re.search(r"^(?:what (?:is|are) (?:an? |the )?(?:news|weather|forecast|schedule|ranking|release|president|ceo|stock market|price elasticity|version control|(?:electrical |electric )?current)|what does .+ mean)[?.!]*$", normalized):
+        from .online.current_sources import current_topic, historical_query
+        if historical_query(normalized):
+            return False
+        if current_topic(normalized):
+            return True
+        if re.search(r"^(?:what (?:is|are) (?:an? |the )?(?:news|weather|forecast|schedule|ranking|release|president|chief minister|prime minister|governor|mayor|ceo|stock market|price elasticity|version control|(?:electrical |electric )?current)|what does .+ mean)[?.!]*$", normalized):
             return False
         if re.search(r"^(?:explain\b|define\b|what (?:does .+ mean|is (?:an? |the concept of )?)|how (?:does|do)\b)", normalized):
             if re.search(r"\b(?:mean|meaning|work|works|concept|electrical current|electric current|live variables)\b", normalized) and not _FRESHNESS_PATTERN.search(normalized):
@@ -212,6 +217,8 @@ class QueryRouter:
             if normalized.startswith(("explain", "define")) and not _FRESHNESS_PATTERN.search(normalized):
                 return False
         return bool(
+            re.search(r'\b(?:ai|artificial intelligence) developments?\b|\bcurrent affairs\b', normalized)
+            or
             re.search(r"\b(?:news|headlines?|weather|forecast|traffic|prices?|stocks?|bitcoin|crypto(?:currency)?|exchange rates?|scores?|standings?|rankings?|schedules?|timetables?|availability|flight status|service status|outage|releases?)\b", normalized)
             or re.search(r"\b(?:ceo|president|prime minister|governor|mayor|chief executive officer|chairperson)\b", normalized)
             or re.search(r"\bwho (?:runs|leads)\b", normalized)
