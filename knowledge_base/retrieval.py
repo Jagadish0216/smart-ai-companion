@@ -153,6 +153,13 @@ def _tokenize(text: str) -> list[str]:
     ]
 
 
+def is_relevant_match(query: str, content: str) -> bool:
+    """Reuse lexical admission for implicit context; never lower the threshold."""
+    query_counts, content_counts = Counter(_tokenize(query)), Counter(_tokenize(content))
+    return bool(query_counts and _has_sufficient_distinct_matches(query_counts, content_counts)
+                and _term_coverage(query_counts, content_counts) >= float(settings.RAG_MIN_RELEVANCE))
+
+
 def _term_coverage(query_counts: Counter, content_counts: Counter) -> float:
     query_term_count = sum(query_counts.values())
     if not query_term_count:

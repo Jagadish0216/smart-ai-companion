@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 
-from knowledge_base.retrieval import KnowledgeRetriever, RetrievedChunk
+from knowledge_base.retrieval import KnowledgeRetriever, RetrievedChunk, is_relevant_match
 from knowledge_base.services import get_retriever
 
 from .policy import AssistantResponsePolicy, Capability, CapabilityRegistry, ResponseMode
@@ -158,10 +158,15 @@ class QueryRouter:
     def _local_decision(self, query, registry, response_mode, required_capability, allow_implicit_rag):
         rag_latency_ms = 0
         retrieval_query = None
-        if (allow_implicit_rag or requests_local_knowledge(query)) and registry.is_available(Capability.LOCAL_RAG):
+        explicit = requests_local_knowledge(query)
+        factual = bool(re.match(r'^(?:what|which|who|where|when|why|how|is|are|does|do|explain|describe|tell me about)\b', query.strip(), re.I))
+        social = bool(re.fullmatch(r'how are you[?!. ]*', query.strip(), re.I))
+        if (explicit or allow_implicit_rag and factual and not social) and registry.is_available(Capability.LOCAL_RAG):
             rag_started = time.perf_counter()
             retrieval_query = normalize_rag_query(query)
             rag_results = self._retrieve(retrieval_query)
+            if not explicit:
+                rag_results = tuple(r for r in rag_results if is_relevant_match(retrieval_query, r.content))
             rag_latency_ms = round((time.perf_counter() - rag_started) * 1000)
             if rag_results:
                 return QueryRouteDecision(

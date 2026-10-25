@@ -297,7 +297,7 @@ def _prepare_message(
         required_capability=(
             response_plan.required_capability if response_plan is not None else None
         ),
-        allow_implicit_rag=False,
+        allow_implicit_rag=True,
     )
     latency.mark("route", route=route_decision.route.value)
     routing_ms = round((time.perf_counter() - routing_started) * 1000)
@@ -375,6 +375,16 @@ def _prepare_message(
             execution_plan=execution_plan,
             execution_started=execution_started,
             stage_ms=stage_ms,
+        )
+
+    from .offline_facts import exact_offline_fact
+    fact = exact_offline_fact(query, route_decision.rag_results) if route_decision.route == QueryRoute.LOCAL_RAG else None
+    if fact is not None:
+        return _persist_direct_response(
+            conversation, fact, route_decision, engine='lexical',
+            metadata_updates={'rag_used': True, 'rag_sources': [r.source_metadata() for r in route_decision.rag_results],
+                              'rag_chunks': len(route_decision.rag_results), 'rag_fast_path': True},
+            execution_plan=execution_plan, execution_started=execution_started, stage_ms=stage_ms,
         )
 
     if not execution_plan.generation_allowed:
@@ -568,6 +578,8 @@ def _build_generation_instruction(
             else None
         ),
         online_instruction,
+        ('Retrieved local facts take precedence over model memory. If local sources conflict, '
+         'state that the evidence conflicts and do not choose or invent an answer.' if rag_results else None),
     )
 
 

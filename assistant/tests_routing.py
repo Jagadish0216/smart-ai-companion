@@ -89,7 +89,9 @@ class QueryRouterTests(RouterTestCase):
                 self.assertEqual(decision.route, QueryRoute.LOCAL)
                 self.assertEqual(decision.rag_results, ())
                 retriever.retrieve.assert_not_called()
-                self.assertEqual(router.decide(query, registry=registry).route, QueryRoute.LOCAL_RAG)
+                from knowledge_base.retrieval import is_relevant_match
+                expected = QueryRoute.LOCAL_RAG if is_relevant_match(query, source.content) else QueryRoute.LOCAL
+                self.assertEqual(router.decide(query, registry=registry).route, expected)
                 retriever.reset_mock()
         self.assertTrue(ResponsePlan(ResponseMode.NORMAL, "", 128).allow_implicit_rag)
 
@@ -208,14 +210,14 @@ class QueryRouterTests(RouterTestCase):
 class QueryRouterServiceTests(RouterTestCase):
     @patch("assistant.services.get_engine")
     @patch("assistant.routing.get_retriever")
-    def test_voice_gate_is_forwarded_and_explicit_document_action_still_generates(self, get_retriever, get_engine):
+    def test_service_uses_automatic_rag_and_explicit_document_action_still_generates(self, get_retriever, get_engine):
         source = RetrievedChunk(1, 1, "test", "notes.md", 0, RELAY_KNOWLEDGE, 1.0)
         get_retriever.return_value.retrieve.return_value = [source]
         engine = MagicMock()
         engine.available_models.return_value = {"llama3.2:3b", "llama3.2:1b"}
         engine.generate.return_value = AIEngineResult(text="A grounded answer.", engine="local", latency_ms=1)
         get_engine.return_value = engine
-        for query, route in (("What is ESP32?", "local"),
+        for query, route in (("What is ESP32?", "local_rag"),
                              ("In our project, how did we connect the ESP32?", "local_rag"),
                              ("Search my local documents for ESP32 relay wiring.", "action")):
             with self.subTest(query=query):
