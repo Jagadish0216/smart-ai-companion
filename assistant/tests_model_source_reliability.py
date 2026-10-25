@@ -202,7 +202,8 @@ class BenchmarkTests(SimpleTestCase):
     @patch('assistant.model_benchmark.unload')
     @patch('assistant.model_benchmark.check_resources')
     @patch('assistant.model_benchmark.Samples')
-    def test_all_models_run_sequentially_cold_then_warm_and_no_download(self,samples,resources,unload,residents,engine,ownership,guard):
+    @patch('assistant.model_benchmark.installed_models',return_value=set(MODELS))
+    def test_all_models_run_sequentially_cold_then_warm_and_no_download(self,installed,samples,resources,unload,residents,engine,ownership,guard):
         resources.return_value=SimpleNamespace(max_output_tokens=128,timeout_seconds=120)
         samples.return_value.unsafe=False
         samples.return_value.finish.return_value={'throttled_bits':0}
@@ -213,7 +214,7 @@ class BenchmarkTests(SimpleTestCase):
         engine.return_value.generate_stream.side_effect=generate
         rows=[]
         run_benchmark(rows.append)
-        measurements=rows[:-1]
+        measurements=[row for row in rows if row['type']=='sample']
         self.assertEqual(len(measurements), len(MODELS)*len(CASES)*4)
         self.assertEqual([r['model'] for r in measurements], sorted([r['model'] for r in measurements],key=MODELS.index))
         self.assertEqual([r['phase'] for r in measurements], ['cold','warm']*(len(measurements)//2))
