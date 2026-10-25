@@ -129,28 +129,79 @@ class SearXNGOnlineRetriever(OnlineRetriever):
 
         key = (self.base_url, self.max_results, hashlib.sha256(bounded_query.casefold().encode()).digest())
         now = time.monotonic()
+        deadline = now + min(self.timeout_seconds, 8.0)
+        from .current_sources import known_office_profile, current_topic
+        from .enrichment import enrich_results
+        from .grounding import select_current_evidence, has_conflicting_claims
+        official_url = known_office_profile(query)
         timings = {'search_ms': 0, 'enrichment_ms': 0, 'evidence_selection_ms': 0,
+                   'direct_fetch_ms': 0, 'fallback_ms': 0,
                    'cache_ms': 0, 'cache_hit': False}
         with _LOCK:
-            health = _HEALTH.get(self.base_url)
-            if health and health[0] > now and not health[1]:
-                raise OnlineRetrievalProviderError("Online search is temporarily unavailable.")
             cached = _CACHE.get(key)
             if cached and cached[0] > now:
-                self.diagnostics = dict(cached[2]) if len(cached) > 2 else {}
-                self.diagnostics.update(timings, cache_hit=True, cache_ms=round((time.monotonic()-now)*1000))
-                return list(cached[1])
+                valid = (select_current_evidence(list(cached[1]), query, datetime.now(timezone.utc))
+                         if current_topic(query) == 'officeholder' else list(cached[1]))
+                if (valid or current_topic(query) != 'officeholder') and not has_conflicting_claims(valid, query):
+                    self.diagnostics = dict(cached[2]) if len(cached) > 2 else {}
+                    self.diagnostics.update(timings, cache_hit=True, cache_ms=round((time.monotonic()-now)*1000))
+                    return valid
+        timings['cache_ms'] = round((time.monotonic()-now)*1000)
         if not _SLOTS.acquire(blocking=False):
             raise OnlineRetrievalProviderError("Online search is busy.")
-        deadline = now + min(self.timeout_seconds, 8.0)
+        fallback_started = None
+        search_attempted = False
+        direct_elapsed = 0.0
         def search(candidate):
+            nonlocal search_attempted
             started = time.monotonic()
             try:
-                return self._search(candidate, deadline)
+                if started >= deadline:
+                    raise OnlineRetrievalTimeoutError('Online search budget exhausted.')
+                search_attempted = True
+                found = self._search(candidate, deadline)
+                if time.monotonic() >= deadline:
+                    raise OnlineRetrievalTimeoutError('Online search budget exhausted.')
+                return found
             finally:
                 timings['search_ms'] += round((time.monotonic()-started)*1000)
         try:
             results = []
+            attempt_budget = [4]
+            enrichment_deadline = min(deadline, time.monotonic() + 2.0)
+            if official_url:
+                candidate_page = OnlineRetrievalResult('Official officeholder profile', official_url,
+                    'Official officeholder profile; current role requires page verification.', self.provider_name, datetime.now(timezone.utc))
+                started = time.monotonic()
+                direct = enrich_results([candidate_page], query, enrichment_deadline, 1, attempt_budget)
+                direct_elapsed = time.monotonic()-started
+                timings['direct_fetch_ms'] = round(direct_elapsed*1000)
+                selection_started = time.monotonic()
+                fresh = select_current_evidence(direct, query, datetime.now(timezone.utc))
+                if time.monotonic() >= deadline:
+                    raise OnlineRetrievalTimeoutError('Online verification budget exhausted.')
+                # Check every extracted claim before limiting the source count.
+                if has_conflicting_claims(fresh, query):
+                    self.diagnostics = dict(timings)
+                    return fresh  # Service admission rejects conflicts; never cache them.
+                timings['evidence_selection_ms'] += round((time.monotonic()-selection_started)*1000)
+                if fresh:
+                    self.diagnostics = {
+                        'provider_reachable': True, 'results_retrieved': 1,
+                        'sources_verified': len(fresh), 'sources_unavailable': 0,
+                        'sources_access_denied': 0, 'fresh_evidence_accepted': len(fresh), **timings,
+                    }
+                    with _LOCK:
+                        _remember(_CACHE, key, (time.monotonic()+freshness_seconds(query), tuple(fresh), dict(self.diagnostics)))
+                    return fresh
+                fallback_started = time.monotonic()
+                if deadline - fallback_started < .15:
+                    raise OnlineRetrievalTimeoutError('Online fallback budget exhausted.')
+            # Search health must never suppress independent official verification.
+            with _LOCK:
+                health = _HEALTH.get(self.base_url)
+            if health and health[0] > time.monotonic() and not health[1]:
+                raise OnlineRetrievalProviderError('Online search is temporarily unavailable.')
             # Two search attempts total, shared deadline. No retries for auth,
             # malformed JSON or portal redirects. A second empty-query attempt
             # only removes conversational filler, never adds invented entities.
@@ -177,17 +228,8 @@ class SearXNGOnlineRetriever(OnlineRetriever):
                     probe = search("IANA example domains")
                     if not any(parse.urlsplit(r.url).hostname in {"iana.org", "www.iana.org"} and "example" in r.content.lower() for r in probe):
                         raise OnlineRetrievalProviderError("External search health could not be verified.")
-            from .enrichment import enrich_results
             from .evidence_policy import evidence_category, official_catalog
             retrieved_count = len(results)
-            from .current_sources import current_topic
-            topic = current_topic(query)
-            official_url = (
-                'https://www.telangana.gov.in/government/chief-minister/'
-                if topic == 'officeholder' and re.search(r'\btelangana\b', query, re.I) else
-                'https://www.pmindia.gov.in/en/pms-profile/'
-                if topic == 'officeholder' and re.search(r'\bindia\b', query, re.I) else ''
-            )
             if official_url:
                 # A known roster URL is a candidate, never a source until fetched.
                 candidate_page = OnlineRetrievalResult('Official officeholder profile', official_url,
@@ -199,14 +241,13 @@ class SearXNGOnlineRetriever(OnlineRetriever):
                     catalog=OnlineRetrievalResult('Official Raspberry Pi OS catalog','https://www.raspberrypi.com/software/operating-systems/',
                         'Official Raspberry Pi OS download catalog. Release details require page verification.', 'official_catalog',datetime.now(timezone.utc))
                 results=[catalog]+[r for r in results if not official_catalog(r.url)][:19]
-            # Four fetch attempts and discovery share this two-second page budget.
-            enrichment_deadline = min(deadline, time.monotonic() + 2.0)
-            attempt_budget = [4]
+            # Direct and fallback fetch work share four attempts and two seconds.
+            # Discovery consumes the total deadline, not a fresh page allowance.
+            enrichment_deadline = min(deadline, time.monotonic() + max(0, 2.0-direct_elapsed))
             enrichment_started = time.monotonic()
             results = enrich_results(results, query, enrichment_deadline, min(4, self.max_results), attempt_budget)
             timings['enrichment_ms'] += round((time.monotonic()-enrichment_started)*1000)
             from .selection import rank_candidates, diverse_selection
-            from .grounding import select_current_evidence
             fresh = select_current_evidence(results, query, datetime.now(timezone.utc))
             category = evidence_category(query)
             if retrieved_count and not fresh and category in {'current', 'release', 'officeholder', 'entertainment'} and deadline-time.monotonic() > .15:
@@ -237,7 +278,6 @@ class SearXNGOnlineRetriever(OnlineRetriever):
             unavailable_count = sum(r.accessibility == 'unavailable' for r in results)
             denied_count = sum(r.http_status in (401, 403) for r in results)
             selection_started = time.monotonic()
-            results = rank_candidates(results, query)
             fresh = select_current_evidence(results, query, datetime.now(timezone.utc))
             self.diagnostics = {
                 'provider_reachable': True, 'results_retrieved': retrieved_count,
@@ -247,6 +287,12 @@ class SearXNGOnlineRetriever(OnlineRetriever):
                 'fresh_evidence_accepted': len(fresh),
                 **timings,
             }
+            if time.monotonic() >= deadline:
+                raise OnlineRetrievalTimeoutError('Online retrieval budget exhausted.')
+            if has_conflicting_claims(fresh, query):
+                return fresh  # Preserve conflicts before deduplication/truncation.
+            results = rank_candidates(results, query)
+            fresh = select_current_evidence(results, query, datetime.now(timezone.utc))
             remainder = [item for item in results if item not in fresh and item.accessibility != 'unavailable']
             selected = diverse_selection(fresh, self.max_results)
             results = selected + diverse_selection(remainder, self.max_results - len(selected)) if len(selected) < self.max_results else selected
@@ -257,10 +303,13 @@ class SearXNGOnlineRetriever(OnlineRetriever):
             return results
         except (OnlineRetrievalProviderError, OnlineRetrievalTimeoutError, OnlineRetrievalResponseError):
             self.diagnostics = dict(timings)
-            with _LOCK:
-                _remember(_HEALTH, self.base_url, (time.monotonic() + 10, False), 8)
+            if search_attempted:
+                with _LOCK:
+                    _remember(_HEALTH, self.base_url, (time.monotonic() + 10, False), 8)
             raise
         finally:
+            if fallback_started is not None:
+                self.diagnostics['fallback_ms'] = round((time.monotonic()-fallback_started)*1000)
             _SLOTS.release()
 
     def _search(self, bounded_query, deadline):

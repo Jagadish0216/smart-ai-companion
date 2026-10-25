@@ -12,7 +12,8 @@ from django.test import SimpleTestCase, TestCase, override_settings
 from assistant.ai_engine.base import AIEngineResult, AIEngineStreamEvent
 from assistant.online import enrichment as e
 from assistant.online.base import OnlineRetrievalResult
-from assistant.online.current_sources import current_topic, page_evidence
+from assistant.online.base import OnlineRetrievalTimeoutError
+from assistant.online.current_sources import current_topic, page_evidence, known_office_profile
 from assistant.online.dates import parse_publication_date
 from assistant.online.grounding import select_current_evidence, has_conflicting_claims
 from assistant.online.searxng import SearXNGOnlineRetriever, clear_online_cache
@@ -188,18 +189,189 @@ class AcquisitionTests(SimpleTestCase):
 
     @patch('assistant.online.enrichment.fetch_metadata')
     @patch.object(SearXNGOnlineRetriever, '_search')
-    def test_known_official_candidate_is_fetched_and_search_cache_avoids_all_io(self, search, fetch):
+    def test_direct_official_verification_and_valid_cache_avoid_search(self, search, fetch):
         search.return_value = [source(url='https://publisher.example/old-news')]
         fetch.return_value = (None, None, False, None, '', {'text': source().content, 'url': CM_URL})
         provider = SearXNGOnlineRetriever(base_url='http://127.0.0.1:8888', timeout_seconds=8, max_results=4)
-        self.assertTrue(select_current_evidence(provider.retrieve(CM), CM, NOW))
+        first = provider.retrieve(CM)
+        self.assertTrue(select_current_evidence(first, CM, NOW))
+        self.assertEqual(provider.diagnostics['search_ms'], 0)
+        self.assertEqual(provider.diagnostics['fallback_ms'], 0)
         first_calls = fetch.call_count
-        provider.retrieve(CM)
+        cached = provider.retrieve(CM)
+        self.assertEqual(cached[0].verified_at, first[0].verified_at)
         self.assertTrue(provider.diagnostics['cache_hit'])
         self.assertEqual(provider.diagnostics['search_ms'], 0)
         self.assertEqual(provider.diagnostics['enrichment_ms'], 0)
         self.assertEqual(fetch.call_count, first_calls)
-        self.assertEqual(search.call_count, 1)
+        self.assertEqual(provider.diagnostics['direct_fetch_ms'], 0)
+        search.assert_not_called()
+
+    @patch('assistant.online.enrichment.fetch_metadata')
+    @patch.object(SearXNGOnlineRetriever, '_search')
+    def test_pm_direct_profile_and_search_health_are_independent(self, search, fetch):
+        from assistant.online import searxng as s
+        provider = SearXNGOnlineRetriever(base_url='http://127.0.0.1:8888', timeout_seconds=2, max_results=4)
+        s._HEALTH[provider.base_url] = (time.monotonic()+30, False)
+        url = known_office_profile(PM)
+        fetch.return_value = (None, None, False, None, '', {'text': 'Know the PM\nShri Example Person was sworn-in as India’s Prime Minister for a new term.', 'url': url})
+        self.assertEqual(provider.retrieve(PM)[0].evidence_kind, 'official_current_state')
+        self.assertEqual(fetch.call_args.args[0], url)
+        search.assert_not_called()
+        self.assertFalse(s._HEALTH[provider.base_url][1])
+
+    @patch('assistant.online.enrichment.fetch_metadata')
+    @patch.object(SearXNGOnlineRetriever, '_search')
+    def test_failed_direct_fetch_uses_bounded_search_and_other_scoped_profile(self, search, fetch):
+        alternate = 'https://www.telangana.gov.in/chief-minister'
+        clock = [100.0]
+        def page(url, deadline):
+            self.assertLessEqual(deadline, 100.8)
+            clock[0] += .02
+            if url == CM_URL:
+                raise TimeoutError()
+            return (None, None, False, None, '', {'text': source().content, 'url': alternate})
+        def discover(query, deadline):
+            self.assertEqual(deadline, 100.8)
+            self.assertEqual(fetch.call_count, 1)
+            clock[0] += .03
+            return [source(url=alternate)]
+        fetch.side_effect = page
+        search.side_effect = discover
+        with patch('assistant.online.searxng.time.monotonic', side_effect=lambda: clock[0]):
+            provider = SearXNGOnlineRetriever(base_url='http://127.0.0.1:8888', timeout_seconds=.8, max_results=4)
+            fresh = select_current_evidence(provider.retrieve(CM), CM, NOW)
+        self.assertEqual(fresh[0].verified_url, alternate)
+        self.assertEqual(provider.diagnostics['direct_fetch_ms'], 20)
+        self.assertEqual(provider.diagnostics['search_ms'], 30)
+        self.assertEqual(provider.diagnostics['fallback_ms'], 50)
+
+    @patch('assistant.online.enrichment.fetch_metadata', side_effect=TimeoutError())
+    @patch.object(SearXNGOnlineRetriever, '_search')
+    def test_failed_verification_cannot_promote_old_news_or_search_snippets(self, search, fetch):
+        search.return_value = [source(url='https://publisher.example/appointment', published_at=NOW-timedelta(days=365))]
+        provider = SearXNGOnlineRetriever(base_url='http://127.0.0.1:8888', timeout_seconds=2, max_results=4)
+        self.assertEqual(select_current_evidence(provider.retrieve(CM), CM, NOW), [])
+        self.assertTrue(search.called)
+        self.assertEqual(fetch.call_count, 1)  # Negative cache reused, never bypassed.
+
+    @patch('assistant.online.enrichment.fetch_metadata')
+    @patch.object(SearXNGOnlineRetriever, '_search')
+    def test_fallback_can_verify_after_slow_discovery_with_remaining_total_budget(self, search, fetch):
+        alternate = 'https://www.telangana.gov.in/chief-minister'
+        clock = [100.0]
+        def page(url, deadline):
+            self.assertLessEqual(deadline, 104.0)
+            clock[0] += .1
+            if url == CM_URL:
+                raise TimeoutError()
+            return (None, None, False, None, '', {'text': source().content, 'url': alternate})
+        def discover(query, deadline):
+            self.assertEqual(deadline, 104.0)
+            clock[0] += 2.2
+            return [source(url=alternate)]
+        fetch.side_effect = page
+        search.side_effect = discover
+        with patch('assistant.online.searxng.time.monotonic', side_effect=lambda: clock[0]):
+            provider = SearXNGOnlineRetriever(base_url='http://127.0.0.1:8888', timeout_seconds=4, max_results=4)
+            self.assertTrue(select_current_evidence(provider.retrieve(CM), CM, NOW))
+        self.assertEqual(fetch.call_count, 2)
+        self.assertEqual(provider.diagnostics['direct_fetch_ms'], 100)
+        self.assertEqual(provider.diagnostics['fallback_ms'], 2300)
+
+    @patch('assistant.online.enrichment.fetch_metadata')
+    @patch.object(SearXNGOnlineRetriever, '_search')
+    def test_direct_redirect_authority_and_ambiguous_roster_still_abstain(self, search, fetch):
+        search.return_value = [source(url='https://publisher.example/old-article')]
+        for text, final_url in (
+            (source().content, 'https://publisher.example/claim'),
+            ('SRI EXAMPLE PERSON\nThe Hon’ble Chief Minister\nSRI OTHER PERSON\nThe Hon’ble Chief Minister', CM_URL)):
+            clear_online_cache(); e._CACHE.clear()
+            fetch.return_value = (None, None, False, None, '', {'text': text, 'url': final_url})
+            provider = SearXNGOnlineRetriever(base_url='http://127.0.0.1:8888', timeout_seconds=2, max_results=4)
+            self.assertEqual(select_current_evidence(provider.retrieve(CM), CM, NOW), [])
+
+    @patch('assistant.online.enrichment.fetch_metadata')
+    @patch.object(SearXNGOnlineRetriever, '_search')
+    def test_direct_timeout_exhausts_shared_deadline_without_fallback(self, search, fetch):
+        clock = [100.0]
+        def timeout(url, deadline):
+            self.assertEqual(deadline, 100.05)
+            clock[0] = deadline
+            raise TimeoutError()
+        fetch.side_effect = timeout
+        with patch('assistant.online.searxng.time.monotonic', side_effect=lambda: clock[0]):
+            provider = SearXNGOnlineRetriever(base_url='http://127.0.0.1:8888', timeout_seconds=.05, max_results=4)
+            with self.assertRaises(OnlineRetrievalTimeoutError):
+                provider.retrieve(CM)
+        search.assert_not_called()
+        self.assertEqual(provider.diagnostics['direct_fetch_ms'], 50)
+        self.assertEqual(provider.diagnostics['fallback_ms'], 0)
+
+    @patch('assistant.online.enrichment.fetch_metadata', side_effect=TimeoutError())
+    @patch.object(SearXNGOnlineRetriever, '_search')
+    def test_fallback_cannot_restart_request_deadline(self, search, fetch):
+        clock = [100.0]
+        def late_search(query, deadline):
+            self.assertEqual(deadline, 100.5)
+            clock[0] = deadline
+            return [source()]
+        search.side_effect = late_search
+        with patch('assistant.online.searxng.time.monotonic', side_effect=lambda: clock[0]):
+            provider = SearXNGOnlineRetriever(base_url='http://127.0.0.1:8888', timeout_seconds=.5, max_results=4)
+            with self.assertRaises(OnlineRetrievalTimeoutError):
+                provider.retrieve(CM)
+        search.assert_called_once()
+        self.assertEqual(provider.diagnostics['fallback_ms'], 500)
+
+    @patch('assistant.online.enrichment.fetch_metadata')
+    @patch.object(SearXNGOnlineRetriever, '_search')
+    def test_direct_conflicting_claims_survive_max_results_one_and_are_not_cached(self, search, fetch):
+        from assistant.online import searxng as s
+        fetch.return_value = (None, None, False, None, '', {'text': source().content+'\nChief Minister of Telangana is Other Person.', 'url': CM_URL})
+        provider = SearXNGOnlineRetriever(base_url='http://127.0.0.1:8888', timeout_seconds=2, max_results=1)
+        self.assertTrue(has_conflicting_claims(provider.retrieve(CM), CM))
+        self.assertFalse(s._CACHE)
+        search.assert_not_called()
+
+    @patch('assistant.online.enrichment.enrich_results')
+    @patch.object(SearXNGOnlineRetriever, '_search')
+    def test_fallback_conflicting_sources_survive_truncation_and_are_not_cached(self, search, enrich):
+        from assistant.online import searxng as s
+        enrich.side_effect = [[source(accessibility='unavailable')],
+                              [verified(), verified(content='Chief Minister of Telangana is Other Person.')]]
+        search.return_value = [source()]
+        provider = SearXNGOnlineRetriever(base_url='http://127.0.0.1:8888', timeout_seconds=2, max_results=1)
+        self.assertEqual(len(provider.retrieve(CM)), 2)
+        self.assertFalse(s._CACHE)
+
+    @patch('assistant.online.enrichment.fetch_metadata')
+    @patch.object(SearXNGOnlineRetriever, '_search')
+    def test_stale_process_snapshot_is_reverified_without_refreshing_on_cache_hit(self, search, fetch):
+        from assistant.online import searxng as s
+        fetch.return_value = (None, None, False, None, '', {'text': source().content, 'url': CM_URL})
+        provider = SearXNGOnlineRetriever(base_url='http://127.0.0.1:8888', timeout_seconds=2, max_results=4)
+        provider.retrieve(CM)
+        key, value = next(iter(s._CACHE.items()))
+        s._CACHE[key] = (value[0], (replace(value[1][0], verified_at=NOW-timedelta(minutes=6)),), value[2])
+        e._CACHE.clear()
+        self.assertEqual(provider.retrieve(CM)[0].verified_at, NOW)
+        self.assertFalse(provider.diagnostics['cache_hit'])
+        self.assertEqual(fetch.call_count, 2)
+        search.assert_not_called()
+
+    @patch('assistant.online.enrichment.fetch_metadata')
+    @patch.object(SearXNGOnlineRetriever, '_search')
+    def test_unsupported_offices_and_historical_queries_do_not_get_direct_adapter(self, search, fetch):
+        for query in ('Who is the Governor of Telangana?', 'Who is the President of India?',
+                      'Who is the Chief Minister of Karnataka?', 'Who was the Chief Minister of Telangana?'):
+            self.assertEqual(known_office_profile(query), '')
+        search.return_value = [source()]
+        provider = SearXNGOnlineRetriever(base_url='http://127.0.0.1:8888', timeout_seconds=2, max_results=4)
+        query = 'Who is the Governor of Telangana?'
+        self.assertEqual(select_current_evidence(provider.retrieve(query), query, NOW), [])
+        self.assertEqual(provider.diagnostics['direct_fetch_ms'], 0)
+        fetch.assert_not_called()
 
     @patch('assistant.online.enrichment.fetch_metadata')
     def test_catalog_body_extension_preserves_existing_release_evidence(self, fetch):
@@ -238,10 +410,13 @@ class CurrentServiceTests(TestCase):
     @patch('assistant.services.get_online_retriever')
     def test_both_transports_verify_persist_and_reuse_without_http_or_expiry_extension(self, provider):
         provider.return_value.retrieve.return_value = [verified()]
-        provider.return_value.diagnostics = {'search_ms': 4, 'enrichment_ms': 5, 'evidence_selection_ms': 1}
+        provider.return_value.diagnostics = {'search_ms': 4, 'enrichment_ms': 5, 'evidence_selection_ms': 1,
+                                             'direct_fetch_ms': 22, 'fallback_ms': 33}
         first = self.ask(CM, False)
         self.assertTrue(first['online_used'])
         self.assertEqual(first['enrichment_ms'], 5)
+        self.assertEqual(first['direct_fetch_ms'], 22)
+        self.assertEqual(first['fallback_ms'], 33)
         doc = Document.objects.get(source_type='ONLINE')
         self.assertEqual(doc.last_synced_at, NOW)
         self.assertEqual(doc.expires_at, NOW+timedelta(minutes=5))
@@ -251,6 +426,8 @@ class CurrentServiceTests(TestCase):
             self.assertFalse(cached['online_attempted'])
             self.assertEqual(cached['online_sources'][0]['verified_at'], NOW.isoformat())
             self.assertEqual(cached['search_ms'], 0)
+            self.assertEqual(cached['direct_fetch_ms'], 0)
+            self.assertEqual(cached['fallback_ms'], 0)
         provider.return_value.retrieve.assert_called_once()
         doc.refresh_from_db()
         self.assertEqual(doc.last_synced_at, NOW)
@@ -263,6 +440,9 @@ class CurrentServiceTests(TestCase):
             metadata = self.ask('Answer offline only: '+CM, stream)
             self.assertEqual(metadata['fallback_reason'], 'offline_verified_cache')
             self.assertFalse(metadata['online_attempted'])
+        answer = AssistantService.process_message('Answer offline only: '+CM)[1]
+        self.assertIn('not a live check', answer)
+        self.assertIn(NOW.isoformat(), answer)
         Document.objects.update(expires_at=NOW-timedelta(seconds=1))
         self.assertEqual(load_verified_current(CM), [])
         for stream in (False, True):

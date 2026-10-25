@@ -30,6 +30,17 @@ def current_topic(query):
     return ''
 
 
+def known_office_profile(query):
+    """Choose only an already scoped current-office adapter; never infer an office."""
+    if current_topic(query) != 'officeholder':
+        return ''
+    for url in ('https://www.telangana.gov.in/government/chief-minister/',
+                'https://www.pmindia.gov.in/en/pms-profile/'):
+        if official_office_page(url, query):
+            return url
+    return ''
+
+
 def official_office_page(url, query):
     """Explicit source/path scope; a government news archive is not a roster."""
     p = urlsplit(url)

@@ -319,6 +319,7 @@ def _prepare_message(
         "sources_access_denied": 0,
         "fresh_evidence_accepted": 0,
         "search_ms": 0, "enrichment_ms": 0, "evidence_selection_ms": 0,
+        "direct_fetch_ms": 0, "fallback_ms": 0,
         "cache_hit": False, "cache_ms": 0,
         "fallback_reason": "online_unavailable" if route_decision.route == QueryRoute.ONLINE else "",
         "generation_ms": 0,
@@ -454,6 +455,7 @@ def _prepare_message(
                 logger.warning('Verified current cache unavailable; trying online retrieval')
                 retrieved_results = []
             stage_ms['cache_ms'] = round((time.perf_counter()-cache_started)*1000)
+            snapshot_cache_ms = stage_ms['cache_ms']
             stage_ms['cache_hit'] = bool(retrieved_results)
             if retrieved_results:
                 stage_ms['online_attempted'] = False
@@ -466,10 +468,10 @@ def _prepare_message(
             diagnostics = getattr(retriever, 'diagnostics', {})
             if isinstance(diagnostics, dict):
                 for key in ('results_retrieved', 'sources_verified', 'sources_unavailable', 'sources_access_denied',
-                            'search_ms', 'enrichment_ms', 'evidence_selection_ms', 'cache_ms'):
+                            'search_ms', 'enrichment_ms', 'evidence_selection_ms', 'cache_ms', 'direct_fetch_ms', 'fallback_ms'):
                     value = diagnostics.get(key)
                     if type(value) is int and value >= 0:
-                        stage_ms[key] = value
+                        stage_ms[key] = value + snapshot_cache_ms if key == 'cache_ms' else value
                 if diagnostics.get('cache_hit') is True:
                     stage_ms['cache_hit'] = True
             request_time = django_timezone.localtime(django_timezone.now())
@@ -499,10 +501,10 @@ def _prepare_message(
         except OnlineRetrievalError as exc:
             diagnostics = getattr(retriever, 'diagnostics', {})
             if isinstance(diagnostics, dict):
-                for key in ('search_ms', 'enrichment_ms', 'evidence_selection_ms', 'cache_ms'):
+                for key in ('search_ms', 'enrichment_ms', 'evidence_selection_ms', 'cache_ms', 'direct_fetch_ms', 'fallback_ms'):
                     value = diagnostics.get(key)
                     if type(value) is int and value >= 0:
-                        stage_ms[key] = value
+                        stage_ms[key] = value + snapshot_cache_ms if key == 'cache_ms' else value
             stage_ms["fallback_reason"] = stage_ms["fallback_reason"] or "online_unavailable"
             online_latency_ms = round((time.perf_counter() - retrieval_started) * 1000)
             logger.warning("Online retrieval failed: %s", exc.__class__.__name__)
@@ -749,6 +751,7 @@ def _log_request_performance(prepared: PreparedAssistantRequest, metadata: dict)
             "provider_reachable", "results_retrieved", "sources_verified", "sources_unavailable",
             "sources_access_denied", "fresh_evidence_accepted",
             "search_ms", "enrichment_ms", "evidence_selection_ms", "cache_ms", "cache_hit",
+            "direct_fetch_ms", "fallback_ms",
             "resource_profile", "effective_model",
             "num_predict", "max_output_tokens", "eval_count", "output_limit_reached",
             "memory_used", "memory_messages", "memory_chars", "memory_ms",
@@ -906,6 +909,7 @@ def _persist_direct_response(
                     "provider_reachable", "results_retrieved", "sources_verified", "sources_unavailable",
                     "sources_access_denied", "fresh_evidence_accepted",
                     "search_ms", "enrichment_ms", "evidence_selection_ms", "cache_ms", "cache_hit",
+                    "direct_fetch_ms", "fallback_ms",
                 )
             }
         },

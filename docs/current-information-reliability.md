@@ -44,8 +44,10 @@ Existing DNS/IP pinning, public-address checks, redirect validation, HTTPS
 downgrade rejection, content-type checks, negative caching and 403/429 backoff stay
 in force. Enrichment retains a shared two-second budget, four attempts, and the
 existing cross-process nonblocking fetch lock. Scoped current queries get up to
-1.25 seconds per fetch inside that budget. Search retains its existing maximum
-eight-second deadline and bounded retries. Discovery uses intent-appropriate
+1.25 seconds per fetch inside that budget. Known supported office profiles are verified before search when no valid snapshot
+is available. Direct and fallback page work share four attempts and a two-second
+fetch budget; discovery also consumes the original total request deadline.
+Search retains its existing maximum eight-second deadline and bounded retries. Discovery uses intent-appropriate
 alternatives; film queries no longer get a software `release notes` suffix.
 
 ## Cache and diagnostics
@@ -67,7 +69,8 @@ expired or unverifiable content is not offered as current. Damaged or unavailabl
 cache storage does not block an eligible online attempt.
 
 Safe response/log diagnostics add `search_ms`, `enrichment_ms`,
-`evidence_selection_ms`, `cache_ms` and `cache_hit` beside existing generation and
+`evidence_selection_ms`, `cache_ms`, `cache_hit`, `direct_fetch_ms` and
+`fallback_ms` beside existing generation and
 total/request timings. A cache hit records no new search/enrichment time; a SQLite
 hit does not claim a new online attempt or fresh provider connectivity. Logs do
 not add query text, article text, credentials or conversation content.
@@ -80,7 +83,7 @@ classification, conflicts, expiry, altered cached files, cache failures, request
 bounds and both assistant transports. Existing retrieval, SSRF/redirect, provider,
 streaming and resource-policy regression tests also run. Tests use synthetic
 documents and temporary/in-memory storage, not production knowledge.
-The final clean-export run passed 286 affected tests. Django checks passed under
+The direct-verification clean-export run passed 302 affected tests. Django checks passed under
 normal and test settings, and Git whitespace checks passed. Unrelated local
 working-tree edits were excluded from that clean-export validation.
 
@@ -93,12 +96,5 @@ changed markup, pages over the response cap, slow sources and missing publicatio
 metadata can still require abstention. The strict office adapter list and exact
 query cache matching intentionally favor correctness over coverage.
 
-Deploy only this reviewed commit by cherry-picking onto Pi baseline
-`bb6c0957736ed1852215bcf590539702f1b1e548`, with tracked changes clean. Untracked
-knowledge is allowed. Fetch the fix branch, verify the full SHA, cherry-pick only
-that SHA, run affected tests with `--settings=config.test_settings` and Django
-checks. On conflicts stop and use `git cherry-pick --abort`; never reset, clean or
-stash deployment work. There are no environment, model, token-limit, database
-migration or service configuration changes. Long-lived services adopt code on
-their next normal reload; this procedure does not restart them. Record the Pi's
-cherry-picked commit and roll back with `git revert <recorded-Pi-commit>`.
+For the direct-verification change and the current Pi baseline, follow
+[the focused deployment procedure](officeholder-direct-verification.md).

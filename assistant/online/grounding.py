@@ -34,7 +34,13 @@ def has_conflicting_claims(results, query):
         patterns.append(r"(?i:\b(?:price|cost)\s*(?:is|:)?\s*)([$€£]\s*\d[\d,.]*)")
     if re.search(r"\bscore\b", query, re.I):
         patterns.append(r"(?i:\bscore\s*(?:is|:)\s*)(\d+\s*[-:]\s*\d+)")
-    return any(len({re.sub(r"\s+", "", match).casefold() for result in results for match in re.findall(pattern, result.content)}) > 1 for pattern in patterns)
+    # Extraction joins claim sentences. A greedy name match must not consume
+    # the start of the next office label and conceal an internal disagreement.
+    claims = [piece for result in results for piece in (
+        re.split(r'(?<=[.!?])\s+|\n+', result.content)
+        if evidence_category(query) == 'officeholder' else [result.content])]
+    return any(len({re.sub(r"\s+", "", match).casefold() for claim in claims
+                    for match in re.findall(pattern, claim)}) > 1 for pattern in patterns)
 
 
 def select_current_evidence(results, query, request_time):
