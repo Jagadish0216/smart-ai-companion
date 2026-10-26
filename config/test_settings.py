@@ -11,6 +11,9 @@ TTS_ENGINE = 'mock'
 COMPANION_DISPLAY_ENABLED = False
 RAG_ENABLED = False
 ONLINE_RETRIEVAL_ENABLED = False
+# Legacy model/resource fixtures deliberately exercise generation without a
+# corpus. Integrated knowledge acceptance overrides this to the production True.
+KNOWLEDGE_REQUIRE_EVIDENCE = False
 # Preserve the established sync default; retrieval is disabled above and tests
 # that opt in to persistence own their mocked/temporary storage.
 ONLINE_KNOWLEDGE_AUTO_PERSIST = True

@@ -165,7 +165,7 @@ class ChatAPIView(APIView):
 
         conversation_id = serializer.validated_data.get('conversation_id')
 
-        conversation, ai_text, metadata, error = AssistantService.process_message(query, conversation_id)
+        conversation, ai_text, metadata, error = AssistantService.process_message(query, conversation_id, **{k: serializer.validated_data[k] for k in ("knowledge_mode", "document_ids") if k in serializer.validated_data})
 
         if error == "Conversation not found.":
             return Response(
@@ -197,8 +197,8 @@ def _conversation_display_fields(conversation):
     }
 
 
-def _ndjson_stream(query, conversation_id):
-    for event in AssistantService.process_message_stream(query, conversation_id):
+def _ndjson_stream(query, conversation_id, **knowledge_options):
+    for event in AssistantService.process_message_stream(query, conversation_id, **knowledge_options):
         protocol_fields = {
             "type", "text", "response", "error", "detail", "partial",
             "conversation_id", "direct",
@@ -251,6 +251,7 @@ class ChatStreamAPIView(APIView):
             _ndjson_stream(
                 query,
                 serializer.validated_data.get("conversation_id"),
+                **{k: serializer.validated_data[k] for k in ("knowledge_mode", "document_ids") if k in serializer.validated_data},
             ),
             content_type="application/x-ndjson",
         )

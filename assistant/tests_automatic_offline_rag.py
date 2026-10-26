@@ -6,7 +6,7 @@ from assistant.test_support import install_resource_report
 from knowledge_base.models import Document, KnowledgeChunk
 
 
-@override_settings(AI_ENGINE='local', RAG_ENABLED=True, RAG_TOP_K=2,
+@override_settings(KNOWLEDGE_MODE='offline_only', AI_ENGINE='local', RAG_ENABLED=True, RAG_TOP_K=2,
                    RAG_MIN_RELEVANCE=.5, RAG_MAX_CONTEXT_CHARS=1200,
                    ONLINE_RETRIEVAL_ENABLED=True, ONLINE_KNOWLEDGE_AUTO_PERSIST=False)
 class AutomaticOfflineTests(TestCase):
@@ -53,7 +53,8 @@ class AutomaticOfflineTests(TestCase):
         metadata = self.ask('What processor does Raspberry Pi 5 use?')
         self.assertEqual(metadata['route'],'local')
         self.assertFalse(metadata['rag_used'])
-        self.assertNotIn('GPIO 22', self.engine.generate.call_args.kwargs['system_instruction'])
+        self.engine.generate.assert_not_called()
+        self.assertIn('not contain enough source evidence', self.last_response)
 
     def test_exact_fact_cards_skip_model_in_both_paths(self):
         self.add('Raspberry Pi 5 CPU: BCM2712')
@@ -98,8 +99,8 @@ class AutomaticOfflineTests(TestCase):
             self.assertEqual(self.ask(query)['route'],'local')
         retriever.assert_not_called()
 
-    def test_offline_current_request_still_abstains(self):
+    def test_offline_current_request_quotes_local_source_without_live_claim(self):
         self.add('Raspberry Pi latest news: an old announcement.')
         metadata=self.ask('Answer offline only: latest Raspberry Pi news?')
-        self.assertEqual(metadata['fallback_reason'],'offline_requested')
+        self.assertEqual(metadata['fallback_reason'],'offline_local_knowledge')
         self.engine.generate.assert_not_called()

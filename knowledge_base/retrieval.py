@@ -39,12 +39,14 @@ class RetrievedChunk:
     chunk_index: int
     content: str
     score: float
+    page_number: int | None = None
     last_synced_at: object = None
     expires_at: object = None
 
     def source_metadata(self) -> dict:
         return {
             "document_id": self.document_id,
+            "page_number": self.page_number,
             "source_identifier": self.source_identifier,
             "title": self.title,
             "chunk_index": self.chunk_index,
@@ -69,6 +71,10 @@ class KnowledgeRetriever(ABC):
 
 class LexicalRetriever(KnowledgeRetriever):
     """Term-coverage retrieval with no model or external service dependency."""
+
+    def __init__(self, *, document_ids=None, manual_only=False):
+        self.document_ids = document_ids
+        self.manual_only = manual_only
 
     @latency.span("rag")
     def retrieve(
@@ -96,21 +102,26 @@ class LexicalRetriever(KnowledgeRetriever):
         for term in sorted(query_counts):
             candidate_filter |= Q(content__icontains=term)
 
+        scope = Q()
+        if self.document_ids is not None:
+            scope &= Q(document_id__in=self.document_ids) if self.document_ids else Q(document__source_type="MANUAL")
+        if self.manual_only:
+            scope &= Q(document__source_type="MANUAL")
         candidates = (
             KnowledgeChunk.objects
             .filter(document__status="INDEXED")
             .filter(usable_knowledge_filter())
-            .filter(candidate_filter)
+            .filter(candidate_filter).filter(scope)
             .order_by("document_id", "chunk_index")
             # Scoring needs six scalars, not two model instances and every
             # document metadata column for each candidate. Keep filtering and
             # ordering in SQL; do not cap candidates or change relevance.
             .values_list("id", "document_id", "document__source_identifier",
-                         "document__filename", "chunk_index", "content")
+                         "document__filename", "chunk_index", "content", "page_number")
         )
 
         best: list[tuple[float, int, int, int, RetrievedChunk]] = []
-        for chunk_id, document_id, source_identifier, title, chunk_index, content in candidates.iterator(chunk_size=200):
+        for chunk_id, document_id, source_identifier, title, chunk_index, content, page_number in candidates.iterator(chunk_size=200):
             content_counts = Counter(_tokenize(content))
             if not _has_sufficient_distinct_matches(query_counts, content_counts):
                 continue
@@ -125,6 +136,7 @@ class LexicalRetriever(KnowledgeRetriever):
                 chunk_index=chunk_index,
                 content=content,
                 score=round(score, 4),
+                page_number=page_number,
             )
             rank = (
                 result.score,

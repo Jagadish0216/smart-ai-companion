@@ -173,6 +173,13 @@ class OnlineKnowledgeSyncService:
             storage = Document._meta.get_field('file').storage
             try:
                 with transaction.atomic():
+                    from django.db.models import Sum
+                    from django.db.models.functions import Length
+                    from .models import EvidenceVersion
+                    size = EvidenceVersion.objects.aggregate(size=Sum(Length('content')))['size'] or 0
+                    limit = max(1024, min(1024**3, int(getattr(settings, 'KNOWLEDGE_ARCHIVE_MAX_BYTES', 128*1024**2))))
+                    if size + len(result.content.encode('utf-8')) > limit:
+                        raise ValueError('Evidence archive capacity reached; retained evidence is not deleted.')
                     document = Document.objects.select_for_update().filter(**lookup).first()
                     created = document is None
                     if created:
@@ -197,6 +204,8 @@ class OnlineKnowledgeSyncService:
                     document.sync_error_message = ''
                     document.save(update_fields=('source_title', 'sync_query', 'retrieved_at', 'last_synced_at',
                                                  'expires_at', 'content_hash', 'sync_error_message'))
+                    from .archive import record_evidence
+                    record_evidence(document, query, result)
                 return 'created' if created else 'updated' if changed else 'unchanged'
             except BaseException as exc:
                 if new_name:
@@ -347,8 +356,6 @@ def load_verified_current(query):
     from assistant.online.evidence_policy import evidence_category
     from assistant.online.dates import parse_publication_date
     from assistant.online.grounding import select_current_evidence, has_conflicting_claims
-    if evidence_category(query) == 'technical':
-        return []
     documents = Document.objects.filter(source_type='ONLINE', status='INDEXED',
         sync_query=normalized_query(query), expires_at__gt=timezone.now()).order_by('-last_synced_at')[:4]
     values = []
@@ -382,5 +389,8 @@ def load_verified_current(query):
                 publication_source=data.get('publication_source', ''), accessibility='available'))
         except (OSError, ValueError, TypeError, AttributeError, StopIteration):
             continue
+    if not values and not documents:
+        from .archive import fresh_variations
+        values = fresh_variations(query)
     accepted = select_current_evidence(values, query, timezone.now())
     return [] if has_conflicting_claims(accepted, query) else accepted

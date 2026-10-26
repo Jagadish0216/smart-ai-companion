@@ -328,3 +328,9 @@ VOICE_TTS_MAX_TOTAL_CHARS = os.environ.get('VOICE_TTS_MAX_TOTAL_CHARS', '0')
 VOICE_LLM_BRIEF_NUM_PREDICT = os.environ.get('VOICE_LLM_BRIEF_NUM_PREDICT', '32')
 VOICE_LLM_NORMAL_NUM_PREDICT = os.environ.get('VOICE_LLM_NORMAL_NUM_PREDICT', '64')
 VOICE_LLM_DETAILED_NUM_PREDICT = os.environ.get('VOICE_LLM_DETAILED_NUM_PREDICT', '192')
+
+# Shared chat and voice knowledge policy; TTL is never an archive deletion policy.
+KNOWLEDGE_MODE = os.environ.get('KNOWLEDGE_MODE', 'online_preferred')
+KNOWLEDGE_REQUIRE_EVIDENCE = True
+KNOWLEDGE_REFRESH_SECONDS = int(os.environ.get('KNOWLEDGE_REFRESH_SECONDS', '3600'))
+KNOWLEDGE_ARCHIVE_MAX_BYTES = int(os.environ.get('KNOWLEDGE_ARCHIVE_MAX_BYTES', str(128 * 1024 * 1024)))

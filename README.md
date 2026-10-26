@@ -1237,3 +1237,10 @@ Ask the same distinct standalone questions, an actual supported device action, a
 Use the [physical push-to-talk and protected demo hotspot procedure](docs/final-review-demo.md)
 for the final review. It reuses the existing deployment and keeps optional wake
 models and experimental acoustic interruption out of the primary boot path.
+
+
+## Integrated online/offline knowledge release
+
+See [the knowledge release guide](docs/complete-knowledge-system.md) for modes,
+versioned evidence retention, document-scoped chat, licensed reference bootstrap,
+bounded refresh, deployment, rollback and explicit coverage/runtime limitations.

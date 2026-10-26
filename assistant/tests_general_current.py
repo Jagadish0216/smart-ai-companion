@@ -315,13 +315,15 @@ class GeneralServiceTests(TestCase):
         self.engine.generate.assert_not_called(); self.engine.generate_stream.assert_not_called()
 
     @patch('assistant.services.get_online_retriever')
-    def test_cache_expiry_miss_reverifies_and_expired_offline_abstains(self, retriever):
+    def test_cache_expiry_miss_reverifies_and_expired_offline_remains_historical(self, retriever):
         OnlineKnowledgeSyncService().persist_results(QUESTION, [result()])
         Document.objects.update(expires_at=NOW-timedelta(seconds=1))
+        from knowledge_base.models import EvidenceVersion
+        EvidenceVersion.objects.update(expires_at=NOW-timedelta(seconds=1))
         retriever.return_value.retrieve.return_value = [result()]
         retriever.return_value.diagnostics = {}
         for stream in (False, True):
-            self.assertEqual(self.ask('Answer offline only: '+QUESTION, stream)['fallback_reason'], 'offline_requested')
+            self.assertEqual(self.ask('Answer offline only: '+QUESTION, stream)['fallback_reason'], 'offline_historical')
         retriever.assert_not_called()
         self.assertTrue(self.ask(QUESTION, False)['online_attempted'])
 

@@ -346,7 +346,9 @@ def enrich_results(results, query, deadline, target=4, attempt_budget=None, diag
     from .facts import factual_question
     from .current_sources import current_topic, official_office_page, page_evidence, classify_claims
     topic = current_topic(query)
-    needs_fact_body = bool(factual_question(query))
+    from knowledge_base.pipeline import factual_query
+    from assistant.routing import QueryRouter
+    needs_fact_body = bool(factual_question(query) or (factual_query(query) and not QueryRouter.requires_online(query, respect_offline=False)))
     deadline = min(deadline, time.monotonic() + 2.0)
     terms = query_terms(query)
     enriched = list(results)

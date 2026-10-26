@@ -331,5 +331,5 @@ class ExplicitRagIntegrationTests(VoiceContextTests):
             self.engine.generate_stream.assert_called_once()
             self.engine.reset_mock()
             generic = self.request("What is edge computing?")
-            self.assertEqual(generic["route"], "local")
-            self.assertFalse(generic["rag_used"])
+            self.assertEqual(generic["route"], "local_rag")
+            self.assertTrue(generic["rag_used"])

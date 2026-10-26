@@ -43,6 +43,9 @@ def document_payload(document):
         "expires_at": document.expires_at.isoformat() if document.expires_at else None,
         "freshness": document.freshness,
         "sync_error_message": document.sync_error_message,
+        "evidence": [{"id": v.pk, "state": v.freshness, "verified_at": v.verified_at,
+                      "published_at": v.published_at, "last_used_at": v.last_used_at}
+                     for v in document.evidence_versions.order_by('-retrieved_at')[:10]],
     }
 
 
@@ -70,6 +73,7 @@ class DocumentsAPIView(APIView):
         response = Response({"documents": [document_payload(document) for document in documents]})
         response["Cache-Control"] = "no-store"
         return response
+
 
     def post(self, request):
         upload = request.FILES.get("file")
@@ -162,3 +166,25 @@ class DeleteDocumentAPIView(APIView):
         return Response(status=204)
 
 # Create your views here.
+
+
+class LibraryAPIView(APIView):
+    authentication_classes = [SessionAuthentication]
+
+    def get_permissions(self):
+        return [AllowAny()] if self.request.method == 'GET' else [IsAdminUser()]
+
+    def get(self, request):
+        from .library import library_status
+        from system.models import SystemSetting
+        data = library_status()
+        data['refresh'] = dict(SystemSetting.objects.filter(key__in=['knowledge_next_refresh', 'knowledge_last_success', 'knowledge_refresh_status']).values_list('key', 'value'))
+        return Response(data)
+
+    def post(self, request):
+        from .library import initialize_library
+        try:
+            data = initialize_library()
+            return Response(data, status=503 if data['failed'] else 200)
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=503)

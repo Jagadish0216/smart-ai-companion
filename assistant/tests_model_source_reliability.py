@@ -44,7 +44,8 @@ class DiscoveryTests(SimpleTestCase):
         results = self.retriever.retrieve(query)
         self.assertTrue(select_current_evidence(results, query, datetime.now(timezone.utc)))
         self.assertEqual(search.call_count, 2)
-        self.assertIn('site:raspberrypi.com/news/', search.call_args.args[0])
+        self.assertIn('Raspberry Pi OS', search.call_args.args[0])
+        self.assertIn('release notes', search.call_args.args[0])
         self.assertEqual(search.call_args_list[0].args[1], search.call_args_list[1].args[1])
         self.assertEqual(self.retriever.diagnostics['results_retrieved'], 2)
         self.assertEqual(self.retriever.diagnostics['fresh_evidence_accepted'], 1)
@@ -140,6 +141,7 @@ class EvidenceMetadataTests(TestCase):
                     self.assertEqual(metadata['sources_access_denied'], 1)
 
     @patch('assistant.services.get_engine')
+    @override_settings(ONLINE_RETRIEVAL_ENABLED=False)
     def test_pi_spec_reference_in_both_offline_paths(self, engine):
         answer=AIEngineResult(text='The Raspberry Pi 5 uses a BCM2712.',engine='local')
         engine.return_value.generate.return_value=answer

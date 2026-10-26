@@ -298,14 +298,14 @@ class GenerationInstructionOrderingTests(TestCase):
             self.assertEqual(warm_system, VOICE_SAFETY_INSTRUCTION)
             online_retriever.return_value.retrieve.return_value = [online]
             for query, chunks, route in (
-                ("Explain general computing.", [], "local"),
+                ("Hello.", [], "local"),
                 ("What does our knowledge base say about local computing?", [rag], "local_rag"),
                 ("Search the web for today's news.", [], "online"),
             ):
                 with self.subTest(route=route):
                     retriever.return_value.retrieve.return_value = chunks
                     conversation, _, metadata, error = AssistantService.process_message(
-                        query, response_plan=AssistantResponsePolicy.plan_voice_response(query))
+                        query, knowledge_mode="offline_only" if route == "local" else None, response_plan=AssistantResponsePolicy.plan_voice_response(query))
                     self.assertIsNone(error)
                     self.assertEqual(metadata["route"], route)
                     messages = chat.call_args.args[0]

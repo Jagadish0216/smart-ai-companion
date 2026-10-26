@@ -1,0 +1,17 @@
+[Unit]
+Description=Bounded incremental Smart AI Companion knowledge refresh
+After=network.target
+
+[Service]
+Type=oneshot
+User=@USER@
+WorkingDirectory=@ROOT@
+EnvironmentFile=-@ROOT@/.env
+ExecStart=/usr/bin/flock -n @ROOT@/.knowledge-maintenance.lock @ROOT@/venv/bin/python manage.py refresh_knowledge
+TimeoutStartSec=90
+Nice=15
+CPUQuota=25%
+MemoryMax=256M
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true

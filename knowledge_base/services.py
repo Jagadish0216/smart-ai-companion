@@ -72,7 +72,7 @@ def extract_document_text(file_bytes: bytes, suffix: str) -> str:
                 raise KnowledgeIngestionError("PDFs must contain at most 200 pages.")
             pages = []
             text_chars = 0
-            for page in reader.pages:
+            for page_number, page in enumerate(reader.pages, 1):
                 stream = page.get_contents()
                 if stream is not None and len(stream.get_data()) > 2 * 1024 * 1024:
                     raise KnowledgeIngestionError("This PDF page is too complex to extract safely.")
@@ -80,13 +80,13 @@ def extract_document_text(file_bytes: bytes, suffix: str) -> str:
                 text_chars += len(content)
                 if text_chars > 2_000_000:
                     raise KnowledgeIngestionError("Extracted PDF text is too large.")
-                pages.append(content)
+                pages.append(f"\fPAGE {page_number}\n{content}")
             text = "\n\n".join(pages)
         except KnowledgeIngestionError:
             raise
         except Exception as exc:
             raise KnowledgeIngestionError("The PDF is malformed or could not be read.") from exc
-        if not text.strip():
+        if not text_chars or not re.sub(r"\fPAGE \d+", "", text).strip():
             raise KnowledgeIngestionError(
                 "This PDF has no extractable text. Scanned PDFs need OCR, which is not supported."
             )
@@ -251,6 +251,13 @@ class KnowledgeIngestionService:
         if not chunks:
             raise KnowledgeIngestionError("Knowledge source contains no indexable text.")
 
+        page_numbers = [None] * len(chunks)
+        if document.file_type == 'application/pdf' and '\fPAGE ' in text:
+            chunks, page_numbers = [], []
+            for number, content in re.findall(r'\fPAGE (\d+)\n(.*?)(?=\fPAGE |\Z)', text, re.S):
+                pieces = chunk_text(content, self.chunk_chars, self.overlap_chars)
+                chunks.extend(pieces)
+                page_numbers.extend([int(number)] * len(pieces))
         with transaction.atomic():
             Document.objects.select_for_update().get(pk=document.pk)
             document.chunks.all().delete()
@@ -258,6 +265,7 @@ class KnowledgeIngestionService:
                 KnowledgeChunk(
                     document=document,
                     chunk_index=index,
+                    page_number=page_numbers[index],
                     content=content,
                 )
                 for index, content in enumerate(chunks)
@@ -310,7 +318,7 @@ def build_rag_instruction(results: list[RetrievedChunk], *, concise: bool = True
     blocks = []
     for position, result in enumerate(select_rag_context(results), start=1):
         blocks.append(
-            f"[Local source {position}]\n"
+            f"[Local source {position}] {result.title}; page {result.page_number or 'unknown'}\n"
             f"{result.content}"
         )
 
@@ -334,7 +342,7 @@ def build_rag_instruction(results: list[RetrievedChunk], *, concise: bool = True
         + ("Direct factual answers: only the needed fact in one concise sentence; "
            "no unnecessary nearby facts. " if concise else "")
         + "If insufficient, say local knowledge does not contain enough information. "
-        "Hide retrieval/chunks/filenames unless asked.\n\n"
+        "Cite source/page.\n\n"
         + "\n\n".join(blocks)
     )
 

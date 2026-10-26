@@ -434,7 +434,7 @@ class CurrentServiceTests(TestCase):
         self.assertEqual(doc.expires_at, NOW+timedelta(minutes=5))
 
     @patch('assistant.services.get_online_retriever')
-    def test_offline_cache_is_dated_and_expired_cache_abstains_without_network(self, provider):
+    def test_offline_cache_is_dated_and_expired_cache_remains_historical_without_network(self, provider):
         OnlineKnowledgeSyncService().persist_results(CM, [verified()])
         for stream in (False, True):
             metadata = self.ask('Answer offline only: '+CM, stream)
@@ -444,9 +444,11 @@ class CurrentServiceTests(TestCase):
         self.assertIn('not a live check', answer)
         self.assertIn(NOW.isoformat(), answer)
         Document.objects.update(expires_at=NOW-timedelta(seconds=1))
+        from knowledge_base.models import EvidenceVersion
+        EvidenceVersion.objects.update(expires_at=NOW-timedelta(seconds=1))
         self.assertEqual(load_verified_current(CM), [])
         for stream in (False, True):
-            self.assertEqual(self.ask('Answer offline only: '+CM, stream)['fallback_reason'], 'offline_requested')
+            self.assertEqual(self.ask('Answer offline only: '+CM, stream)['fallback_reason'], 'offline_historical')
         provider.assert_not_called()
         self.engine.generate.assert_not_called()
         self.engine.generate_stream.assert_not_called()

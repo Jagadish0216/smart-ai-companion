@@ -68,6 +68,7 @@ class KnowledgeChunk(models.Model):
     )
     chunk_index = models.PositiveIntegerField()
     content = models.TextField()
+    page_number = models.PositiveIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -81,3 +82,47 @@ class KnowledgeChunk(models.Model):
 
     def __str__(self):
         return f"{self.document.filename} [{self.chunk_index}]"
+
+
+class EvidenceVersion(models.Model):
+    """Immutable source text/provenance; freshness never controls retention."""
+    document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name='evidence_versions')
+    content = models.TextField()
+    content_hash = models.CharField(max_length=64)
+    retrieved_at = models.DateTimeField()
+    verified_at = models.DateTimeField(null=True)
+    published_at = models.DateTimeField(null=True)
+    expires_at = models.DateTimeField(null=True)
+    metadata = models.JSONField(default=dict)
+    state = models.CharField(max_length=24, default='UNVERIFIED', db_index=True)
+    last_used_at = models.DateTimeField(null=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=('document', 'content_hash', 'retrieved_at'), name='unique_evidence_observation')]
+
+    @property
+    def freshness(self):
+        if self.state != 'VERIFIED':
+            return self.state
+        return 'FRESH' if self.expires_at and self.expires_at > timezone.now() else 'HISTORICAL'
+
+
+class EvidenceQuery(models.Model):
+    evidence = models.ForeignKey(EvidenceVersion, on_delete=models.CASCADE, related_name='queries')
+    query = models.CharField(max_length=600, db_index=True)
+    conversation = models.ForeignKey('conversations.Conversation', null=True, on_delete=models.SET_NULL)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=('evidence', 'query'), name='unique_evidence_query')]
+
+
+class LibrarySource(models.Model):
+    key = models.CharField(max_length=120, unique=True)
+    manifest_version = models.CharField(max_length=40)
+    document = models.ForeignKey(Document, null=True, on_delete=models.SET_NULL)
+    metadata = models.JSONField(default=dict)
+    status = models.CharField(max_length=24, default='PENDING')
+    last_attempt_at = models.DateTimeField(null=True)
+    last_success_at = models.DateTimeField(null=True)
+    next_refresh_at = models.DateTimeField(null=True)
+    error = models.CharField(max_length=255, blank=True)

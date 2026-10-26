@@ -22,6 +22,20 @@
 </div>
 </div>
 <div class="memory-summary"><span><b id="knowledge-total">{{ documents|length }}</b> files</span><span><b id="knowledge-indexed">{{ indexed_count }}</b> ready</span><span><b id="knowledge-pending">{{ pending_count }}</b> queued</span></div>
+<section class="card" style="padding:16px;margin-bottom:16px" aria-label="Knowledge questions">
+    <h3>Ask your knowledge library</h3>
+    <label for="knowledge-mode">Evidence preference</label>
+    <select id="knowledge-mode"><option value="online_preferred">Online Preferred</option><option value="offline_only">Offline Only</option><option value="online_only">Online Only</option></select>
+    <label for="knowledge-scope">Sources</label>
+    <select id="knowledge-scope"><option value="">Automatic sources</option><option value="all">All local documents only</option></select>
+    <form id="knowledge-question-form" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+        <input id="knowledge-question" aria-label="Question" placeholder="Ask about your sources" maxlength="1000" required style="flex:1;min-width:180px">
+        <button class="btn btn-primary" type="submit">Ask</button>
+    </form>
+    <div id="knowledge-answer" role="status" aria-live="polite" style="white-space:pre-wrap;margin-top:12px"></div>
+    <p id="knowledge-library-status"></p>
+    {% if request.user.is_staff %}<button id="knowledge-bootstrap" class="btn">Initialize / verify reference library</button>{% endif %}
+</section>
 <div class="memory-layout"><section class="memory-list" aria-label="Documents">
 <input id="memory-search" class="memory-search" type="search" placeholder="Search your library" aria-label="Search your library">
 <div class="memory-filters"><button data-filter="ALL" aria-pressed="true">All files</button><button data-filter="INDEXED" aria-pressed="false">Ready</button><button data-filter="ERROR" aria-pressed="false">Needs attention</button><button id="knowledge-refresh">Refresh</button></div>
@@ -29,4 +43,5 @@
 </section><aside id="memory-detail" class="memory-detail" aria-label="Selected file"><p class="eyebrow">Selected file</p><h3>Your local library.</h3><p>Select a file to see its status, indexing details and available actions.</p><p>PDFs need an existing text layer. Scanned PDFs and OCR are not supported.</p></aside></div>
 <details class="home-system"><summary>How files become memory</summary><p>Text Extraction → Chunking → Lexical Retrieval → Local AI Grounding</p><p>Only supported text files and PDFs with a text layer can be indexed.</p></details>
 <script src="{% static 'js/knowledge.js' %}"></script>
+<script src="{% static 'js/knowledge-chat.js' %}"></script>
 {% endblock %}

@@ -620,7 +620,7 @@ class OnlineServiceTests(TestCase):
         get_engine.return_value = self.make_engine("Recursion is self-reference.")
 
         _conversation, _text, metadata, error_message = AssistantService.process_message(
-            "What is recursion?"
+            "What is recursion?", knowledge_mode="offline_only"
         )
 
         self.assertIsNone(error_message)
@@ -654,7 +654,7 @@ class OnlineServiceTests(TestCase):
         get_engine.return_value = self.make_engine("Edge processing stays local.")
 
         _conversation, _text, metadata, error_message = AssistantService.process_message(
-            "Explain edge computing."
+            "Explain edge computing.", knowledge_mode="offline_only"
         )
 
         self.assertIsNone(error_message)

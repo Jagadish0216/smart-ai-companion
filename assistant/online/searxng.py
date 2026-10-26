@@ -72,7 +72,7 @@ def freshness_seconds(query):
 
 def query_terms(query):
     from .intent import normalized_words
-    stop = set("what whats s who is are the a an of in on at to for me tell please latest current currently today now recent version release news weather price score status and how much does it cost search browse look up web internet online this".split())
+    stop = set("which where when why what whats s who is are the a an of in on at to for me tell please latest current currently today now recent version release news weather price score status and how much does it cost search browse look up web internet online this".split())
     stop.update('january february march april may june july august september october november december'.split())
     stop.update('actor actress movie movies film films working project projects upcoming next releases updates week month year'.split())
     stop.update('can could would did you about give show list happened happening doing any some new recently released releasing announce announced announces announcement development affairs cinema entertainment production scheduled schedule when will was has been with from by'.split())

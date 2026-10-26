@@ -81,6 +81,8 @@ class AssistantService:
         system_instruction: str | None = None,
         num_predict: int | None = None,
         response_plan: ResponsePlan | None = None,
+        knowledge_mode: str | None = None,
+        document_ids: list[int] | None = None,
     ) -> tuple:
         """
         Process a user message: persist it, run AI inference, persist the
@@ -104,6 +106,7 @@ class AssistantService:
             system_instruction=system_instruction,
             num_predict=num_predict,
             response_plan=response_plan,
+            knowledge_mode=knowledge_mode, document_ids=document_ids,
         )
         if isinstance(prepared, tuple):
             return prepared
@@ -129,6 +132,8 @@ class AssistantService:
         system_instruction: str | None = None,
         num_predict: int | None = None,
         response_plan: ResponsePlan | None = None,
+        knowledge_mode: str | None = None,
+        document_ids: list[int] | None = None,
     ):
         """Yield transport-neutral start/delta/done/error dictionaries."""
         prepared = _prepare_message(
@@ -137,6 +142,7 @@ class AssistantService:
             system_instruction=system_instruction,
             num_predict=num_predict,
             response_plan=response_plan,
+            knowledge_mode=knowledge_mode, document_ids=document_ids,
         )
         if isinstance(prepared, tuple):
             conversation, text, metadata, error = prepared
@@ -239,6 +245,8 @@ def _prepare_message(
     system_instruction: str | None,
     num_predict: int | None,
     response_plan: ResponsePlan | None,
+    knowledge_mode: str | None = None,
+    document_ids: list[int] | None = None,
 ) -> PreparedAssistantRequest | tuple:
     execution_started = time.perf_counter()
     latency.mark("conversation_prepare_start")
@@ -299,6 +307,10 @@ def _prepare_message(
         ),
         allow_implicit_rag=True,
     )
+    from knowledge_base.pipeline import resolve_knowledge_route, resolve_mode, factual_query
+    knowledge_mode = resolve_mode(query, knowledge_mode)
+    route_decision = resolve_knowledge_route(query, route_decision, registry,
+                                             knowledge_mode, document_ids)
     latency.mark("route", route=route_decision.route.value)
     routing_ms = round((time.perf_counter() - routing_started) * 1000)
     stage_ms = {
@@ -333,32 +345,40 @@ def _prepare_message(
         registry,
         planned_response=(response_plan.direct_response if response_plan else None),
     )
-    if (route_decision.route in (QueryRoute.LOCAL, QueryRoute.LOCAL_RAG)
-            and not QueryRouter.requires_online(query)
-            and QueryRouter.requires_online(query, respect_offline=False)):
-        stage_ms["fallback_reason"] = "offline_requested"
-        direct_response = (
-            "This is an offline request. My local knowledge may be outdated, "
-            "so I can't verify current facts, scores or prices without online evidence."
-        )
-        # An explicit offline request may quote unexpired, previously verified
-        # evidence, with its actual verification time. It never triggers HTTP.
-        cache_started = time.perf_counter()
-        offline_query = re.sub(r'^(?:answer offline(?: only)?|offline only)\s*[:,-]?\s*', '', query, flags=re.I)
-        try:
-            cached = load_verified_current(offline_query)
-        except Exception:
-            cached = []
-        stage_ms['cache_ms'] = round((time.perf_counter()-cache_started)*1000)
-        if cached:
-            cached = cached[:1]
-            stage_ms.update(cache_hit=True, fallback_reason='offline_verified_cache')
-            return _persist_direct_response(conversation,
-                'Cached source evidence (not a live check):\n' + '\n'.join(
-                    f'Last verified {r.verified_at.isoformat()}: {r.content}' for r in cached),
-                route_decision, engine='lexical', execution_plan=execution_plan,
-                execution_started=execution_started, stage_ms=stage_ms,
-                metadata_updates={'online_sources': [r.source_metadata() for r in cached]})
+    if document_ids is not None and not route_decision.rag_results:
+        direct_response = 'The selected documents do not contain enough supporting information to answer.'
+    def saved_fallback():
+        if knowledge_mode == 'online_only' or document_ids is not None:
+            return None
+        from knowledge_base.pipeline import offline_answer
+        from knowledge_base.archive import historical_answer
+        saved = (historical_answer(query, conversation=conversation) if route_decision.route == QueryRoute.LOCAL_RAG else offline_answer(query, conversation=conversation))
+        if saved:
+            text, sources = saved
+            stage_ms['fallback_reason'] = 'offline_historical' if any(s.get('freshness') in {'HISTORICAL', 'SUPERSEDED'} for s in sources) else 'offline_verified_cache' if any(s.get('verified_at') for s in sources) else 'offline_local_knowledge'
+            return _persist_direct_response(conversation, text, route_decision, engine='lexical',
+                execution_plan=execution_plan, execution_started=execution_started, stage_ms=stage_ms,
+                metadata_updates={'rag_used': True, 'rag_sources': sources, 'mode': 'offline'})
+        return None
+
+    if document_ids is None and factual_query(query) and (knowledge_mode == 'offline_only' or re.search(r'\b(?:checked yesterday|when I checked|previously researched)\b', query, re.I)):
+        saved = saved_fallback()
+        if saved:
+            return saved
+        if not route_decision.rag_results or QueryRouter.requires_online(query, respect_offline=False):
+            stage_ms['fallback_reason'] = 'offline_requested'
+            direct_response = 'This is an offline request. Local knowledge may be outdated and does not contain enough source evidence to answer. I have not checked online.'
+    if direct_response and route_decision.route == QueryRoute.ONLINE:
+        saved = saved_fallback()
+        if saved:
+            return saved
+    if (getattr(settings, 'KNOWLEDGE_REQUIRE_EVIDENCE', True)
+            and route_decision.route == QueryRoute.LOCAL and factual_query(query)
+            and not requests_local_knowledge(query) and not direct_response):
+        saved = saved_fallback()
+        if saved:
+            return saved
+        direct_response = 'I do not have enough source evidence to answer reliably. Online evidence is unavailable, and local knowledge does not support this question.'
     if direct_response and route_decision.route == QueryRoute.ONLINE:
         cache_started = time.perf_counter()
         try:
@@ -477,6 +497,9 @@ def _prepare_message(
             request_time = django_timezone.localtime(django_timezone.now())
             selection_started = time.perf_counter()
             retrieved_results = select_current_evidence(retrieved_results, query, request_time)
+            if not QueryRouter.requires_online(query, respect_offline=False):
+                retrieved_results = [r for r in retrieved_results if r.verified_at and r.evidence_kind
+                                     and r.accessibility == 'available']
             stage_ms['fresh_evidence_accepted'] = len(retrieved_results)
             if has_conflicting_claims(retrieved_results, query):
                 stage_ms["fallback_reason"] = "conflicting_evidence"
@@ -508,6 +531,10 @@ def _prepare_message(
             stage_ms["fallback_reason"] = stage_ms["fallback_reason"] or "online_unavailable"
             online_latency_ms = round((time.perf_counter() - retrieval_started) * 1000)
             logger.warning("Online retrieval failed: %s", exc.__class__.__name__)
+            if stage_ms['fallback_reason'] != 'conflicting_evidence':
+                saved = saved_fallback()
+                if saved:
+                    return saved
             return _persist_direct_response(
                 conversation,
                 ("The current sources disagree, so I can't verify a reliable answer."
@@ -526,6 +553,9 @@ def _prepare_message(
             stage_ms["fallback_reason"] = "online_unavailable"
             online_latency_ms = round((time.perf_counter() - retrieval_started) * 1000)
             logger.warning("Unexpected online retrieval failure")
+            saved = saved_fallback()
+            if saved:
+                return saved
             return _persist_direct_response(
                 conversation,
                 "I couldn't retrieve current information right now.",
@@ -580,7 +610,7 @@ def _prepare_message(
     history = memory_history + history
 
     rag_results = select_rag_context(list(route_decision.rag_results))
-    local_knowledge = requests_local_knowledge(query)
+    local_knowledge = document_ids is not None or requests_local_knowledge(query)
     project_scope = bool(re.search(r'\b(project|setup|wiring|gpio|pins?|hardware|board)\b', query, re.I))
     explanation = bool(re.search(r'\b(?:explain|why|works?)\b|\bhow (?:does|do|is|are|can|would)\b', query, re.I))
     document_only = bool(re.search(r'\b(documents?|notes|files|knowledge base|only)\b', query, re.I))

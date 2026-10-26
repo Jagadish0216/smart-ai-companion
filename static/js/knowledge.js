@@ -58,11 +58,11 @@
         const state = document.createElement('p'); state.textContent=stateLabel(doc.status);
         const description = document.createElement('p'); description.textContent=doc.status==='INDEXED'?'Indexed for retrieval. Online source freshness also applies.':'This file is not currently indexed for answers.';
         const list = document.createElement('dl');
-        const info = {Type:doc.file_type,Origin:doc.source_type,Chunks:doc.chunk_count,Uploaded:timestamp(doc.uploaded_at),Indexed:timestamp(doc.indexed_at)};
-        if(doc.source_type==='ONLINE') Object.assign(info,{Source:doc.source_url,Provider:doc.provider,Freshness:doc.freshness,Expires:timestamp(doc.expires_at),'Last sync':timestamp(doc.last_synced_at)});
+        const info = {Type:doc.file_type,Origin:doc.source_type,Chunks:doc.chunk_count,Bytes:doc.file_size,Uploaded:timestamp(doc.uploaded_at),Indexed:timestamp(doc.indexed_at)};
+        if(doc.source_type==='ONLINE') Object.assign(info,{Source:doc.source_url,Provider:doc.provider,Freshness:doc.freshness,Expires:timestamp(doc.expires_at),'Last sync':timestamp(doc.last_synced_at),'Saved versions':(doc.evidence || []).map(v=>v.state+' / verified '+timestamp(v.verified_at)).join('; ')});
         for(const [key,value] of Object.entries(info)) { const dt=document.createElement('dt');dt.textContent=key;const dd=document.createElement('dd');dd.textContent=value ?? 'Unavailable';list.append(dt,dd); }
         detail.append(label,title,state,description,list);
-        if(doc.error_message || doc.sync_error_message) { const error=document.createElement('p');error.textContent='This source needs attention. Try reindexing or synchronizing it.';detail.append(error); }
+        if(doc.error_message || doc.sync_error_message) { const error=document.createElement('p');error.textContent=doc.error_message || doc.sync_error_message;detail.append(error); }
         if(canManage) [online ? 'Sync' : 'Reindex','Delete'].forEach(action=>{const button=document.createElement('button');button.className='btn';button.textContent=action==='Delete'?'Remove from memory':action;button.disabled=busy;button.addEventListener('click',()=>performAction(doc,action));detail.append(button);});
         rows.querySelectorAll('[data-document-id]').forEach(row=>row.setAttribute('aria-current',String(row.dataset.documentId===String(doc.id))));
     }

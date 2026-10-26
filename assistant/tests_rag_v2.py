@@ -67,7 +67,7 @@ class RagPerformanceTests(TestCase):
             "No unsupported explanations, purposes, causes, names, facts or background",
             "only the needed fact in one concise sentence",
             "local knowledge does not contain enough information",
-            "Hide retrieval/chunks/filenames unless asked",
+            "Cite source/page",
         ):
             self.assertIn(rule, instruction)
 

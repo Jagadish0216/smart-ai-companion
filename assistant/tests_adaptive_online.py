@@ -264,11 +264,11 @@ class EndToEndTests(TestCase):
 
     @patch("assistant.services.get_online_retriever")
     @patch("assistant.services.get_engine")
-    def test_personal_and_timeless_requests_never_search_both_transports(self, engine_factory, online):
+    def test_private_requests_never_search_both_transports(self, engine_factory, online):
         result = AIEngineResult(text="Local answer.", engine="local")
         engine_factory.return_value.generate.return_value = result
         engine_factory.return_value.generate_stream.side_effect = lambda *a, **k: iter([AIEngineStreamEvent(type="delta", text=result.text), AIEngineStreamEvent(type="done", result=result)])
-        for query in ("What is recursion?", "What's my current schedule?", "According to our notes, what is the latest release?"):
+        for query in ("Hello", "What's my current schedule?", "According to our notes, what is the latest release?"):
             AssistantService.process_message(query)
             list(AssistantService.process_message_stream(query, response_plan=AssistantResponsePolicy.plan_voice_response(query)))
         online.assert_not_called()
