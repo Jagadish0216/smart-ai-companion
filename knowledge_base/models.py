@@ -66,6 +66,7 @@ class KnowledgeChunk(models.Model):
         on_delete=models.CASCADE,
         related_name="chunks",
     )
+    page_number = models.PositiveIntegerField(null=True, blank=True)
     chunk_index = models.PositiveIntegerField()
     content = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)

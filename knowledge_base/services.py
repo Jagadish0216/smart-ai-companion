@@ -81,7 +81,7 @@ def extract_document_text(file_bytes: bytes, suffix: str) -> str:
                 if text_chars > 2_000_000:
                     raise KnowledgeIngestionError("Extracted PDF text is too large.")
                 pages.append(content)
-            text = "\n\n".join(pages)
+            text = "\f".join(pages) + "\f"
         except KnowledgeIngestionError:
             raise
         except Exception as exc:
@@ -245,7 +245,15 @@ class KnowledgeIngestionService:
         *,
         precomputed_chunks: list[str] | None = None,
     ) -> IngestionResult:
-        chunks = precomputed_chunks
+        page_numbers = []
+        if document.file_type == 'application/pdf' and '\f' in text:
+            chunks = []
+            for page_number, page in enumerate(text.split('\f'), 1):
+                page_chunks = chunk_text(page, self.chunk_chars, self.overlap_chars)
+                chunks.extend(page_chunks)
+                page_numbers.extend([page_number] * len(page_chunks))
+        else:
+            chunks = precomputed_chunks
         if chunks is None:
             chunks = chunk_text(text, self.chunk_chars, self.overlap_chars)
         if not chunks:
@@ -257,6 +265,7 @@ class KnowledgeIngestionService:
             KnowledgeChunk.objects.bulk_create([
                 KnowledgeChunk(
                     document=document,
+                    page_number=page_numbers[index] if page_numbers else None,
                     chunk_index=index,
                     content=content,
                 )
@@ -310,8 +319,9 @@ def build_rag_instruction(results: list[RetrievedChunk], *, concise: bool = True
     blocks = []
     for position, result in enumerate(select_rag_context(results), start=1):
         blocks.append(
-            f"[Local source {position}]\n"
-            f"{result.content}"
+            f"[Local source {position}: {result.title}"
+            + (f", page {result.page_number}" if result.page_number else "") + "]\n"
+            + result.content
         )
 
     reference_rule = (

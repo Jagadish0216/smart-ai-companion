@@ -48,7 +48,11 @@
             if(typeof source.url==='string') {
                 try {const url=new URL(source.url);if(['http:','https:'].includes(url.protocol)&&!url.username&&!url.password){node=document.createElement('a');node.href=url.href;node.target='_blank';node.rel='noopener noreferrer';}} catch(_) {}
             }
-            node.textContent=label+(source.page_number?' · p. '+source.page_number:'');group.append(node);
+            const page=Number.isInteger(source.page_number)&&source.page_number>0?' | p. '+source.page_number:'';
+            const verified=source.verified_at?' | Last verified '+String(source.verified_at):'';
+            const saved=source.last_synced_at?' | Saved offline evidence | Last synced '+String(source.last_synced_at):'';
+            const historical=source.historical===true || /offline|cache/.test(event.fallback_reason || '')?' | Historical/offline evidence':'';
+            node.textContent=label+page+verified+saved+historical;group.append(node);
         }
         parent.append(group);
     }

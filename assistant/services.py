@@ -11,7 +11,7 @@ from assistant.voice.interruption import defer_response
 import logging
 import math
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from django.conf import settings
 from django.utils import timezone as django_timezone
@@ -81,6 +81,8 @@ class AssistantService:
         system_instruction: str | None = None,
         num_predict: int | None = None,
         response_plan: ResponsePlan | None = None,
+        document_ids: list[int] | None = None,
+        knowledge_mode: str | None = None,
     ) -> tuple:
         """
         Process a user message: persist it, run AI inference, persist the
@@ -104,6 +106,7 @@ class AssistantService:
             system_instruction=system_instruction,
             num_predict=num_predict,
             response_plan=response_plan,
+            document_ids=document_ids, knowledge_mode=knowledge_mode,
         )
         if isinstance(prepared, tuple):
             return prepared
@@ -117,6 +120,7 @@ class AssistantService:
             response_text = _apply_resource_status(result.text, prepared.execution_plan)
             _persist_generated_response(prepared.conversation, response_text, result.latency_ms)
             metadata = _generation_metadata(prepared, result)
+            _save_source_metadata(prepared.conversation, metadata)
             _log_request_performance(prepared, metadata)
             return prepared.conversation, response_text, metadata, None
         except Exception as exc:
@@ -129,6 +133,8 @@ class AssistantService:
         system_instruction: str | None = None,
         num_predict: int | None = None,
         response_plan: ResponsePlan | None = None,
+        document_ids: list[int] | None = None,
+        knowledge_mode: str | None = None,
     ):
         """Yield transport-neutral start/delta/done/error dictionaries."""
         prepared = _prepare_message(
@@ -137,6 +143,7 @@ class AssistantService:
             system_instruction=system_instruction,
             num_predict=num_predict,
             response_plan=response_plan,
+            document_ids=document_ids, knowledge_mode=knowledge_mode,
         )
         if isinstance(prepared, tuple):
             conversation, text, metadata, error = prepared
@@ -201,6 +208,7 @@ class AssistantService:
                 result.latency_ms,
             )
             metadata = _generation_metadata(prepared, result)
+            _save_source_metadata(prepared.conversation, metadata)
             _log_request_performance(prepared, metadata)
             completed = True  # Set before yielding: close() can occur at the yield.
             yield {
@@ -239,6 +247,8 @@ def _prepare_message(
     system_instruction: str | None,
     num_predict: int | None,
     response_plan: ResponsePlan | None,
+    document_ids: list[int] | None = None,
+    knowledge_mode: str | None = None,
 ) -> PreparedAssistantRequest | tuple:
     execution_started = time.perf_counter()
     latency.mark("conversation_prepare_start")
@@ -289,16 +299,30 @@ def _prepare_message(
     registry = build_runtime_capability_registry(
         online_allowed=execution_plan.online_allowed,
     )
+    if document_ids or knowledge_mode == "offline_only":
+        execution_plan = replace(execution_plan, online_allowed=False)
+        registry = build_runtime_capability_registry(online_allowed=False)
     routing_started = time.perf_counter()
-    route_decision = QueryRouter().decide(
-        query,
-        registry=registry,
-        response_mode=response_plan.mode if response_plan is not None else None,
-        required_capability=(
-            response_plan.required_capability if response_plan is not None else None
-        ),
-        allow_implicit_rag=True,
-    )
+    if document_ids:
+        from knowledge_base.services import get_retriever
+        results = get_retriever().retrieve(query, document_ids=document_ids)
+        route_decision = QueryRouteDecision(QueryRoute.LOCAL_RAG, ResponseMode.NORMAL, Capability.LOCAL_RAG, tuple(results))
+        effective_instruction = _combine_instructions(effective_instruction, 'Answer only from selected document evidence. Say clearly when it does not contain the answer. Never use earlier conversation claims as evidence.')
+        history = []
+    elif knowledge_mode == 'online_only':
+        route_decision = QueryRouteDecision(QueryRoute.ONLINE, ResponseMode.NORMAL, Capability.ONLINE_RETRIEVAL)
+    else:
+        route_decision = QueryRouter().decide(
+            query,
+            registry=registry,
+            response_mode=response_plan.mode if response_plan is not None else None,
+            required_capability=(
+                response_plan.required_capability if response_plan is not None else None
+            ),
+            allow_implicit_rag=True,
+        )
+        if knowledge_mode == 'offline_only' and route_decision.route == QueryRoute.ONLINE:
+            route_decision = QueryRouteDecision(QueryRoute.LOCAL, ResponseMode.NORMAL)
     latency.mark("route", route=route_decision.route.value)
     routing_ms = round((time.perf_counter() - routing_started) * 1000)
     stage_ms = {
@@ -333,8 +357,8 @@ def _prepare_message(
         registry,
         planned_response=(response_plan.direct_response if response_plan else None),
     )
-    if (route_decision.route in (QueryRoute.LOCAL, QueryRoute.LOCAL_RAG)
-            and not QueryRouter.requires_online(query)
+    if (not document_ids and route_decision.route in (QueryRoute.LOCAL, QueryRoute.LOCAL_RAG)
+            and (knowledge_mode == "offline_only" or not QueryRouter.requires_online(query))
             and QueryRouter.requires_online(query, respect_offline=False)):
         stage_ms["fallback_reason"] = "offline_requested"
         direct_response = (
@@ -359,7 +383,7 @@ def _prepare_message(
                 route_decision, engine='lexical', execution_plan=execution_plan,
                 execution_started=execution_started, stage_ms=stage_ms,
                 metadata_updates={'online_sources': [r.source_metadata() for r in cached]})
-    if direct_response and route_decision.route == QueryRoute.ONLINE:
+    if direct_response and route_decision.route == QueryRoute.ONLINE and knowledge_mode != "online_only":
         cache_started = time.perf_counter()
         try:
             cached = load_verified_current(query)[:1]
@@ -373,6 +397,8 @@ def _prepare_message(
                 route_decision, engine='lexical', execution_plan=execution_plan,
                 execution_started=execution_started, stage_ms=stage_ms,
                 metadata_updates={'online_sources': [r.source_metadata() for r in cached]})
+    if document_ids and not route_decision.rag_results:
+        direct_response = 'The selected documents do not contain relevant information for this question. Try more specific terms or select another document.'
     if direct_response:
         metadata_updates = None
         if (
@@ -450,7 +476,7 @@ def _prepare_message(
         try:
             cache_started = time.perf_counter()
             try:
-                retrieved_results = load_verified_current(query)
+                retrieved_results = [] if knowledge_mode == "online_only" else load_verified_current(query)
             except Exception:
                 logger.warning('Verified current cache unavailable; trying online retrieval')
                 retrieved_results = []
@@ -558,7 +584,7 @@ def _prepare_message(
     memory_messages = []
     memory_history = []
     memory_started = time.perf_counter()
-    if not online_results and conversation_id and (response_plan is None or response_plan.allow_long_term_memory):
+    if not document_ids and not online_results and conversation_id and (response_plan is None or response_plan.allow_long_term_memory):
         try:
             memory_messages = get_memory_retriever().retrieve(
                 query, conversation_id=conversation.id, before_id=current_message.id,
@@ -580,11 +606,11 @@ def _prepare_message(
     history = memory_history + history
 
     rag_results = select_rag_context(list(route_decision.rag_results))
-    local_knowledge = requests_local_knowledge(query)
+    local_knowledge = bool(document_ids) or requests_local_knowledge(query)
     project_scope = bool(re.search(r'\b(project|setup|wiring|gpio|pins?|hardware|board)\b', query, re.I))
     explanation = bool(re.search(r'\b(?:explain|why|works?)\b|\bhow (?:does|do|is|are|can|would)\b', query, re.I))
     document_only = bool(re.search(r'\b(documents?|notes|files|knowledge base|only)\b', query, re.I))
-    project_general = local_knowledge and project_scope and explanation and not document_only
+    project_general = not document_ids and local_knowledge and project_scope and explanation and not document_only
     if local_knowledge:
         effective_instruction = _combine_instructions(effective_instruction,
             'Project-specific facts require supplied local evidence; state missing project details as unknown. Clearly label any general explanation as general knowledge.'
@@ -911,6 +937,7 @@ def _persist_direct_response(
         ) if execution_started is not None else latency_ms
     if stage_ms:
         metadata.update(stage_ms)
+    _save_source_metadata(conversation, metadata)
     logger.info(
         "Assistant direct request completed",
         extra={
@@ -1106,3 +1133,16 @@ def _get_conversation_history(conversation: Conversation, limit: int = 10,
         for msg in reversed(messages)
     ]
     return history
+
+
+def _save_source_metadata(conversation, metadata):
+    # Save only citation data alongside the completed answer; old rows stay empty.
+    sources = {key: [{k: v for k, v in item.items() if k != 'source_identifier'} for item in metadata.get(key, [])]
+               for key in ('rag_sources', 'online_sources')}
+    if not any(sources.values()):
+        return
+    sources.update({key: metadata[key] for key in ('fallback_reason', 'online_attempted', 'online_used') if key in metadata})
+    message = conversation.messages.filter(sender='AI').order_by('-id').first()
+    if message is not None and not conversation.messages.filter(sender='USER', id__gt=message.id).exists():
+        message.source_metadata = sources
+        message.save(update_fields=['source_metadata'])

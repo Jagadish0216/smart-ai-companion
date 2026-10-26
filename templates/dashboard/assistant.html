@@ -79,9 +79,17 @@
         </div>
         <!-- Bottom: Message Composer -->
         <div class="chat-input-wrapper">
+            <div id="assistant-scope" class="assistant-scope">
+                <label for="knowledge-mode">Sources</label>
+                <select id="knowledge-mode"><option value="">Application default</option><option value="online_preferred">Online Preferred</option><option value="offline_only">Offline Only</option><option value="online_only">Online Only</option></select>
+                <details id="document-library"><summary>Select documents</summary><div id="assistant-documents"></div><button type="button" id="refresh-documents" class="btn">Refresh</button></details>
+                <div id="selected-documents" aria-label="Selected documents"></div>
+                <p id="document-status" role="status" aria-live="polite">Automatic knowledge retrieval</p>
+                <progress id="document-progress" max="100" value="0" aria-label="Document upload progress" hidden></progress>
+            </div>
             <div class="chat-composer-box">
                 <textarea id="chat-input" rows="2" placeholder="Message your companion…" aria-label="Message your companion" autocomplete="off"></textarea>
-                <div class="composer-actions"><span class="composer-engine">{{ global_ai_engine|upper }} AI</span><button id="interrupt-response" class="btn" hidden>Interrupt ■</button>
+                <div class="composer-actions"><button type="button" id="attach-document" class="action-btn" aria-label="Attach documents" title="Upload PDF, TXT or Markdown">＋</button><input id="assistant-file-picker" type="file" accept=".pdf,.txt,.md,.markdown" multiple hidden><span class="composer-engine">{{ global_ai_engine|upper }} AI</span><button id="interrupt-response" class="btn" hidden>Interrupt ■</button>
                     <button id="btn-voice" class="action-btn mic-btn" title="Tap to speak" aria-label="Start or stop microphone">
                         <img id="voice-icon-mic" src="{% static 'img/figma/2-194-MicIcon.svg' %}" width="20" height="20" alt="">
                         <i id="voice-icon-square" data-lucide="square" style="display:none;"></i>
@@ -105,6 +113,7 @@
 <link rel="stylesheet" href="{% static 'css/assistant.css' %}">
 <script src="{% static 'js/companion-ui.js' %}"></script>
 <script src="{% static 'js/assistant-ui.js' %}"></script>
+<script src="{% static 'js/assistant-documents.js' %}"></script>
 <script>
 (function() {
     'use strict';
@@ -167,6 +176,7 @@
     window.startNewChat = function() {
         if (activeController || activeAudio || voiceState === 'LISTENING' || ['REQUESTING_MIC', 'TRANSCRIBING', 'THINKING', 'RESPONDING'].includes(voiceState)) return;
         clearDraft();
+        window.AssistantDocuments.restore('new');
         followStream = true;
         localStorage.removeItem('companion_conversation_id');
         messageContainer.innerHTML = '';
@@ -182,6 +192,7 @@
         clearDraft();
         followStream = true;
         localStorage.setItem('companion_conversation_id', id);
+        window.AssistantDocuments.restore(id);
         document.querySelectorAll('.conv-link').forEach(l => l.classList.remove('active'));
         if(el) el.classList.add('active');
         document.getElementById('chat-history-sidebar').classList.remove('open');
@@ -194,7 +205,8 @@
             if (response.ok) {
                 const data = await response.json();
                 data.messages.forEach(msg => {
-                    appendMessage(msg.content, msg.role === 'USER' ? 'user' : 'ai', false);
+                    const bubble = appendMessage(msg.content, msg.role === 'USER' ? 'user' : 'ai', false);
+                    if (msg.role !== 'USER') window.AssistantUI.renderSources(bubble.parentElement, msg);
                 });
                 followLatest();
             }
@@ -346,7 +358,8 @@
                 startNewChat();
             } else {
                 data.messages.forEach(msg => {
-                    appendMessage(msg.content, msg.role === 'USER' ? 'user' : 'ai', false);
+                    const bubble = appendMessage(msg.content, msg.role === 'USER' ? 'user' : 'ai', false);
+                    if (msg.role !== 'USER') window.AssistantUI.renderSources(bubble.parentElement, msg);
                 });
                 followLatest();
             }
@@ -367,7 +380,7 @@
         appendMessage(text, 'user', speakAfterSend);
         const aiBubble = appendMessage('', 'ai', false);
         setVoiceState('THINKING');
-        const payload = { query: text };
+        const payload = { query: text, ...window.AssistantDocuments.scope() };
         const convId = localStorage.getItem('companion_conversation_id');
         if (convId) payload.conversation_id = parseInt(convId, 10);
         const controller = new AbortController();
@@ -402,7 +415,13 @@
                 signal: controller.signal
             });
             if (!response.ok || !response.body) {
-                throw new Error('The streaming AI service rejected the request.');
+                let detail = 'The streaming AI service rejected the request.';
+                try {
+                    const failure = await response.json();
+                    if (typeof failure.detail === 'string') detail = failure.detail;
+                    else if (failure.detail && typeof failure.detail === 'object') detail = Object.values(failure.detail).flat().join(' ');
+                } catch (_) {}
+                throw new Error(detail);
             }
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
@@ -419,6 +438,7 @@
                     const event = JSON.parse(rawLine);
                     if (event.conversation_id && event.conversation_id != convId) {
                         localStorage.setItem('companion_conversation_id', event.conversation_id);
+                        window.AssistantDocuments.save(event.conversation_id);
                     }
                     if (event.type === 'delta' && event.text) {
                         accumulated += event.text;
@@ -609,6 +629,7 @@
     const params = new URLSearchParams(location.search);
     if (/^\d+$/.test(params.get('conversation') || '')) localStorage.setItem('companion_conversation_id', params.get('conversation'));
     if (params.has('new')) localStorage.removeItem('companion_conversation_id');
+    window.AssistantDocuments.restore(localStorage.getItem('companion_conversation_id') || 'new');
     init();
     if (params.has('voice')) { voiceStatus.textContent = 'Tap the microphone to speak'; btnVoice.focus(); }
     if (params.has('type')) chatInput.focus();

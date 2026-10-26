@@ -39,6 +39,7 @@ class RetrievedChunk:
     chunk_index: int
     content: str
     score: float
+    page_number: int | None = None
     last_synced_at: object = None
     expires_at: object = None
 
@@ -48,6 +49,7 @@ class RetrievedChunk:
             "source_identifier": self.source_identifier,
             "title": self.title,
             "chunk_index": self.chunk_index,
+            "page_number": self.page_number,
             "score": self.score,
             "last_synced_at": self.last_synced_at.isoformat() if self.last_synced_at else None,
             "expires_at": self.expires_at.isoformat() if self.expires_at else None,
@@ -62,6 +64,7 @@ class KnowledgeRetriever(ABC):
         *,
         top_k: int | None = None,
         min_relevance: float | None = None,
+        document_ids: list[int] | None = None,
     ) -> list[RetrievedChunk]:
         """Return relevant chunks ordered by score and stable source position."""
         ...
@@ -77,6 +80,7 @@ class LexicalRetriever(KnowledgeRetriever):
         *,
         top_k: int | None = None,
         min_relevance: float | None = None,
+        document_ids: list[int] | None = None,
     ) -> list[RetrievedChunk]:
         top_k = int(top_k if top_k is not None else settings.RAG_TOP_K)
         min_relevance = float(
@@ -106,11 +110,14 @@ class LexicalRetriever(KnowledgeRetriever):
             # document metadata column for each candidate. Keep filtering and
             # ordering in SQL; do not cap candidates or change relevance.
             .values_list("id", "document_id", "document__source_identifier",
-                         "document__filename", "chunk_index", "content")
+                         "document__filename", "chunk_index", "content", "page_number")
         )
 
+        if document_ids is not None:
+            candidates = candidates.filter(document_id__in=document_ids)
+
         best: list[tuple[float, int, int, int, RetrievedChunk]] = []
-        for chunk_id, document_id, source_identifier, title, chunk_index, content in candidates.iterator(chunk_size=200):
+        for chunk_id, document_id, source_identifier, title, chunk_index, content, page_number in candidates.iterator(chunk_size=200):
             content_counts = Counter(_tokenize(content))
             if not _has_sufficient_distinct_matches(query_counts, content_counts):
                 continue
@@ -125,6 +132,7 @@ class LexicalRetriever(KnowledgeRetriever):
                 chunk_index=chunk_index,
                 content=content,
                 score=round(score, 4),
+                page_number=page_number,
             )
             rank = (
                 result.score,

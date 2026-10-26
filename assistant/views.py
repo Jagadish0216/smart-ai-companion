@@ -142,7 +142,8 @@ class ChatAPIView(APIView):
                 msg_data.append({
                     "role": msg.sender,
                     "content": msg.text,
-                    "created_at": msg.timestamp.isoformat()
+                    "created_at": msg.timestamp.isoformat(),
+                    **_public_assistant_metadata(msg.source_metadata)
                 })
             return Response({"conversation_id": conversation.id, "messages": msg_data}, status=status.HTTP_200_OK)
         except Conversation.DoesNotExist:
@@ -165,7 +166,7 @@ class ChatAPIView(APIView):
 
         conversation_id = serializer.validated_data.get('conversation_id')
 
-        conversation, ai_text, metadata, error = AssistantService.process_message(query, conversation_id)
+        conversation, ai_text, metadata, error = AssistantService.process_message(query, conversation_id, **{k: v for k, v in serializer.validated_data.items() if k in ("document_ids", "knowledge_mode")})
 
         if error == "Conversation not found.":
             return Response(
@@ -197,8 +198,8 @@ def _conversation_display_fields(conversation):
     }
 
 
-def _ndjson_stream(query, conversation_id):
-    for event in AssistantService.process_message_stream(query, conversation_id):
+def _ndjson_stream(query, conversation_id, **scope):
+    for event in AssistantService.process_message_stream(query, conversation_id, **scope):
         protocol_fields = {
             "type", "text", "response", "error", "detail", "partial",
             "conversation_id", "direct",
@@ -251,6 +252,7 @@ class ChatStreamAPIView(APIView):
             _ndjson_stream(
                 query,
                 serializer.validated_data.get("conversation_id"),
+                **{k: v for k, v in serializer.validated_data.items() if k in ("document_ids", "knowledge_mode")},
             ),
             content_type="application/x-ndjson",
         )
