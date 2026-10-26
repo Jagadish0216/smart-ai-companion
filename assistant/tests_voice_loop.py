@@ -753,6 +753,10 @@ class VoiceInputInjectionTests(SimpleTestCase):
     """CLI inputs share real streaming workers/player; no hardware subprocesses."""
 
     def setUp(self):
+        # Interactive ALSA cases and callers reusing this fixture simulate ownership too.
+        ownership = patch("assistant.voice.push_to_talk.microphone_ownership")
+        ownership.start()
+        self.addCleanup(ownership.stop)
         self.config = VoiceLoopConfig("", audio_backend="alsa", capture_vad_enabled=True)
         self.children = []
         self.mocks = {}

@@ -492,7 +492,8 @@ class CpuOnnxLoggingTests(SimpleTestCase):
 
 @override_settings(VOICE_WAKE_WORD_ENABLED=True)
 class HandsFreeShutdownTests(SimpleTestCase):
-    def test_parent_ctrl_c_during_real_request_capture_reaps_and_closes_every_provider(self):
+    @patch("assistant.voice.push_to_talk.microphone_ownership")
+    def test_parent_ctrl_c_during_real_request_capture_reaps_and_closes_every_provider(self, ownership):
         config = voice_loop.VoiceLoopConfig("", audio_backend="alsa", capture_vad_enabled=False)
         display, tts, wake, process = MagicMock(), MagicMock(), MagicMock(), MagicMock()
         from assistant.voice.wakeword.base import WakeWordDetection

@@ -3,6 +3,7 @@ import os
 import struct
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
@@ -608,6 +609,7 @@ class DisplayVoiceLifecycleTests(SimpleTestCase):
             self.assertEqual(self.cycle(), 42)
         self.assertNotIn("private", str(logs.output))
 
+    @contextmanager
     def serial_interaction_probe(self):
         """Observe real encoded writes with companion_face.cpp setState semantics.
 
@@ -639,19 +641,39 @@ class DisplayVoiceLifecycleTests(SimpleTestCase):
             snapshots.append((command, state, query, mode, text))
             return len(payload)
 
-        serial_patch = patch("assistant.display.serial_display.serial")
-        serial = serial_patch.start()
-        self.addCleanup(serial_patch.stop)
-        serial.Serial.return_value.write.side_effect = write
-        display = SerialCompanionDisplay(port="test-uart", startup_delay_seconds=0)
-        self.addCleanup(display.close)
-        return display, commands, snapshots
+        # Each subtest owns its port lock and patch; method-level cleanup is too late.
+        with patch("assistant.display.serial_display.serial") as serial:
+            serial.Serial.return_value.write.side_effect = write
+            display = SerialCompanionDisplay(port="test-uart", startup_delay_seconds=0)
+            try:
+                yield display, commands, snapshots
+            finally:
+                display.close()
+
+    def test_serial_probe_releases_ownership_and_patch_at_each_context_exit(self):
+        from assistant.display import serial_display
+        original_serial = serial_display.serial
+        for fail in (False, True, False):
+            with self.subTest(fail=fail):
+                try:
+                    with self.serial_interaction_probe() as (display, commands, snapshots):
+                        connection = display._serial
+                        self.assertTrue(display.set_state(DisplayState.READY))
+                        self.assertIsNotNone(connection)
+                        self.assertEqual(commands, ["STATE READY"])
+                        if fail:
+                            raise RuntimeError("fixture body failed")
+                except RuntimeError as exc:
+                    self.assertTrue(fail)
+                    self.assertEqual(str(exc), "fixture body failed")
+                connection.close.assert_called_once()
+                self.assertIsNone(display._ownership)
+                self.assertIs(serial_display.serial, original_serial)
 
     def test_serial_query_lifecycle_for_normal_text_and_hands_free(self):
         answer = "A useful answer."
         for source in ("normal", "text", "hands_free"):
-            with self.subTest(source=source):
-                display, commands, snapshots = self.serial_interaction_probe()
+            with self.subTest(source=source), self.serial_interaction_probe() as (display, commands, snapshots):
                 self.mocks["AssistantService.process_message_stream"].side_effect = lambda *a, **k: [
                     {"type": "start", "route": "local"},
                     {"type": "delta", "text": answer},
@@ -685,8 +707,7 @@ class DisplayVoiceLifecycleTests(SimpleTestCase):
         for route, mode in (("local", "LOCAL"), ("local_rag", "KNOWLEDGE"),
                             ("online", "WEB"), ("action", None), ("clarification", None),
                             ("ACTION", None), ("CLARIFICATION", None), (None, None), ("unknown", None)):
-            with self.subTest(route=route):
-                display, commands, snapshots = self.serial_interaction_probe()
+            with self.subTest(route=route), self.serial_interaction_probe() as (display, commands, snapshots):
                 def generate(*args, **kwargs):
                     yield {"type": "start", "route": route}
                     yield {"type": "delta", "text": "Answer."}
@@ -703,8 +724,7 @@ class DisplayVoiceLifecycleTests(SimpleTestCase):
         answer = FIRST_SENTENCE + " " + SECOND_SENTENCE
         for route, mode in (("online", "WEB"), ("local_rag", "KNOWLEDGE"),
                             ("action", None), ("clarification", None), ("unknown", None), (None, None)):
-            with self.subTest(route=route):
-                display, commands, snapshots = self.serial_interaction_probe()
+            with self.subTest(route=route), self.serial_interaction_probe() as (display, commands, snapshots):
                 played = Event()
                 self.mocks["play_audio"].side_effect = lambda *a, **k: played.set()
                 def generate(*args, **kwargs):

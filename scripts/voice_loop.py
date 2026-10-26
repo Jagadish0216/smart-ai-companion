@@ -1789,6 +1789,7 @@ def run_voice_cycle(
     hands_free_preroll: bytes | None = None,
     hands_free_background: float | None = None,
     talk_button=None,
+    on_result=None,
 ) -> int | None:
     """Run a cycle; hardware display failures are isolated from voice failures."""
     with latency.cycle():
@@ -1798,6 +1799,7 @@ def run_voice_cycle(
                 hands_free_capture=hands_free_capture,
                 hands_free_preroll=hands_free_preroll, hands_free_background=hands_free_background,
                 talk_button=talk_button,
+                **({"on_result":on_result} if on_result is not None else {}),
             )
         except (NoSpeechDetected, VoiceInterrupted):
             _set_display_state(display, DisplayState.READY)
@@ -1812,7 +1814,7 @@ def run_voice_cycle(
 
 
 def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=None,
-                     hands_free_capture=None, hands_free_preroll=None, hands_free_background=None, talk_button=None):
+                     hands_free_capture=None, hands_free_preroll=None, hands_free_background=None, talk_button=None, on_result=None):
     """Select an input, then reuse the production respond/speak cycle."""
     if audio_file is not None and text is not None:
         raise VoiceLoopError("Choose either audio-file or text input, not both.")
@@ -1954,6 +1956,11 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
             if config.capture_ready_lifecycle:
                 _set_display_text(display, "SPEAKING")
 
+        def stream_metadata(event):
+            _set_display_route(display,event)
+            if on_result is not None:
+                on_result(event)
+
         try:
             events = AssistantService.process_message_stream(
                 transcript, conversation_id=conversation_id, response_plan=response_plan,
@@ -1965,7 +1972,7 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
                 on_playback_start=on_playback_start,
                 on_caption=lambda page: _set_display_text(display, page),
                 on_stream_start=lambda event: _set_display_route(display, event),
-                on_stream_metadata=lambda event: _set_display_route(display, event),
+                on_stream_metadata=stream_metadata,
                 **({"on_amplitude": amplitude} if amplitude is not None else {}),
             )
         except (VoiceLoopError, VoiceInterrupted, InterruptionCleanupError):
@@ -2192,7 +2199,7 @@ def main(argv=None) -> int:
     if args.latency_trace_dir is not None:
         latency.configure(args.latency_trace_dir)
     conversation_id = None
-    display = get_companion_display()
+    display = get_companion_display(nonblocking=True)
     tts_provider = None
     wake_provider = None
     ownership = None

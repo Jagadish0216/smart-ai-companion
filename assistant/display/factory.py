@@ -10,7 +10,7 @@ from .base import NoOpDisplay
 logger = logging.getLogger(__name__)
 
 
-def get_companion_display():
+def get_companion_display(*, nonblocking=False, capture=False):
     if not getattr(settings, "COMPANION_DISPLAY_ENABLED", False):
         return NoOpDisplay()
     try:
@@ -19,6 +19,10 @@ def get_companion_display():
         delay = float(getattr(settings, "COMPANION_DISPLAY_STARTUP_DELAY_SECONDS", 1.5))
         if not port or any(ord(char) < 32 for char in port) or baud <= 0 or not math.isfinite(delay) or not 0 <= delay <= 10:
             raise ValueError("invalid display settings")
+        if nonblocking:
+            from .ack_serial import AcknowledgedSerialDisplay
+            from .queued_display import QueuedCompanionDisplay
+            return QueuedCompanionDisplay(AcknowledgedSerialDisplay(port=port, baudrate=baud, startup_delay_seconds=delay,capture=capture))
         from .serial_display import SerialCompanionDisplay
         return SerialCompanionDisplay(port=port, baudrate=baud, startup_delay_seconds=delay)
     except Exception:

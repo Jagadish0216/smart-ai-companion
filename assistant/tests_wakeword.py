@@ -450,6 +450,10 @@ class WakeModelSetupTests(SimpleTestCase):
 @override_settings(**{**WAKE_WORD_TEST_SETTINGS, "VOICE_WAKE_WORD_ENABLED": True})
 class HandsFreeRuntimeTests(SimpleTestCase):
     def setUp(self):
+        # Hardware is mocked; never compete with a running voice service's lock.
+        ownership = patch("assistant.voice.push_to_talk.microphone_ownership")
+        self.ownership = ownership.start()
+        self.addCleanup(ownership.stop)
         self.config = voice_loop.VoiceLoopConfig("", audio_backend="alsa", capture_vad_enabled=True,stream_first_sentence_min_chars=20)
         self.provider = MagicMock()
         self.display = MagicMock()
@@ -464,6 +468,18 @@ class HandsFreeRuntimeTests(SimpleTestCase):
             patcher = patch(target, return_value=value)
             self.mocks[name] = patcher.start()
             self.addCleanup(patcher.stop)
+
+    def test_linux_runtime_enters_and_releases_mock_ownership_even_on_startup_failure(self):
+        for fail in (False, True):
+            with self.subTest(fail=fail), patch("scripts.voice_loop.sys.platform", "linux"), patch("signal.signal"):
+                self.ownership.reset_mock()
+                self.provider.wait_for_wake_word.side_effect = [KeyboardInterrupt()]
+                self.tts.warm.side_effect = RuntimeError("mock warm failure") if fail else None
+                with patch("sys.stderr", io.StringIO()):
+                    self.assertEqual(voice_loop.main(["--hands-free"]), 1 if fail else 130)
+                self.ownership.assert_called_once_with()
+                self.ownership.return_value.__enter__.assert_called_once_with()
+                self.ownership.return_value.__exit__.assert_called_once_with(None, None, None)
 
     def test_success_resumes_after_drained_cycle_and_cooldown_with_conversation(self):
         events = []
@@ -671,6 +687,10 @@ class HandsFreeProductionCycleTests(SimpleTestCase):
     """Use the real provider, voice cycle and threaded stream with fake hardware."""
 
     def setUp(self):
+        # The capture/player are simulated; production microphone ownership is not ours.
+        ownership = patch("assistant.voice.push_to_talk.microphone_ownership")
+        ownership.start()
+        self.addCleanup(ownership.stop)
         # The response-policy capability probe is unrelated to mocked voice I/O.
         rag_patch = patch("knowledge_base.services.is_rag_available", return_value=False)
         rag_patch.start()
