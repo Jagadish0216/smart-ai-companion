@@ -1,0 +1,937 @@
+{
+  "synthetic": true,
+  "inference": "mocked; no microphone/STT/TTS/thermal measurements",
+  "median_service_ms": 83.52,
+  "records": [
+    {
+      "elapsed_ms": 147.47,
+      "sql_queries": 18,
+      "prompt_chars": 913,
+      "output_budget": 64,
+      "route": "local_rag",
+      "sources": 1,
+      "trace": {
+        "cache_accounting": "unknown_or_invalid",
+        "schema_version": 1,
+        "cycle_id": "934dfa7cbc28498aa9eb302d69311d26",
+        "clock": "monotonic_ns",
+        "synthetic": true,
+        "status": "ok",
+        "elapsed_ms": 156.0,
+        "events": [
+          {
+            "name": "cycle_start",
+            "at_ms": 0.0,
+            "lane": "main"
+          },
+          {
+            "name": "service_prepare_start",
+            "at_ms": 16.0,
+            "lane": "main"
+          },
+          {
+            "name": "document_resolve_start",
+            "at_ms": 16.0,
+            "lane": "main"
+          },
+          {
+            "name": "document_resolve_end",
+            "at_ms": 47.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "conversation_prepare_start",
+            "at_ms": 47.0,
+            "lane": "main"
+          },
+          {
+            "name": "conversation_prepare_end",
+            "at_ms": 78.0,
+            "lane": "main"
+          },
+          {
+            "name": "policy_start",
+            "at_ms": 78.0,
+            "lane": "main"
+          },
+          {
+            "name": "policy_end",
+            "at_ms": 78.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "resource_policy",
+            "at_ms": 78.0,
+            "lane": "main",
+            "profile": "BALANCED",
+            "generation_allowed": true
+          },
+          {
+            "name": "history_start",
+            "at_ms": 78.0,
+            "lane": "main"
+          },
+          {
+            "name": "history_end",
+            "at_ms": 78.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "user_persist_start",
+            "at_ms": 78.0,
+            "lane": "main"
+          },
+          {
+            "name": "user_persist_end",
+            "at_ms": 94.0,
+            "lane": "main"
+          },
+          {
+            "name": "document_retrieve_start",
+            "at_ms": 94.0,
+            "lane": "main"
+          },
+          {
+            "name": "rag_start",
+            "at_ms": 94.0,
+            "lane": "main"
+          },
+          {
+            "name": "rag_end",
+            "at_ms": 94.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "document_retrieve_end",
+            "at_ms": 94.0,
+            "lane": "main"
+          },
+          {
+            "name": "route",
+            "at_ms": 94.0,
+            "lane": "main",
+            "route": "local_rag"
+          },
+          {
+            "name": "rag_context_start",
+            "at_ms": 94.0,
+            "lane": "main"
+          },
+          {
+            "name": "rag_context_end",
+            "at_ms": 94.0,
+            "lane": "main",
+            "num_predict": 64,
+            "chars": 70
+          },
+          {
+            "name": "service_prepare_end",
+            "at_ms": 94.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "response_persist_start",
+            "at_ms": 94.0,
+            "lane": "main"
+          },
+          {
+            "name": "response_persist_end",
+            "at_ms": 125.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "cycle_end",
+            "at_ms": 156.0,
+            "lane": "main",
+            "outcome": "ok"
+          }
+        ],
+        "dropped_events": 0,
+        "residency": "unknown_not_probed",
+        "acoustic_onset": "unobserved",
+        "missing_events": [
+          "capture_first_frame",
+          "llm_first_alphanumeric",
+          "first_complete_sentence",
+          "first_speech_unit",
+          "first_speech_pcm_accepted"
+        ],
+        "cache_counter_semantics": "backend_reported; missing is unknown; no derived uncached claim",
+        "interpretation": "Concurrent lanes overlap. Do not sum stages as end-to-end latency. PCM acceptance is a pipe write, not acoustic onset."
+      },
+      "stages": {
+        "synthetic": true,
+        "capture_vad_ms": null,
+        "stt_cli_ms": null,
+        "stt_server_ms": null,
+        "document_resolution_ms": 31.0,
+        "sqlite_retrieval_ms": 0.0,
+        "rag_context_ms": 0.0,
+        "requested_output_budget": 64,
+        "context_chars": 70,
+        "prompt_evaluation_ms": null,
+        "backend_first_token_ms": null,
+        "generation_ms": null,
+        "output_tokens": null,
+        "done_reason": null,
+        "first_audio_ready_ms": null,
+        "first_playback_launch_ms": null,
+        "first_pcm_accepted_ms": null,
+        "spoken_response_ms": null,
+        "spoken_response_clock_basis": "unobserved",
+        "total_cycle_ms": 156.0,
+        "interpretation": "Overlapping stages are not additive. PCM acceptance/playback launch are not measured acoustic onset. Unknown values are null."
+      }
+    },
+    {
+      "elapsed_ms": 83.52,
+      "sql_queries": 15,
+      "prompt_chars": 913,
+      "output_budget": 64,
+      "route": "local_rag",
+      "sources": 1,
+      "trace": {
+        "cache_accounting": "unknown_or_invalid",
+        "schema_version": 1,
+        "cycle_id": "00c258c7db5542b0ae3727e425bab733",
+        "clock": "monotonic_ns",
+        "synthetic": true,
+        "status": "ok",
+        "elapsed_ms": 78.0,
+        "events": [
+          {
+            "name": "cycle_start",
+            "at_ms": 0.0,
+            "lane": "main"
+          },
+          {
+            "name": "service_prepare_start",
+            "at_ms": 0.0,
+            "lane": "main"
+          },
+          {
+            "name": "document_resolve_start",
+            "at_ms": 0.0,
+            "lane": "main"
+          },
+          {
+            "name": "document_resolve_end",
+            "at_ms": 0.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "conversation_prepare_start",
+            "at_ms": 0.0,
+            "lane": "main"
+          },
+          {
+            "name": "conversation_prepare_end",
+            "at_ms": 31.0,
+            "lane": "main"
+          },
+          {
+            "name": "policy_start",
+            "at_ms": 31.0,
+            "lane": "main"
+          },
+          {
+            "name": "policy_end",
+            "at_ms": 31.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "resource_policy",
+            "at_ms": 31.0,
+            "lane": "main",
+            "profile": "BALANCED",
+            "generation_allowed": true
+          },
+          {
+            "name": "history_start",
+            "at_ms": 31.0,
+            "lane": "main"
+          },
+          {
+            "name": "history_end",
+            "at_ms": 31.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "user_persist_start",
+            "at_ms": 31.0,
+            "lane": "main"
+          },
+          {
+            "name": "user_persist_end",
+            "at_ms": 47.0,
+            "lane": "main"
+          },
+          {
+            "name": "document_retrieve_start",
+            "at_ms": 47.0,
+            "lane": "main"
+          },
+          {
+            "name": "rag_start",
+            "at_ms": 47.0,
+            "lane": "main"
+          },
+          {
+            "name": "rag_end",
+            "at_ms": 47.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "document_retrieve_end",
+            "at_ms": 47.0,
+            "lane": "main"
+          },
+          {
+            "name": "route",
+            "at_ms": 47.0,
+            "lane": "main",
+            "route": "local_rag"
+          },
+          {
+            "name": "rag_context_start",
+            "at_ms": 47.0,
+            "lane": "main"
+          },
+          {
+            "name": "rag_context_end",
+            "at_ms": 47.0,
+            "lane": "main",
+            "num_predict": 64,
+            "chars": 70
+          },
+          {
+            "name": "service_prepare_end",
+            "at_ms": 47.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "response_persist_start",
+            "at_ms": 47.0,
+            "lane": "main"
+          },
+          {
+            "name": "response_persist_end",
+            "at_ms": 63.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "cycle_end",
+            "at_ms": 78.0,
+            "lane": "main",
+            "outcome": "ok"
+          }
+        ],
+        "dropped_events": 0,
+        "residency": "unknown_not_probed",
+        "acoustic_onset": "unobserved",
+        "missing_events": [
+          "capture_first_frame",
+          "llm_first_alphanumeric",
+          "first_complete_sentence",
+          "first_speech_unit",
+          "first_speech_pcm_accepted"
+        ],
+        "cache_counter_semantics": "backend_reported; missing is unknown; no derived uncached claim",
+        "interpretation": "Concurrent lanes overlap. Do not sum stages as end-to-end latency. PCM acceptance is a pipe write, not acoustic onset."
+      },
+      "stages": {
+        "synthetic": true,
+        "capture_vad_ms": null,
+        "stt_cli_ms": null,
+        "stt_server_ms": null,
+        "document_resolution_ms": 0.0,
+        "sqlite_retrieval_ms": 0.0,
+        "rag_context_ms": 0.0,
+        "requested_output_budget": 64,
+        "context_chars": 70,
+        "prompt_evaluation_ms": null,
+        "backend_first_token_ms": null,
+        "generation_ms": null,
+        "output_tokens": null,
+        "done_reason": null,
+        "first_audio_ready_ms": null,
+        "first_playback_launch_ms": null,
+        "first_pcm_accepted_ms": null,
+        "spoken_response_ms": null,
+        "spoken_response_clock_basis": "unobserved",
+        "total_cycle_ms": 78.0,
+        "interpretation": "Overlapping stages are not additive. PCM acceptance/playback launch are not measured acoustic onset. Unknown values are null."
+      }
+    },
+    {
+      "elapsed_ms": 84.484,
+      "sql_queries": 15,
+      "prompt_chars": 913,
+      "output_budget": 64,
+      "route": "local_rag",
+      "sources": 1,
+      "trace": {
+        "cache_accounting": "unknown_or_invalid",
+        "schema_version": 1,
+        "cycle_id": "46a0c463afb94b00b740b0045065491a",
+        "clock": "monotonic_ns",
+        "synthetic": true,
+        "status": "ok",
+        "elapsed_ms": 94.0,
+        "events": [
+          {
+            "name": "cycle_start",
+            "at_ms": 0.0,
+            "lane": "main"
+          },
+          {
+            "name": "service_prepare_start",
+            "at_ms": 0.0,
+            "lane": "main"
+          },
+          {
+            "name": "document_resolve_start",
+            "at_ms": 0.0,
+            "lane": "main"
+          },
+          {
+            "name": "document_resolve_end",
+            "at_ms": 16.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "conversation_prepare_start",
+            "at_ms": 16.0,
+            "lane": "main"
+          },
+          {
+            "name": "conversation_prepare_end",
+            "at_ms": 32.0,
+            "lane": "main"
+          },
+          {
+            "name": "policy_start",
+            "at_ms": 32.0,
+            "lane": "main"
+          },
+          {
+            "name": "policy_end",
+            "at_ms": 32.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "resource_policy",
+            "at_ms": 32.0,
+            "lane": "main",
+            "profile": "BALANCED",
+            "generation_allowed": true
+          },
+          {
+            "name": "history_start",
+            "at_ms": 32.0,
+            "lane": "main"
+          },
+          {
+            "name": "history_end",
+            "at_ms": 32.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "user_persist_start",
+            "at_ms": 32.0,
+            "lane": "main"
+          },
+          {
+            "name": "user_persist_end",
+            "at_ms": 47.0,
+            "lane": "main"
+          },
+          {
+            "name": "document_retrieve_start",
+            "at_ms": 47.0,
+            "lane": "main"
+          },
+          {
+            "name": "rag_start",
+            "at_ms": 47.0,
+            "lane": "main"
+          },
+          {
+            "name": "rag_end",
+            "at_ms": 47.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "document_retrieve_end",
+            "at_ms": 47.0,
+            "lane": "main"
+          },
+          {
+            "name": "route",
+            "at_ms": 47.0,
+            "lane": "main",
+            "route": "local_rag"
+          },
+          {
+            "name": "rag_context_start",
+            "at_ms": 47.0,
+            "lane": "main"
+          },
+          {
+            "name": "rag_context_end",
+            "at_ms": 47.0,
+            "lane": "main",
+            "num_predict": 64,
+            "chars": 70
+          },
+          {
+            "name": "service_prepare_end",
+            "at_ms": 47.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "response_persist_start",
+            "at_ms": 47.0,
+            "lane": "main"
+          },
+          {
+            "name": "response_persist_end",
+            "at_ms": 78.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "cycle_end",
+            "at_ms": 94.0,
+            "lane": "main",
+            "outcome": "ok"
+          }
+        ],
+        "dropped_events": 0,
+        "residency": "unknown_not_probed",
+        "acoustic_onset": "unobserved",
+        "missing_events": [
+          "capture_first_frame",
+          "llm_first_alphanumeric",
+          "first_complete_sentence",
+          "first_speech_unit",
+          "first_speech_pcm_accepted"
+        ],
+        "cache_counter_semantics": "backend_reported; missing is unknown; no derived uncached claim",
+        "interpretation": "Concurrent lanes overlap. Do not sum stages as end-to-end latency. PCM acceptance is a pipe write, not acoustic onset."
+      },
+      "stages": {
+        "synthetic": true,
+        "capture_vad_ms": null,
+        "stt_cli_ms": null,
+        "stt_server_ms": null,
+        "document_resolution_ms": 16.0,
+        "sqlite_retrieval_ms": 0.0,
+        "rag_context_ms": 0.0,
+        "requested_output_budget": 64,
+        "context_chars": 70,
+        "prompt_evaluation_ms": null,
+        "backend_first_token_ms": null,
+        "generation_ms": null,
+        "output_tokens": null,
+        "done_reason": null,
+        "first_audio_ready_ms": null,
+        "first_playback_launch_ms": null,
+        "first_pcm_accepted_ms": null,
+        "spoken_response_ms": null,
+        "spoken_response_clock_basis": "unobserved",
+        "total_cycle_ms": 94.0,
+        "interpretation": "Overlapping stages are not additive. PCM acceptance/playback launch are not measured acoustic onset. Unknown values are null."
+      }
+    },
+    {
+      "elapsed_ms": 79.841,
+      "sql_queries": 15,
+      "prompt_chars": 913,
+      "output_budget": 64,
+      "route": "local_rag",
+      "sources": 1,
+      "trace": {
+        "cache_accounting": "unknown_or_invalid",
+        "schema_version": 1,
+        "cycle_id": "2405ca69750d4d64a49d7cb624398a78",
+        "clock": "monotonic_ns",
+        "synthetic": true,
+        "status": "ok",
+        "elapsed_ms": 78.0,
+        "events": [
+          {
+            "name": "cycle_start",
+            "at_ms": 0.0,
+            "lane": "main"
+          },
+          {
+            "name": "service_prepare_start",
+            "at_ms": 0.0,
+            "lane": "main"
+          },
+          {
+            "name": "document_resolve_start",
+            "at_ms": 0.0,
+            "lane": "main"
+          },
+          {
+            "name": "document_resolve_end",
+            "at_ms": 0.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "conversation_prepare_start",
+            "at_ms": 0.0,
+            "lane": "main"
+          },
+          {
+            "name": "conversation_prepare_end",
+            "at_ms": 31.0,
+            "lane": "main"
+          },
+          {
+            "name": "policy_start",
+            "at_ms": 31.0,
+            "lane": "main"
+          },
+          {
+            "name": "policy_end",
+            "at_ms": 31.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "resource_policy",
+            "at_ms": 31.0,
+            "lane": "main",
+            "profile": "BALANCED",
+            "generation_allowed": true
+          },
+          {
+            "name": "history_start",
+            "at_ms": 31.0,
+            "lane": "main"
+          },
+          {
+            "name": "history_end",
+            "at_ms": 31.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "user_persist_start",
+            "at_ms": 31.0,
+            "lane": "main"
+          },
+          {
+            "name": "user_persist_end",
+            "at_ms": 31.0,
+            "lane": "main"
+          },
+          {
+            "name": "document_retrieve_start",
+            "at_ms": 31.0,
+            "lane": "main"
+          },
+          {
+            "name": "rag_start",
+            "at_ms": 31.0,
+            "lane": "main"
+          },
+          {
+            "name": "rag_end",
+            "at_ms": 47.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "document_retrieve_end",
+            "at_ms": 47.0,
+            "lane": "main"
+          },
+          {
+            "name": "route",
+            "at_ms": 47.0,
+            "lane": "main",
+            "route": "local_rag"
+          },
+          {
+            "name": "rag_context_start",
+            "at_ms": 47.0,
+            "lane": "main"
+          },
+          {
+            "name": "rag_context_end",
+            "at_ms": 47.0,
+            "lane": "main",
+            "num_predict": 64,
+            "chars": 70
+          },
+          {
+            "name": "service_prepare_end",
+            "at_ms": 47.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "response_persist_start",
+            "at_ms": 47.0,
+            "lane": "main"
+          },
+          {
+            "name": "response_persist_end",
+            "at_ms": 63.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "cycle_end",
+            "at_ms": 78.0,
+            "lane": "main",
+            "outcome": "ok"
+          }
+        ],
+        "dropped_events": 0,
+        "residency": "unknown_not_probed",
+        "acoustic_onset": "unobserved",
+        "missing_events": [
+          "capture_first_frame",
+          "llm_first_alphanumeric",
+          "first_complete_sentence",
+          "first_speech_unit",
+          "first_speech_pcm_accepted"
+        ],
+        "cache_counter_semantics": "backend_reported; missing is unknown; no derived uncached claim",
+        "interpretation": "Concurrent lanes overlap. Do not sum stages as end-to-end latency. PCM acceptance is a pipe write, not acoustic onset."
+      },
+      "stages": {
+        "synthetic": true,
+        "capture_vad_ms": null,
+        "stt_cli_ms": null,
+        "stt_server_ms": null,
+        "document_resolution_ms": 0.0,
+        "sqlite_retrieval_ms": 16.0,
+        "rag_context_ms": 0.0,
+        "requested_output_budget": 64,
+        "context_chars": 70,
+        "prompt_evaluation_ms": null,
+        "backend_first_token_ms": null,
+        "generation_ms": null,
+        "output_tokens": null,
+        "done_reason": null,
+        "first_audio_ready_ms": null,
+        "first_playback_launch_ms": null,
+        "first_pcm_accepted_ms": null,
+        "spoken_response_ms": null,
+        "spoken_response_clock_basis": "unobserved",
+        "total_cycle_ms": 78.0,
+        "interpretation": "Overlapping stages are not additive. PCM acceptance/playback launch are not measured acoustic onset. Unknown values are null."
+      }
+    },
+    {
+      "elapsed_ms": 81.814,
+      "sql_queries": 15,
+      "prompt_chars": 913,
+      "output_budget": 64,
+      "route": "local_rag",
+      "sources": 1,
+      "trace": {
+        "cache_accounting": "unknown_or_invalid",
+        "schema_version": 1,
+        "cycle_id": "e2cbdcb3c25349a094fd7f1fe00e463b",
+        "clock": "monotonic_ns",
+        "synthetic": true,
+        "status": "ok",
+        "elapsed_ms": 78.0,
+        "events": [
+          {
+            "name": "cycle_start",
+            "at_ms": 0.0,
+            "lane": "main"
+          },
+          {
+            "name": "service_prepare_start",
+            "at_ms": 0.0,
+            "lane": "main"
+          },
+          {
+            "name": "document_resolve_start",
+            "at_ms": 0.0,
+            "lane": "main"
+          },
+          {
+            "name": "document_resolve_end",
+            "at_ms": 0.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "conversation_prepare_start",
+            "at_ms": 0.0,
+            "lane": "main"
+          },
+          {
+            "name": "conversation_prepare_end",
+            "at_ms": 31.0,
+            "lane": "main"
+          },
+          {
+            "name": "policy_start",
+            "at_ms": 31.0,
+            "lane": "main"
+          },
+          {
+            "name": "policy_end",
+            "at_ms": 31.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "resource_policy",
+            "at_ms": 31.0,
+            "lane": "main",
+            "profile": "BALANCED",
+            "generation_allowed": true
+          },
+          {
+            "name": "history_start",
+            "at_ms": 31.0,
+            "lane": "main"
+          },
+          {
+            "name": "history_end",
+            "at_ms": 31.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "user_persist_start",
+            "at_ms": 31.0,
+            "lane": "main"
+          },
+          {
+            "name": "user_persist_end",
+            "at_ms": 31.0,
+            "lane": "main"
+          },
+          {
+            "name": "document_retrieve_start",
+            "at_ms": 47.0,
+            "lane": "main"
+          },
+          {
+            "name": "rag_start",
+            "at_ms": 47.0,
+            "lane": "main"
+          },
+          {
+            "name": "rag_end",
+            "at_ms": 47.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "document_retrieve_end",
+            "at_ms": 47.0,
+            "lane": "main"
+          },
+          {
+            "name": "route",
+            "at_ms": 47.0,
+            "lane": "main",
+            "route": "local_rag"
+          },
+          {
+            "name": "rag_context_start",
+            "at_ms": 47.0,
+            "lane": "main"
+          },
+          {
+            "name": "rag_context_end",
+            "at_ms": 47.0,
+            "lane": "main",
+            "num_predict": 64,
+            "chars": 70
+          },
+          {
+            "name": "service_prepare_end",
+            "at_ms": 47.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "response_persist_start",
+            "at_ms": 47.0,
+            "lane": "main"
+          },
+          {
+            "name": "response_persist_end",
+            "at_ms": 63.0,
+            "lane": "main",
+            "outcome": "ok"
+          },
+          {
+            "name": "cycle_end",
+            "at_ms": 78.0,
+            "lane": "main",
+            "outcome": "ok"
+          }
+        ],
+        "dropped_events": 0,
+        "residency": "unknown_not_probed",
+        "acoustic_onset": "unobserved",
+        "missing_events": [
+          "capture_first_frame",
+          "llm_first_alphanumeric",
+          "first_complete_sentence",
+          "first_speech_unit",
+          "first_speech_pcm_accepted"
+        ],
+        "cache_counter_semantics": "backend_reported; missing is unknown; no derived uncached claim",
+        "interpretation": "Concurrent lanes overlap. Do not sum stages as end-to-end latency. PCM acceptance is a pipe write, not acoustic onset."
+      },
+      "stages": {
+        "synthetic": true,
+        "capture_vad_ms": null,
+        "stt_cli_ms": null,
+        "stt_server_ms": null,
+        "document_resolution_ms": 0.0,
+        "sqlite_retrieval_ms": 0.0,
+        "rag_context_ms": 0.0,
+        "requested_output_budget": 64,
+        "context_chars": 70,
+        "prompt_evaluation_ms": null,
+        "backend_first_token_ms": null,
+        "generation_ms": null,
+        "output_tokens": null,
+        "done_reason": null,
+        "first_audio_ready_ms": null,
+        "first_playback_launch_ms": null,
+        "first_pcm_accepted_ms": null,
+        "spoken_response_ms": null,
+        "spoken_response_clock_basis": "unobserved",
+        "total_cycle_ms": 78.0,
+        "interpretation": "Overlapping stages are not additive. PCM acceptance/playback launch are not measured acoustic onset. Unknown values are null."
+      }
+    }
+  ]
+}

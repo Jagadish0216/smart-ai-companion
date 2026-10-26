@@ -188,7 +188,7 @@ class AssistantKnowledgeCompatibilityTests(TestCase):
         from django.db import connection
         from django.db.migrations.loader import MigrationLoader
         loader = MigrationLoader(connection)
-        self.assertEqual(loader.graph.leaf_nodes('knowledge_base'), [('knowledge_base', '0006_preserve_verified_snapshots')])
+        self.assertEqual(loader.graph.leaf_nodes('knowledge_base'), [('knowledge_base', '0007_document_normalized_title_and_more')])
         self.assertIn(('knowledge_base', '0005_knowledgechunk_page_number_evidenceversion_and_more'), loader.disk_migrations)
         self.assertNotIn(('knowledge_base', '0005_knowledgechunk_page_number'), loader.disk_migrations)
         migration = loader.disk_migrations[('conversations', '0002_message_source_metadata')]
@@ -219,7 +219,7 @@ class IntegratedMessageMigrationTests(TransactionTestCase):
         apps.get_model('knowledge_base', 'EvidenceQuery').objects.create(evidence=version, conversation=conversation, query='Original evidence query')
         executor = MigrationExecutor(connection)
         plan = executor.migration_plan(executor.loader.graph.leaf_nodes())
-        self.assertEqual([(item.app_label,item.name,backwards) for item,backwards in plan], [('conversations','0002_message_source_metadata',False)])
+        self.assertEqual({(item.app_label,item.name,backwards) for item,backwards in plan}, {('conversations','0002_message_source_metadata',False), ('conversations','0003_hardwaredocumentscope',False), ('knowledge_base','0007_document_normalized_title_and_more',False)})
         executor.migrate(executor.loader.graph.leaf_nodes())
         from conversations.models import Message
         from knowledge_base.models import KnowledgeChunk, Document, EvidenceVersion, EvidenceQuery

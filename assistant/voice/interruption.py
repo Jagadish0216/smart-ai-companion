@@ -32,6 +32,7 @@ def delivery(control):
     finally:
         _active.reset(token)
         control.pending.clear()
+        control.pending_metadata.clear()
 
 
 def defer_response(conversation, text, latency_ms):
@@ -128,6 +129,7 @@ class InterruptControl:
         self.callbacks = []
         self.lock = Lock()
         self.pending = []
+        self.pending_metadata = {}
         self.conversation_id = None
         self.mode = "stop"
         self.detection = None
@@ -252,11 +254,14 @@ class InterruptControl:
 
     def commit(self):
         if self.interrupted.is_set(): return
-        from assistant.services import _persist_generated_response
+        from assistant.services import _persist_generated_response, _save_source_metadata
         pending, self.pending = self.pending, []
         token = _active.set(None)
         try:
             for conversation,text,latency_ms in pending:
                 _persist_generated_response(conversation,text,latency_ms)
+                metadata = self.pending_metadata.pop(conversation.pk, None)
+                if metadata:
+                    _save_source_metadata(conversation, metadata)
         finally:
             _active.reset(token)

@@ -20,3 +20,5 @@ ONLINE_KNOWLEDGE_AUTO_PERSIST = True
 DEVICE_CONTROL_ENABLED = False
 DATABASES = {'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': ':memory:',
                          'TEST': {'NAME': ':memory:'}}}
+
+PHYSICAL_VOICE_DOCUMENTS_ENABLED = False  # Legacy transport fixtures; new hardware-RAG tests opt in.

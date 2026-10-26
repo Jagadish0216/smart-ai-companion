@@ -25,6 +25,7 @@ def _public_assistant_metadata(metadata):
             "mode",
             "route",
             "rag_used",
+            "response_truncated",
             "rag_chunks",
             "online_used",
             "online_results",

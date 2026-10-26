@@ -171,6 +171,17 @@ class LexicalRetriever(KnowledgeRetriever):
         return selected
 
 
+    def overview(self, *, after=-1):
+        """Bounded sequential context for an explicitly selected document, not a search fallback."""
+        if not self.document_ids:
+            return []
+        rows = KnowledgeChunk.objects.filter(document_id__in=self.document_ids, document__status='INDEXED',
+            chunk_index__gt=after).filter(document__source_type='MANUAL').order_by('document_id','chunk_index')
+        rows = rows.values_list('pk','document_id','document__source_identifier','document__filename','chunk_index','content','page_number')[:max(1,min(4,int(settings.RAG_TOP_K)))]
+        return [RetrievedChunk(chunk_id=i,document_id=d,source_identifier=s,title=t,chunk_index=c,content=text,score=1,page_number=p)
+                for i,d,s,t,c,text,p in rows]
+
+
 def _tokenize(text: str) -> list[str]:
     return [
         token

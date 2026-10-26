@@ -1369,6 +1369,7 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                 if pages:
                     caption(pages[0])
                 if prepared.number == 1:
+                    latency.mark("first_playback_launch", once=True)
                     playback_started = time.perf_counter()
                     timings["first_speech"] = playback_started - cycle_started
                     timings["ai_to_first_speech"] = playback_started - stream_started
@@ -1501,6 +1502,9 @@ def speak_stream_response(events, tts_provider, temp_path, config, timings, cycl
                 if start is not None:
                     raise VoiceLoopError("AI response failed: duplicate stream start.")
                 start = event
+                if event.get("physical_document"):
+                    buffer.first_sentence_min_chars = 1
+                    buffer.release_complete_sentences = True
                 if control is not None:
                     control.conversation_id = event.get("conversation_id")
                 if on_stream_start is not None:
@@ -1953,6 +1957,8 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
         try:
             events = AssistantService.process_message_stream(
                 transcript, conversation_id=conversation_id, response_plan=response_plan,
+                **({"voice_session_key": getattr(settings,"PHYSICAL_VOICE_SESSION_KEY","physical-companion")}
+                   if getattr(settings,"PHYSICAL_VOICE_DOCUMENTS_ENABLED",True) else {}),
             )
             returned_id, metadata = speak_stream_response(
                 events, get_tts_provider(), temp_path, config, timings, cycle_started,
@@ -1969,6 +1975,7 @@ def _run_voice_cycle(config, conversation_id, display, *, audio_file=None, text=
         next_conversation_id = returned_id if returned_id is not None else conversation_id
 
     timings["total"] = time.perf_counter() - cycle_started
+    latency.mark("spoken_response_complete", once=True)
     _print_timing_summary(timings)
     profile = (metadata or {}).get("resource_profile")
     idle = {"ECO": DisplayState.ECO, "PROTECTIVE": DisplayState.PROTECTIVE}.get(profile, DisplayState.READY)

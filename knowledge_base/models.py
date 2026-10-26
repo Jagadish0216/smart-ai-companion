@@ -19,6 +19,7 @@ class Document(models.Model):
     
     file = models.FileField(upload_to=document_upload_path)
     filename = models.CharField(max_length=255)
+    normalized_title = models.CharField(max_length=255, blank=True, default="", null=True)
     file_type = models.CharField(max_length=50, blank=True)
     source_identifier = models.CharField(max_length=1024, blank=True, db_index=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
@@ -38,6 +39,8 @@ class Document(models.Model):
     sync_error_message = models.CharField(max_length=255, blank=True)
 
     class Meta:
+        indexes = [models.Index(fields=("source_type", "normalized_title"), name="doc_type_title_idx"),
+                   models.Index(fields=("source_type", "uploaded_at"), name="doc_type_uploaded_idx")]
         constraints = [models.UniqueConstraint(
             fields=('provider', 'source_url'), condition=models.Q(source_type='ONLINE'),
             name='unique_online_provider_url',
@@ -52,6 +55,10 @@ class Document(models.Model):
     def save(self, *args, **kwargs):
         if not self.filename and self.file:
             self.filename = os.path.basename(self.file.name)
+        from .document_names import normalize_title
+        self.normalized_title = normalize_title(self.filename)
+        if kwargs.get('update_fields') is not None:
+            kwargs['update_fields'] = set(kwargs['update_fields']) | {'normalized_title'}
         super().save(*args, **kwargs)
 
     def __str__(self):

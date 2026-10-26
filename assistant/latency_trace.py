@@ -14,12 +14,12 @@ import uuid
 MAX_EVENTS = 512
 MAX_BYTES = 128 * 1024
 MAX_FILES = 8
-SPANS = frozenset('rag playback_conversion capture capture_open capture_cleanup normalize stt_cli stt_server service_prepare conversation_prepare policy history user_persist routing memory response_persist resource_snapshot resource_metrics network_checks ancillary_checks provisioning_check piper_ready piper_exchange tts audio_prepare text_queue_wait audio_queue_wait player_start leading_silence speech_file drain display_callback serial_write'.split())
-MARKS = frozenset('button_release cycle_start cycle_end capture_first_frame calibration_end speech_detected capture_stopped endpoint_detected capture_ready ollama_request_ready llm_first_alphanumeric ollama_complete first_complete_sentence first_speech_unit piper_state first_audio_ready first_speech_pcm_accepted resource_cache_hit resource_cache_miss resource_state resource_policy cycle_config route stream_error'.split())
+SPANS = frozenset('document_resolve document_retrieve rag_context rag playback_conversion capture capture_open capture_cleanup normalize stt_cli stt_server service_prepare conversation_prepare policy history user_persist routing memory response_persist resource_snapshot resource_metrics network_checks ancillary_checks provisioning_check piper_ready piper_exchange tts audio_prepare text_queue_wait audio_queue_wait player_start leading_silence speech_file drain display_callback serial_write'.split())
+MARKS = frozenset('first_playback_launch spoken_response_complete button_release cycle_start cycle_end capture_first_frame calibration_end speech_detected capture_stopped endpoint_detected capture_ready ollama_request_ready llm_first_alphanumeric ollama_complete first_complete_sentence first_speech_unit piper_state first_audio_ready first_speech_pcm_accepted resource_cache_hit resource_cache_miss resource_state resource_policy cycle_config route stream_error'.split())
 EVENT_NAMES = MARKS | {'audio_unit_ready', 'audio_unit_dequeued', 'text_unit_ready', 'punctuation_pause'} | {s + suffix for s in SPANS for suffix in ('_start', '_end')}
 EVENT_NAMES = EVENT_NAMES | frozenset(("capture_warmup_start", "capture_warmup_end", "calibration_start",
                                     "speech_start_window_open", "minimum_speech_accepted"))
-FIELDS = frozenset('load_duration_ms prompt_eval_duration_ms eval_duration_ms total_duration_ms prompt_eval_count prompt_eval_cached_count eval_count temperature_c ram_available_bytes ready_ms exchange_ms unit chars tts_ms prepare_ms audio_seconds pause_ms text_queue_age_ms ready_queue_age_ms'.split())
+FIELDS = frozenset('num_predict load_duration_ms prompt_eval_duration_ms eval_duration_ms total_duration_ms prompt_eval_count prompt_eval_cached_count eval_count temperature_c ram_available_bytes ready_ms exchange_ms unit chars tts_ms prepare_ms audio_seconds pause_ms text_queue_age_ms ready_queue_age_ms'.split())
 _active = ContextVar('voice_latency_trace', default=None)
 _lane = ContextVar('voice_latency_lane', default='main')
 _speech_file = ContextVar('voice_latency_speech_file', default=False)

@@ -161,7 +161,15 @@
               "audio_unit_dequeued",
               "button_release",
               "stt_server_start",
-              "stt_server_end"
+              "stt_server_end",
+              "document_resolve_start",
+              "document_resolve_end",
+              "document_retrieve_start",
+              "document_retrieve_end",
+              "rag_context_start",
+              "rag_context_end",
+              "spoken_response_complete",
+              "first_playback_launch"
             ]
           },
           "at_ms": {
@@ -328,6 +336,10 @@
             "minimum": 0
           },
           "ready_queue_age_ms": {
+            "type": "number",
+            "minimum": 0
+          },
+          "num_predict": {
             "type": "number",
             "minimum": 0
           }

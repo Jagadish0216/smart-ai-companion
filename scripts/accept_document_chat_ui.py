@@ -11,7 +11,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 TESTS = [
-    'assistant.tests_document_chat_ui', 'knowledge_base.tests_complete_knowledge', 'knowledge_base.tests_documents',
+    'assistant.tests_physical_document_rag', 'assistant.tests_document_chat_ui', 'knowledge_base.tests_complete_knowledge', 'knowledge_base.tests_documents',
     'knowledge_base.tests_rag', 'knowledge_base.tests_retrieval_projection',
     'knowledge_base.tests_online_sync', 'assistant.tests_streaming',
     'assistant.tests_browser_voice', 'assistant.tests_routing',

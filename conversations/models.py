@@ -25,3 +25,15 @@ class Message(models.Model):
 
     def __str__(self):
         return f"{self.sender}: {self.text[:50]}"
+
+
+class HardwareDocumentScope(models.Model):
+    """Trusted hardware-session state; never shared with browser conversation scope."""
+    session_key = models.CharField(max_length=64, primary_key=True)
+    process_token = models.CharField(max_length=32)
+    conversation = models.ForeignKey(Conversation, null=True, on_delete=models.SET_NULL)
+    document = models.ForeignKey('knowledge_base.Document', null=True, on_delete=models.SET_NULL)
+    pending_document_ids = models.JSONField(default=list)
+    document_indexed_at = models.DateTimeField(null=True)
+    chunk_cursor = models.IntegerField(default=-1)
+    expires_at = models.DateTimeField()
