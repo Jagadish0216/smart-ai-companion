@@ -3,3 +3,5 @@ knowledge_library/bundled/* -text
 scripts/deploy_complete_knowledge.sh text eol=lf
 scripts/verify_complete_knowledge.sh text eol=lf
 deployment/systemd/smart-ai-companion-knowledge.* text eol=lf
+
+scripts/deploy_assistant_knowledge_ui.sh text eol=lf

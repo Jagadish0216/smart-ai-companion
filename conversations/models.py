@@ -16,6 +16,7 @@ class Message(models.Model):
     conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name='messages')
     sender = models.CharField(max_length=10, choices=SENDER_CHOICES)
     text = models.TextField()
+    source_metadata = models.JSONField(default=dict, blank=True, null=True)
     timestamp = models.DateTimeField(auto_now_add=True)
     
     # Optional fields for deeper Edge AI tracking

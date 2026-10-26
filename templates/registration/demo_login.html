@@ -1,7 +1,12 @@
 {% load static %}<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Sign in — Smart AI Companion</title><link rel="stylesheet" href="{% static 'css/style.css' %}"></head>
-<body><main style="max-width:28rem;margin:4rem auto;padding:1.5rem">
-<h1>Smart AI Companion</h1><p>Sign in to the local control center. Local AI works without internet.</p>
-<form method="post">{% csrf_token %}{{ form.as_p }}<input type="hidden" name="next" value="{{ next }}"><button type="submit">Sign in</button></form>
-</main></body></html>
+<html lang="en" data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign in — Smart AI Companion</title><link rel="stylesheet" href="{% static 'css/style.css' %}"><link rel="stylesheet" href="{% static 'css/design-system.css' %}"><link rel="stylesheet" href="{% static 'css/login.css' %}"></head>
+<body class="login-page"><main class="login-card" aria-labelledby="login-title">
+<div class="login-brand" aria-hidden="true">✦</div><p class="eyebrow">SMART AI COMPANION</p>
+<h1 id="login-title">Welcome back</h1><p class="login-description">Sign in to your companion’s control center.</p>
+{% if form.errors %}<div class="login-error" role="alert" id="login-errors">Sign-in failed. Check your username and password and try again.{{ form.non_field_errors }}</div>{% endif %}
+<form method="post">{% csrf_token %}<input type="hidden" name="next" value="{{ next }}">
+<label for="id_username">Username</label><input id="id_username" name="username" value="{{ form.username.value|default_if_none:'' }}" autocomplete="username" required autofocus {% if form.errors %}aria-invalid="true" aria-describedby="login-errors"{% endif %}>
+<label for="id_password">Password</label><div class="password-field"><input id="id_password" type="password" name="password" autocomplete="current-password" required {% if form.errors %}aria-invalid="true" aria-describedby="login-errors"{% endif %}><button type="button" id="toggle-password" aria-label="Show password" aria-pressed="false">Show</button></div>
+<button class="login-submit" type="submit">Sign in →</button></form><p class="login-footnote">Your local AI companion. Ready when you are.</p>
+</main><script src="{% static 'js/login.js' %}"></script></body></html>

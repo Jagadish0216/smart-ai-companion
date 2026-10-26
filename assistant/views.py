@@ -142,7 +142,8 @@ class ChatAPIView(APIView):
                 msg_data.append({
                     "role": msg.sender,
                     "content": msg.text,
-                    "created_at": msg.timestamp.isoformat()
+                    "created_at": msg.timestamp.isoformat(),
+                    **_public_assistant_metadata(msg.source_metadata)
                 })
             return Response({"conversation_id": conversation.id, "messages": msg_data}, status=status.HTTP_200_OK)
         except Conversation.DoesNotExist:

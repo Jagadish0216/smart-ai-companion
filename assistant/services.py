@@ -120,6 +120,7 @@ class AssistantService:
             response_text = _apply_resource_status(result.text, prepared.execution_plan)
             _persist_generated_response(prepared.conversation, response_text, result.latency_ms)
             metadata = _generation_metadata(prepared, result)
+            _save_source_metadata(prepared.conversation, metadata)
             _log_request_performance(prepared, metadata)
             return prepared.conversation, response_text, metadata, None
         except Exception as exc:
@@ -207,6 +208,7 @@ class AssistantService:
                 result.latency_ms,
             )
             metadata = _generation_metadata(prepared, result)
+            _save_source_metadata(prepared.conversation, metadata)
             _log_request_performance(prepared, metadata)
             completed = True  # Set before yielding: close() can occur at the yield.
             yield {
@@ -588,7 +590,7 @@ def _prepare_message(
     memory_messages = []
     memory_history = []
     memory_started = time.perf_counter()
-    if not online_results and conversation_id and (response_plan is None or response_plan.allow_long_term_memory):
+    if document_ids is None and not online_results and conversation_id and (response_plan is None or response_plan.allow_long_term_memory):
         try:
             memory_messages = get_memory_retriever().retrieve(
                 query, conversation_id=conversation.id, before_id=current_message.id,
@@ -610,11 +612,13 @@ def _prepare_message(
     history = memory_history + history
 
     rag_results = select_rag_context(list(route_decision.rag_results))
+    if document_ids is not None:
+        history = []  # Earlier answers are not evidence for the newly selected scope.
     local_knowledge = document_ids is not None or requests_local_knowledge(query)
     project_scope = bool(re.search(r'\b(project|setup|wiring|gpio|pins?|hardware|board)\b', query, re.I))
     explanation = bool(re.search(r'\b(?:explain|why|works?)\b|\bhow (?:does|do|is|are|can|would)\b', query, re.I))
     document_only = bool(re.search(r'\b(documents?|notes|files|knowledge base|only)\b', query, re.I))
-    project_general = local_knowledge and project_scope and explanation and not document_only
+    project_general = document_ids is None and local_knowledge and project_scope and explanation and not document_only
     if local_knowledge:
         effective_instruction = _combine_instructions(effective_instruction,
             'Project-specific facts require supplied local evidence; state missing project details as unknown. Clearly label any general explanation as general knowledge.'
@@ -941,6 +945,7 @@ def _persist_direct_response(
         ) if execution_started is not None else latency_ms
     if stage_ms:
         metadata.update(stage_ms)
+    _save_source_metadata(conversation, metadata)
     logger.info(
         "Assistant direct request completed",
         extra={
@@ -1136,3 +1141,16 @@ def _get_conversation_history(conversation: Conversation, limit: int = 10,
         for msg in reversed(messages)
     ]
     return history
+
+
+def _save_source_metadata(conversation, metadata):
+    # Save only citation data alongside the completed answer; old rows stay empty.
+    sources = {key: [{k: v for k, v in item.items() if k != 'source_identifier'} for item in metadata.get(key, [])]
+               for key in ('rag_sources', 'online_sources')}
+    if not any(sources.values()):
+        return
+    sources.update({key: metadata[key] for key in ('fallback_reason', 'online_attempted', 'online_used') if key in metadata})
+    message = conversation.messages.filter(sender='AI').order_by('-id').first()
+    if message is not None and not conversation.messages.filter(sender='USER', id__gt=message.id).exists():
+        message.source_metadata = sources
+        message.save(update_fields=['source_metadata'])
