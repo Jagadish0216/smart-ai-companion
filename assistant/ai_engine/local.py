@@ -233,6 +233,7 @@ class LocalLLMEngine(AIEngine):
         first_content_at = None
         complete_text = ""
         final_payload = None
+        thinking_chars = 0
 
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response, interruptible_response(response):
@@ -256,6 +257,8 @@ class LocalLLMEngine(AIEngine):
                         )
                     message = event.get("message")
                     content = message.get("content", "") if isinstance(message, dict) else ""
+                    if isinstance(message,dict) and isinstance(message.get("thinking"),str):
+                        thinking_chars += len(message["thinking"])
                     if content:
                         latency.first_text(content)
                         if first_content_at is None:
@@ -289,6 +292,8 @@ class LocalLLMEngine(AIEngine):
         ttft_ms = round((first_content_at - request_started) * 1000)
         metrics = self._log_performance_metrics(final_payload)
         metrics.update(self._prompt_metrics(messages))
+        metrics.update(self.runtime_diagnostics(num_predict=num_predict))
+        metrics["thinking_chars"] = thinking_chars
         logger.info(
             "Ollama streaming request completed",
             extra={
@@ -416,6 +421,11 @@ class LocalLLMEngine(AIEngine):
                 extra={"ollama_metrics": metrics, **metrics},
             )
         return metrics
+
+    def runtime_diagnostics(self, *, num_predict=None):
+        """Actual request controls; no prompts, credentials or hidden reasoning text."""
+        return {'num_ctx':self._num_ctx,'requested_num_predict':num_predict if num_predict is not None else self._num_predict,
+                'think_enabled':self._think,'keep_alive':self._keep_alive,**self._cpu_options}
 
     def _build_chat_request(
         self,

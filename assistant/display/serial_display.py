@@ -2,6 +2,9 @@
 
 from assistant import latency_trace as latency
 import logging
+import os
+import hashlib
+from pathlib import Path
 import threading
 import time
 
@@ -25,6 +28,7 @@ class SerialCompanionDisplay(CompanionDisplay):
         self.baudrate = baudrate
         self.startup_delay_seconds = startup_delay_seconds
         self._lock = threading.RLock()
+        self._ownership = None
         self._serial = None
         self._closed = False
         self._next_reconnect_at = 0.0
@@ -40,6 +44,15 @@ class SerialCompanionDisplay(CompanionDisplay):
     def _connect(self):
         connection = None
         try:
+            if os.name=='posix' and self._ownership is None:
+                import fcntl
+                directory=Path.home()/'.cache'/'smart-ai-companion'
+                directory.mkdir(mode=0o700,parents=True,exist_ok=True)
+                key=hashlib.sha256(os.path.realpath(self.port).encode()).hexdigest()[:16]
+                ownership=(directory/('display-'+key+'.lock')).open('a')
+                try: fcntl.flock(ownership,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                except BaseException: ownership.close();raise
+                self._ownership=ownership
             if serial is None:
                 raise RuntimeError("serial dependency unavailable")
             connection = serial.Serial(
@@ -48,6 +61,7 @@ class SerialCompanionDisplay(CompanionDisplay):
             )
             # Set inactive lines before open; do not toggle reset lines per command.
             # Some OS/drivers can still glitch these lines on opening the port.
+            if os.name=='posix': connection.exclusive=True
             connection.dtr = False
             connection.rts = False
             connection.port = self.port
@@ -134,3 +148,6 @@ class SerialCompanionDisplay(CompanionDisplay):
             if self._serial is not None:
                 self._close_connection(self._serial)
                 self._serial = None
+            if self._ownership is not None:
+                self._ownership.close()
+                self._ownership=None
