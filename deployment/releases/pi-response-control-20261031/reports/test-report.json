@@ -1,0 +1,24 @@
+{
+  "tests_run": 1682,
+  "failures": [],
+  "errors": [],
+  "skipped": [
+    [
+      "assistant.tests_alsa_stream.RealPipeTests.test_real_nonblocking_pipe_normal_eof_and_cancelled_stalled_reader",
+      "Requires Unix nonblocking pipe support"
+    ]
+  ],
+  "unavailable": {
+    "assistant.tests_document_chat_ui.AssistantKnowledgeCompatibilityTests.test_memory_all_local_contract_and_existing_dashboard_remain_available": "Required deployment, environment-example, firmware or knowledge-library asset was not included in authoritative snapshot.",
+    "assistant.tests_streaming.StreamingFrontendStructureTests.test_deployment_uses_one_threaded_worker_and_weak_warm_dependency": "Required deployment, environment-example, firmware or knowledge-library asset was not included in authoritative snapshot.",
+    "conversations.tests_memory.ConversationMemoryRetrievalTests.test_pi_configuration_defaults_and_example": "Required deployment, environment-example, firmware or knowledge-library asset was not included in authoritative snapshot.",
+    "knowledge_base.tests_complete_knowledge.CompleteKnowledgeTests.test_library_real_bundle_indexes_idempotently": "Required deployment, environment-example, firmware or knowledge-library asset was not included in authoritative snapshot.",
+    "assistant.tests_integrated_hardware.AcceptanceEvidenceTests.test_protocol_model_matches_checked_in_firmware_contract": "Required deployment, environment-example, firmware or knowledge-library asset was not included in authoritative snapshot.",
+    "system.tests_demo_deployment.DemoDeploymentTests.test_demo_hosts_and_model_configuration_have_no_wildcards_or_model_changes": "Required deployment, environment-example, firmware or knowledge-library asset was not included in authoritative snapshot.",
+    "system.tests_demo_deployment.DemoDeploymentTests.test_voice_and_stt_units_are_bounded_nonroot_and_have_single_input_mode": "Required deployment, environment-example, firmware or knowledge-library asset was not included in authoritative snapshot.",
+    "system.tests_provisioning.ProvisioningCommandAndDeploymentTests.test_polkit_rule_grants_only_required_actions_to_service_user": "Required deployment, environment-example, firmware or knowledge-library asset was not included in authoritative snapshot.",
+    "system.tests_provisioning.ProvisioningCommandAndDeploymentTests.test_systemd_template_contains_no_stale_paths_or_privilege_escalation": "Required deployment, environment-example, firmware or knowledge-library asset was not included in authoritative snapshot.",
+    "system.tests_provisioning.ProvisioningCommandAndDeploymentTests.test_systemd_template_matches_real_non_root_deployment": "Required deployment, environment-example, firmware or knowledge-library asset was not included in authoritative snapshot.",
+    "assistant.tests_pi_deployment_isolation.DeploymentIdempotencyTests.test_supervisor_detects_ancestor_and_equivalent_cherry_pick_without_services": "POSIX deployment shell fixture cannot execute in this Windows environment."
+  }
+}

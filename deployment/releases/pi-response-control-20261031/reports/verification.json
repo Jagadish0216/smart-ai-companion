@@ -1,0 +1,27 @@
+{
+  "snapshot_files": 469,
+  "preserved_source_files": 459,
+  "tests_run": 1682,
+  "passed": 1681,
+  "skipped": [
+    [
+      "assistant.tests_alsa_stream.RealPipeTests.test_real_nonblocking_pipe_normal_eof_and_cancelled_stalled_reader",
+      "Requires Unix nonblocking pipe support"
+    ]
+  ],
+  "unavailable_count": 11,
+  "new_tests": 19,
+  "failures": 0,
+  "errors": 0,
+  "django_checks": "passed",
+  "installer": "staged full applicable suite, atomic apply, exact rollback and all preimage hashes restored",
+  "negative_checks": [
+    "modified service source rejected",
+    "modified provider rejected",
+    "new-file collision rejected"
+  ],
+  "providers_config_firmware": "unchanged",
+  "production_service_network_operations": false,
+  "latency": "synthetic before/after only; actual Pi Ollama/Piper/acoustic timings not observed",
+  "git_deployment": "release artifacts; Pi HEAD is absent on GitHub, no direct pull or merge compatibility claimed"
+}

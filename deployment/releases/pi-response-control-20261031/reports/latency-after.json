@@ -1,0 +1,26 @@
+{
+  "synthetic": true,
+  "samples": 3,
+  "first_output_call_ms": [
+    6.884599999466445,
+    3.0335999981616624,
+    3.4735000008367933
+  ],
+  "median_first_output_call_ms": 3.4735000008367933,
+  "first_audio_ready_ms": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "first_playback_launch_ms": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "normal_system_chars": 557,
+  "prompt_build_cpu_mean_ms": 0.004363000043667853,
+  "ollama_ttft_ms": null,
+  "real_piper_synthesis_ms": null,
+  "acoustic_onset_ms": null,
+  "limits": "Mock model/audio. Output-call time is neither device PCM acceptance nor audible speech. No Pi speedup is claimed."
+}

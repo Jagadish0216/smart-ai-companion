@@ -1,0 +1,1157 @@
+--- a/scripts/voice_loop.py
++++ b/scripts/voice_loop.py
+@@ -1352,12 +1352,9 @@
+                     timings["playback_starvation_ms"] += starvation
+                     timings["max_playback_starvation_ms"] = max(timings["max_playback_starvation_ms"], starvation)
+                 if prepared.number == 1:
+-                    if config.voice_refinements:
+-                        # One bounded lookahead, never wait for the full answer.
+-                        # Leave the second item in the bounded queue in playback order.
+-                        until = time.monotonic() + .8
+-                        while ready_audio.empty() and time.monotonic() < until and not stopped.is_set():
+-                            stopped.wait(.02)
++                    # Start the first complete unit as soon as it is ready.
++                    # Bounded queues overlap later synthesis without a fixed
++                    # second-unit wait on the critical path.
+                     if control is not None:
+                         control.start()
+                     if on_playback_start is not None:
+@@ -1371,7 +1368,7 @@
+                 if prepared.number == 1:
+                     latency.mark("first_playback_launch", once=True)
+                     playback_started = time.perf_counter()
+-                    timings["first_speech"] = playback_started - cycle_started
++                    timings["first_speech"] = playback_started - cycle_started  # Launch proxy, not acoustic onset.
+                     timings["ai_to_first_speech"] = playback_started - stream_started
+                 page_index = 0
+                 total_chars = sum(map(len, pages))
+@@ -1397,7 +1394,7 @@
+                                 **({"on_reference": control.reference} if control is not None and control.voice else {}),
+                             )
+                             player.start()
+-                            if control is not None and config.voice_refinements:
++                            if control is not None:
+                                 def cancel_output():
+                                     # Signal immediately from the cancelling thread; the sole
+                                     # playback worker still owns wait/kill/reap and descriptors.
+@@ -1993,7 +1990,7 @@
+ 
+ 
+ def run_push_to_talk(config, button, display):
+-    """Discard presses while busy; require release and a fresh press each cycle."""
++    """One GPIO owner: hold to record; a fresh press during output cancels it."""
+     from assistant.voice.push_to_talk import ShortPress, wait_released
+     conversation_id = None
+     failures = 0
+@@ -2003,7 +2000,7 @@
+         wait_released(button.held)
+         while not button.held.wait(.1):
+             pass
+-        control = InterruptControl(keyboard=True)
++        control = InterruptControl(keyboard=True, button=button.held)
+         try:
+             try:
+                 with delivery(control):
+--- a/docs/voice-latency-trace.schema.json
++++ b/docs/voice-latency-trace.schema.json
+@@ -169,7 +169,10 @@
+               "rag_context_start",
+               "rag_context_end",
+               "spoken_response_complete",
+-              "first_playback_launch"
++              "first_playback_launch",
++              "button_cancel_requested",
++              "prompt_prepare_start",
++              "prompt_prepare_end"
+             ]
+           },
+           "at_ms": {
+--- a/assistant/tests_adaptive_online.py
++++ b/assistant/tests_adaptive_online.py
+@@ -67,7 +67,10 @@
+ 
+     @patch("assistant.online.searxng._open_search")
+     def test_retry_transient_then_cache_across_retriever_instances(self, http):
+-        http.side_effect = [socket.timeout(), Response([raw_result()])]
++        fresh = raw_result()
++        fresh['publishedDate'] = datetime.now(timezone.utc).isoformat()
++        fresh['content'] = 'Acme CEO is Alice Smith as of '+datetime.now(timezone.utc).date().isoformat()+'.'
++        http.side_effect = [socket.timeout(), Response([fresh])]
+         first = self.retriever.retrieve("Acme CEO")
+         second = SearXNGOnlineRetriever(base_url=self.retriever.base_url, timeout_seconds=4, max_results=4).retrieve("Acme CEO")
+         self.assertEqual(first, second)
+@@ -240,7 +243,11 @@
+                             elif scenario == "contradictory":
+                                 http.return_value = Response([raw_result(), {**raw_result(), "url": "https://example.net/acme", "content": "Acme CEO is Bob Jones as of 2026-10-24."}])
+                             query = "Who is Acme CEO?"
+-                            kwargs = {"response_plan": AssistantResponsePolicy.plan_voice_response(query)} if voice else {}
++                            # This matrix tests strict retrieval, independently of
++                            # the separately tested qualified background fallback.
++                            kwargs = {"knowledge_mode": "online_only"}
++                            if voice:
++                                kwargs['response_plan'] = AssistantResponsePolicy.plan_voice_response(query)
+                             if stream:
+                                 events = list(AssistantService.process_message_stream(query, **kwargs))
+                                 self.assertEqual(events[-1]["type"], "done")
+--- a/assistant/tests_voice_stream.py
++++ b/assistant/tests_voice_stream.py
+@@ -1129,7 +1129,8 @@
+         engine.generate_stream.return_value = [AIEngineStreamEvent(type="delta", text=model_text),
+                                                AIEngineStreamEvent(type="done", result=result)]
+         prepare.return_value = SimpleNamespace(
+-            stage_ms={}, execution_started=0,
++            stage_ms={}, execution_started=0, query='question',
++            online_fallback_allowed=False, background_fallback=False,
+             conversation=SimpleNamespace(id=42), num_predict=64, engine=engine, history=[], system_instruction="", is_voice=False,
+             route_decision=SimpleNamespace(route=SimpleNamespace(value="local")),
+             execution_plan=SimpleNamespace(resource_profile="ECO", status_message=REDUCED_RESOURCE_STATUS,
+--- a/assistant/services.py
++++ b/assistant/services.py
+@@ -7,7 +7,7 @@
+ """
+ 
+ from assistant import latency_trace as latency
+-from assistant.voice.interruption import defer_response
++from assistant.voice.interruption import defer_response, current as delivery_control
+ import logging
+ import math
+ import time
+@@ -51,6 +51,9 @@
+ )
+ from .routing import QueryRoute, QueryRouteDecision, QueryRouter, requests_local_knowledge
+ import re
++from .identity import introduction_instruction
++from .local_first import (RefusalGate, refused, private_query, officeholder_background, defensible_background,
++                          BACKGROUND_INSTRUCTION, BACKGROUND_PREFIX)
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -72,6 +75,11 @@
+     stage_ms: dict[str, int] = field(default_factory=dict)
+     is_voice: bool = False
+     physical_document: bool = False
++    user_message_id: int | None = None
++    response_plan: ResponsePlan | None = None
++    online_fallback_allowed: bool = False
++    fallback_attempted: bool = False
++    background_fallback: bool = False
+ 
+ 
+ class AssistantService:
+@@ -114,25 +122,7 @@
+         if isinstance(prepared, tuple):
+             return prepared
+ 
+-        try:
+-            prepared.stage_ms["request_generation_start_ms"] = round((time.perf_counter() - prepared.execution_started) * 1000)
+-            result = prepared.engine.generate(
+-                query,
+-                **_generation_kwargs(prepared),
+-            )
+-            if getattr(prepared, 'physical_document', False):
+-                from .voice.sentence_answer import SentenceAnswer
+-                gate=SentenceAnswer();gate.feed(result.text);gate.finish(result.metrics.get('done_reason'))
+-                result=replace(result,text=gate.text)
+-                prepared.stage_ms['response_truncated']=gate.truncated
+-            response_text = _apply_resource_status(result.text, prepared.execution_plan)
+-            _persist_generated_response(prepared.conversation, response_text, result.latency_ms)
+-            metadata = _generation_metadata(prepared, result)
+-            _save_source_metadata(prepared.conversation, metadata)
+-            _log_request_performance(prepared, metadata)
+-            return prepared.conversation, response_text, metadata, None
+-        except Exception as exc:
+-            return _generation_failure_tuple(prepared, exc)
++        return _generate_prepared(prepared)
+ 
+     @staticmethod
+     def process_message_stream(
+@@ -154,34 +144,71 @@
+             response_plan=response_plan,
+             knowledge_mode=knowledge_mode, document_ids=document_ids, voice_session_key=voice_session_key,
+         )
+-        if isinstance(prepared, tuple):
+-            conversation, text, metadata, error = prepared
+-            if error:
+-                yield _stream_error(error, conversation=conversation)
+-                return
+-            yield {
+-                "type": "start",
+-                "conversation_id": conversation.id,
+-                "direct": True,
+-            }
+-            yield {"type": "delta", "text": text}
+-            yield {
+-                "type": "done",
+-                "conversation_id": conversation.id,
+-                "response": text,
+-                **metadata,
+-            }
++        yield from _stream_prepared(prepared)
++
++
++def _generate_prepared(prepared):
++    try:
++        prepared.stage_ms["request_generation_start_ms"] = round((time.perf_counter() - prepared.execution_started) * 1000)
++        result = prepared.engine.generate(
++            prepared.query,
++            **_generation_kwargs(prepared),
++        )
++        if prepared.online_fallback_allowed and refused(result.text):
++            retry = _online_retry(prepared, 'local_refusal')
++            if retry is not None:
++                return retry if isinstance(retry, tuple) else _generate_prepared(retry)
++        if getattr(prepared, 'physical_document', False):
++            from .voice.sentence_answer import SentenceAnswer
++            gate=SentenceAnswer();gate.feed(result.text);gate.finish(result.metrics.get('done_reason'))
++            result=replace(result,text=gate.text)
++            prepared.stage_ms['response_truncated']=gate.truncated
++        if prepared.background_fallback:
++            result = replace(result, text=defensible_background(result.text))
++        response_text = _response_prefix(prepared) + result.text
++        _persist_generated_response(prepared.conversation, response_text, result.latency_ms)
++        metadata = _generation_metadata(prepared, result)
++        _save_source_metadata(prepared.conversation, metadata)
++        _log_request_performance(prepared, metadata)
++        return prepared.conversation, response_text, metadata, None
++    except Exception as exc:
++        if isinstance(exc, EngineUnavailableError):
++            retry = _online_retry(prepared, 'local_failure')
++            if retry is not None:
++                return retry if isinstance(retry, tuple) else _generate_prepared(retry)
++        return _generation_failure_tuple(prepared, exc)
++
++
++def _stream_prepared(prepared, *, emit_start=True):
++    if isinstance(prepared, tuple):
++        conversation, text, metadata, error = prepared
++        if error:
++            yield _stream_error(error, conversation=conversation)
+             return
+-
+-        complete_text = ""
+-        raw_parts = []
+-        from .voice.sentence_answer import SentenceAnswer
+-        sentence_answer = SentenceAnswer() if getattr(prepared, 'physical_document', False) else None
+-        result = None
+-        prefix = _resource_status_prefix(prepared.execution_plan)
+-        completed = False
+-        engine_stream = None
+-        try:
++        if emit_start:
++            yield {"type": "start", "conversation_id": conversation.id, "direct": True}
++        yield {"type": "delta", "text": text}
++        yield {
++            "type": "done",
++            "conversation_id": conversation.id,
++            "response": text,
++            **metadata,
++        }
++        return
++
++    complete_text = ""
++    raw_parts = []
++    from .voice.sentence_answer import SentenceAnswer
++    sentence_answer = SentenceAnswer() if getattr(prepared, 'physical_document', False) else None
++    result = None
++    prefix = _response_prefix(prepared)
++    completed = False
++    engine_stream = None
++    gate = RefusalGate() if prepared.online_fallback_allowed else None
++    emitted_answer = False
++    prefix_emitted = False
++    try:
++        if emit_start:
+             yield {
+                 "type": "start",
+                 "conversation_id": prepared.conversation.id,
+@@ -191,78 +218,126 @@
+                 "route": prepared.route_decision.route.value,
+                 "num_predict": prepared.num_predict,
+             }
+-            if prefix:
+-                complete_text += prefix
+-                yield {"type": "delta", "text": prefix}
+-            prepared.stage_ms["request_generation_start_ms"] = round((time.perf_counter() - prepared.execution_started) * 1000)
+-            engine_stream = prepared.engine.generate_stream(
+-                query,
+-                **_generation_kwargs(prepared),
++        if prefix:
++            complete_text += prefix
++        prepared.stage_ms["request_generation_start_ms"] = round((time.perf_counter() - prepared.execution_started) * 1000)
++        engine_stream = prepared.engine.generate_stream(
++            prepared.query,
++            **_generation_kwargs(prepared),
++        )
++        for event in engine_stream:
++            if event.type == "delta" and event.text:
++                if prepared.background_fallback:
++                    raw_parts.append(event.text)
++                    continue
++                prepared.stage_ms.setdefault("request_ttft_ms", round((time.perf_counter() - prepared.execution_started) * 1000))
++                if sentence_answer:
++                    raw_parts.append(event.text)
++                fragment = sentence_answer.feed(event.text) if sentence_answer else event.text
++                if gate is not None:
++                    fragment = gate.feed(fragment)
++                    if gate.refusal:
++                        close = getattr(engine_stream, 'close', None)
++                        if close is not None:
++                            close()
++                        retry = _online_retry(prepared, 'local_refusal')
++                        if retry is not None:
++                            yield from _stream_prepared(retry, emit_start=False)
++                            completed = True
++                            return
++                        fragment, gate = gate.pending, None
++                complete_text += fragment
++                if fragment:
++                    if prefix and not prefix_emitted:
++                        yield {'type': 'delta', 'text': prefix}
++                        prefix_emitted = True
++                    emitted_answer = True
++                    yield {"type": "delta", "text": fragment}
++            elif event.type == "done":
++                result = event.result
++        if gate is not None and not gate.refusal:
++            tail = gate.feed('', final=True)
++            if gate.refusal:
++                retry = _online_retry(prepared, 'local_refusal')
++                if retry is not None:
++                    yield from _stream_prepared(retry, emit_start=False)
++                    completed = True
++                    return
++            if tail:
++                if prefix and not prefix_emitted:
++                    yield {'type': 'delta', 'text': prefix}
++                    prefix_emitted = True
++                complete_text += tail
++                emitted_answer = True
++                yield {"type": "delta", "text": tail}
++        if result is None:
++            raise EngineUnavailableError(
++                "The AI engine stream ended without completion metadata."
+             )
+-            for event in engine_stream:
+-                if event.type == "delta" and event.text:
+-                    prepared.stage_ms.setdefault("request_ttft_ms", round((time.perf_counter() - prepared.execution_started) * 1000))
+-                    if sentence_answer:
+-                        raw_parts.append(event.text)
+-                    fragment = sentence_answer.feed(event.text) if sentence_answer else event.text
+-                    complete_text += fragment
+-                    if fragment:
+-                        yield {"type": "delta", "text": fragment}
+-                elif event.type == "done":
+-                    result = event.result
+-            if result is None:
+-                raise EngineUnavailableError(
+-                    "The AI engine stream ended without completion metadata."
+-                )
+-            if sentence_answer:
+-                if ''.join(raw_parts) != result.text:
+-                    raise EngineUnavailableError('The AI engine stream content did not match its final response.')
+-                final_part = sentence_answer.finish(result.metrics.get('done_reason'))
+-                if final_part:
+-                    complete_text += final_part
+-                    yield {'type':'delta', 'text':final_part}
+-                result = replace(result, text=sentence_answer.text)
+-                prepared.stage_ms['response_truncated'] = sentence_answer.truncated
+-            expected_text = prefix + result.text
+-            if complete_text != expected_text:
+-                raise EngineUnavailableError(
+-                    "The AI engine stream content did not match its final response."
+-                )
+-            _persist_generated_response(
+-                prepared.conversation,
+-                complete_text,
+-                result.latency_ms,
++        if prepared.background_fallback:
++            if ''.join(raw_parts) != result.text:
++                raise EngineUnavailableError('Background stream content did not match its response.')
++            result = replace(result, text=defensible_background(result.text))
++            if prefix and not prefix_emitted:
++                yield {'type': 'delta', 'text': prefix}
++                prefix_emitted = True
++            complete_text += result.text
++            yield {'type': 'delta', 'text': result.text}
++        if sentence_answer:
++            if ''.join(raw_parts) != result.text:
++                raise EngineUnavailableError('The AI engine stream content did not match its final response.')
++            final_part = sentence_answer.finish(result.metrics.get('done_reason'))
++            if final_part:
++                complete_text += final_part
++                yield {'type':'delta', 'text':final_part}
++            result = replace(result, text=sentence_answer.text)
++            prepared.stage_ms['response_truncated'] = sentence_answer.truncated
++        expected_text = prefix + result.text
++        if complete_text != expected_text:
++            raise EngineUnavailableError(
++                "The AI engine stream content did not match its final response."
+             )
+-            metadata = _generation_metadata(prepared, result)
+-            _save_source_metadata(prepared.conversation, metadata)
+-            _log_request_performance(prepared, metadata)
+-            completed = True  # Set before yielding: close() can occur at the yield.
+-            yield {
+-                "type": "done",
+-                "conversation_id": prepared.conversation.id,
+-                "response": complete_text,
+-                **metadata,
+-            }
+-        except GeneratorExit:
+-            if not completed:
+-                logger.info(
+-                    "Assistant stream closed by client before completion",
+-                    extra={"conversation_id": prepared.conversation.id},
+-                )
+-            raise
+-        except Exception as exc:
+-            latency.mark("stream_error", outcome=latency.failure_kind(exc))
+-            _log_generation_exception(exc)
+-            _log_failed_request(prepared)
+-            yield _stream_error(
+-                _generation_error_message(exc),
+-                conversation=prepared.conversation,
+-                partial=bool(complete_text),
++        _persist_generated_response(
++            prepared.conversation,
++            complete_text,
++            result.latency_ms,
++        )
++        metadata = _generation_metadata(prepared, result)
++        _save_source_metadata(prepared.conversation, metadata)
++        _log_request_performance(prepared, metadata)
++        completed = True  # Set before yielding: close() can occur at the yield.
++        yield {
++            "type": "done",
++            "conversation_id": prepared.conversation.id,
++            "response": complete_text,
++            **metadata,
++        }
++    except GeneratorExit:
++        if not completed:
++            logger.info(
++                "Assistant stream closed by client before completion",
++                extra={"conversation_id": prepared.conversation.id},
+             )
+-        finally:
+-            close = getattr(engine_stream, "close", None)
+-            if close is not None:
+-                close()
++        raise
++    except Exception as exc:
++        if not emitted_answer and isinstance(exc, EngineUnavailableError):
++            retry = _online_retry(prepared, 'local_failure')
++            if retry is not None:
++                yield from _stream_prepared(retry, emit_start=False)
++                completed = True
++                return
++        latency.mark("stream_error", outcome=latency.failure_kind(exc))
++        _log_generation_exception(exc)
++        _log_failed_request(prepared)
++        yield _stream_error(
++            _generation_error_message(exc),
++            conversation=prepared.conversation,
++            partial=emitted_answer,
++        )
++    finally:
++        close = getattr(engine_stream, "close", None)
++        if close is not None:
++            close()
+ 
+ 
+ @latency.span("service_prepare")
+@@ -276,6 +351,9 @@
+     knowledge_mode: str | None = None,
+     document_ids: list[int] | None = None,
+     voice_session_key: str | None = None,
++    retry_message_id: int | None = None,
++    fallback_attempted: bool = False,
++    background_fallback: bool = False,
+ ) -> PreparedAssistantRequest | tuple:
+     execution_started = time.perf_counter()
+     requested_knowledge_mode = knowledge_mode
+@@ -311,12 +389,13 @@
+     requested_history_limit = max(0, int(getattr(settings, "CONVERSATION_RECENT_MESSAGES", 4)))
+     if response_plan is not None and response_plan.recent_history_limit is not None:
+         requested_history_limit = min(requested_history_limit, max(0, response_plan.recent_history_limit))
+-    recent_limit = min(requested_history_limit, max(0, execution_plan.context_message_limit))
++    recent_limit = 0 if retry_message_id else min(requested_history_limit, max(0, execution_plan.context_message_limit))
+     recent = _get_conversation_history(conversation, recent_limit, include_ids=True)
+     history = [{"role": item["role"], "content": item["content"]} for item in recent]
+     history_ms = round((time.perf_counter() - history_started) * 1000)
+     latency.mark("user_persist_start")
+-    current_message = Message.objects.create(conversation=conversation, sender="USER", text=query)
++    current_message = (Message.objects.get(pk=retry_message_id, conversation=conversation, sender='USER')
++                       if retry_message_id else Message.objects.create(conversation=conversation, sender="USER", text=query))
+     latency.mark("user_persist_end")
+ 
+     effective_instruction = system_instruction
+@@ -390,6 +469,22 @@
+     if knowledge_mode == 'offline_only' or document_ids is not None:
+         execution_plan = replace(execution_plan, online_allowed=False)
+         registry = build_runtime_capability_registry(online_allowed=False)
++    if background_fallback:
++        route_decision = QueryRouteDecision(QueryRoute.LOCAL, ResponseMode.NORMAL)
++        effective_instruction = _combine_instructions(effective_instruction, BACKGROUND_INSTRUCTION)
++    def background_request():
++        if (background_fallback or knowledge_mode in ('offline_only', 'online_only')
++                or document_ids is not None or private_query(query) or not officeholder_background(query)):
++            return None
++        background = _prepare_message(query, conversation_id=conversation.id,
++            system_instruction=system_instruction, num_predict=num_predict,
++            response_plan=response_plan, knowledge_mode='offline_only',
++            retry_message_id=current_message.pk, fallback_attempted=True, background_fallback=True)
++        if not isinstance(background, tuple):
++            background.execution_started = execution_started
++            background.stage_ms.update(fallback_reason='live_unavailable_local_background',
++                online_attempted=stage_ms['online_attempted'], online_success=False)
++        return background
+     latency.mark("route", route=route_decision.route.value)
+     routing_ms = round((time.perf_counter() - routing_started) * 1000)
+     stage_ms = {
+@@ -445,7 +540,7 @@
+                 metadata_updates={'rag_used': True, 'rag_sources': sources, 'mode': 'offline'})
+         return None
+ 
+-    if document_ids is None and (knowledge_mode == 'offline_only' or re.search(r'\b(?:checked yesterday|when I checked|previously researched)\b', query, re.I)):
++    if not background_fallback and document_ids is None and (knowledge_mode == 'offline_only' or re.search(r'\b(?:checked yesterday|when I checked|previously researched)\b', query, re.I)):
+         saved = saved_fallback()
+         if saved:
+             return saved
+@@ -458,13 +553,21 @@
+             return saved
+     # Question wording alone does not require sources; stable general knowledge
+     # may reach local inference even with the production evidence gate enabled.
+-    if (getattr(settings, 'KNOWLEDGE_REQUIRE_EVIDENCE', True)
++    if (not background_fallback and getattr(settings, 'KNOWLEDGE_REQUIRE_EVIDENCE', True)
+             and route_decision.route == QueryRoute.LOCAL and factual_query(query)
+             and not requests_local_knowledge(query) and not direct_response):
+         saved = saved_fallback()
+         if saved:
+             return saved
+-        direct_response = 'I do not have enough source evidence to answer reliably. Online evidence is unavailable, and local knowledge does not support this question.'
++        if (knowledge_mode != 'offline_only' and not private_query(query)
++                and execution_plan.online_allowed and registry.is_available(Capability.ONLINE_RETRIEVAL)):
++            # Explicit verification/citation requests need evidence. A missing
++            # local corpus is an objective insufficiency signal, not confidence.
++            route_decision = QueryRouteDecision(QueryRoute.ONLINE, route_decision.response_mode, Capability.ONLINE_RETRIEVAL)
++            stage_ms['local_evidence_insufficient'] = True
++            latency.mark('route', route=route_decision.route.value)
++        else:
++            direct_response = 'I do not have enough source evidence to answer reliably. Online evidence is unavailable, and local knowledge does not support this question.'
+     if direct_response and route_decision.route == QueryRoute.ONLINE:
+         cache_started = time.perf_counter()
+         try:
+@@ -479,6 +582,10 @@
+                 route_decision, engine='lexical', execution_plan=execution_plan,
+                 execution_started=execution_started, stage_ms=stage_ms,
+                 metadata_updates={'online_sources': [r.source_metadata() for r in cached]})
++    if direct_response and route_decision.route == QueryRoute.ONLINE:
++        background = background_request()
++        if background is not None:
++            return background
+     if direct_response:
+         metadata_updates = None
+         if (
+@@ -640,6 +747,10 @@
+                 saved = saved_fallback()
+                 if saved:
+                     return saved
++            if stage_ms['fallback_reason'] != 'conflicting_evidence':
++                background = background_request()
++                if background is not None:
++                    return background
+             return _persist_direct_response(
+                 conversation,
+                 ("The current sources disagree, so I can't verify a reliable answer."
+@@ -661,6 +772,9 @@
+             saved = saved_fallback()
+             if saved:
+                 return saved
++            background = background_request()
++            if background is not None:
++                return background
+             return _persist_direct_response(
+                 conversation,
+                 "I couldn't retrieve current information right now.",
+@@ -773,6 +887,15 @@
+         stage_ms=stage_ms,
+         is_voice=bool(response_plan and response_plan.is_voice),
+         physical_document=bool(voice_scope and voice_scope.document),
++        user_message_id=current_message.pk,
++        response_plan=response_plan,
++        online_fallback_allowed=(not fallback_attempted and not background_fallback
++            and knowledge_mode not in ('offline_only', 'online_only') and document_ids is None
++            and not private_query(query) and route_decision.route == QueryRoute.LOCAL
++            and not introduction_instruction(query)
++            and registry.is_available(Capability.ONLINE_RETRIEVAL) and execution_plan.online_allowed),
++        fallback_attempted=fallback_attempted,
++        background_fallback=background_fallback,
+     )
+ 
+ 
+@@ -1291,3 +1414,28 @@
+     if message is not None and not conversation.messages.filter(sender='USER', id__gt=message.id).exists():
+         message.source_metadata = sources
+         message.save(update_fields=['source_metadata'])
++
++
++def _response_prefix(prepared):
++    return (_resource_status_prefix(prepared.execution_plan)
++            + (BACKGROUND_PREFIX if prepared.background_fallback else ''))
++
++
++def _online_retry(prepared, reason):
++    control = delivery_control()
++    if (not prepared.online_fallback_allowed or prepared.fallback_attempted
++            or control is not None and control.stop_event.is_set()):
++        return None
++    prepared.online_fallback_allowed = False
++    retry = _prepare_message(prepared.query, conversation_id=prepared.conversation.pk,
++        system_instruction=None, num_predict=prepared.num_predict,
++        response_plan=prepared.response_plan, knowledge_mode='online_only',
++        retry_message_id=prepared.user_message_id, fallback_attempted=True)
++    if isinstance(retry, tuple):
++        if retry[2] is not None:
++            retry[2].update(local_fallback_reason=reason,
++                execution_ms=round((time.perf_counter()-prepared.execution_started)*1000))
++    else:
++        retry.execution_started = prepared.execution_started
++        retry.stage_ms['local_fallback_reason'] = reason
++    return retry
+--- a/assistant/identity.py
++++ b/assistant/identity.py
+@@ -1,6 +1,6 @@
+ """One project identity for normal text, voice and model warm-up prompts."""
+ 
+-IDENTITY_INSTRUCTION = (
++FULL_IDENTITY_INSTRUCTION = (
+     "You are the Smart AI Companion. Your project identity is: "
+     "Smart AI Companion, an offline-capable intelligent assistant developed by "
+     "Batch 6 students of the Department of Computer Science and Engineering (IoT), "
+@@ -11,3 +11,17 @@
+     "The configured language model (Gemma 4 on this Pi) is your underlying model, "
+     "not your primary identity."
+ )
++
++
++IDENTITY_INSTRUCTION = (
++    "You are the Smart AI Companion. You are an offline-capable Raspberry Pi 5 assistant. "
++    "Your configured language model is not your project identity."
++)
++
++
++def introduction_instruction(query):
++    import re
++    return FULL_IDENTITY_INSTRUCTION if re.search(
++        r"\b(?:who (?:are you|made you|developed you)|introduce yourself|your (?:identity|developers?|university|project))\b",
++        query, re.I,
++    ) else ''
+--- a/assistant/tests_current_information.py
++++ b/assistant/tests_current_information.py
+@@ -454,6 +454,7 @@
+         self.engine.generate_stream.assert_not_called()
+ 
+     @patch('assistant.services.get_online_retriever')
++    @override_settings(KNOWLEDGE_MODE='online_only')
+     def test_no_evidence_and_conflicts_abstain_without_generation_or_persistence(self, provider):
+         for items, reason in (([source(published_at=NOW)], 'no_relevant_current_results'),
+                               ([verified(), verified(content='Chief Minister of Telangana is Other Person.')], 'conflicting_evidence')):
+--- a/assistant/latency_trace.py
++++ b/assistant/latency_trace.py
+@@ -14,8 +14,8 @@
+ MAX_EVENTS = 512
+ MAX_BYTES = 128 * 1024
+ MAX_FILES = 8
+-SPANS = frozenset('document_resolve document_retrieve rag_context rag playback_conversion capture capture_open capture_cleanup normalize stt_cli stt_server service_prepare conversation_prepare policy history user_persist routing memory response_persist resource_snapshot resource_metrics network_checks ancillary_checks provisioning_check piper_ready piper_exchange tts audio_prepare text_queue_wait audio_queue_wait player_start leading_silence speech_file drain display_callback serial_write'.split())
+-MARKS = frozenset('first_playback_launch spoken_response_complete button_release cycle_start cycle_end capture_first_frame calibration_end speech_detected capture_stopped endpoint_detected capture_ready ollama_request_ready llm_first_alphanumeric ollama_complete first_complete_sentence first_speech_unit piper_state first_audio_ready first_speech_pcm_accepted resource_cache_hit resource_cache_miss resource_state resource_policy cycle_config route stream_error'.split())
++SPANS = frozenset('prompt_prepare document_resolve document_retrieve rag_context rag playback_conversion capture capture_open capture_cleanup normalize stt_cli stt_server service_prepare conversation_prepare policy history user_persist routing memory response_persist resource_snapshot resource_metrics network_checks ancillary_checks provisioning_check piper_ready piper_exchange tts audio_prepare text_queue_wait audio_queue_wait player_start leading_silence speech_file drain display_callback serial_write'.split())
++MARKS = frozenset('button_cancel_requested first_playback_launch spoken_response_complete button_release cycle_start cycle_end capture_first_frame calibration_end speech_detected capture_stopped endpoint_detected capture_ready ollama_request_ready llm_first_alphanumeric ollama_complete first_complete_sentence first_speech_unit piper_state first_audio_ready first_speech_pcm_accepted resource_cache_hit resource_cache_miss resource_state resource_policy cycle_config route stream_error'.split())
+ EVENT_NAMES = MARKS | {'audio_unit_ready', 'audio_unit_dequeued', 'text_unit_ready', 'punctuation_pause'} | {s + suffix for s in SPANS for suffix in ('_start', '_end')}
+ EVENT_NAMES = EVENT_NAMES | frozenset(("capture_warmup_start", "capture_warmup_end", "calibration_start",
+                                     "speech_start_window_open", "minimum_speech_accepted"))
+@@ -144,7 +144,8 @@
+ 
+ 
+ def submit(executor, fn, lane):
+-    if _active.get() is None:
++    from assistant.voice.interruption import current
++    if _active.get() is None and current() is None:
+         return executor.submit(fn)
+     context = copy_context()
+     def work():
+--- a/assistant/voice/interruption.py
++++ b/assistant/voice/interruption.py
+@@ -1,6 +1,6 @@
+ """Opt-in response cancellation and spoken-delivery persistence boundary."""
+ from contextlib import contextmanager
+-from contextvars import ContextVar
++from contextvars import ContextVar, copy_context
+ from threading import Event, Lock, Thread
+ from .diagnostics import VoiceDiagnostics
+ import socket
+@@ -122,11 +122,13 @@
+ 
+ 
+ class InterruptControl:
+-    def __init__(self, *, provider=None, device=None, voice=False, keyboard=True, diagnostics=False):
++    def __init__(self, *, provider=None, device=None, voice=False, keyboard=True, diagnostics=False, button=None):
++        self.button = button
+         self.stop_event = Event()
+         self.interrupted = Event()
+         self.monitor_stop = Event()
+         self.callbacks = []
++        self.abort_started = False
+         self.lock = Lock()
+         self.pending = []
+         self.pending_metadata = {}
+@@ -150,6 +152,8 @@
+         if cancelled:
+             try: callback()
+             except OSError: pass
++            except Exception:
++                self.cleanup_error = True
+ 
+     def unregister(self, callback):
+         with self.lock:
+@@ -167,14 +171,46 @@
+     def abort_generation(self):
+         self.stop_event.set()
+         with self.lock:
++            if self.abort_started:
++                return
++            self.abort_started = True
+             callbacks = list(self.callbacks)
+         for callback in callbacks:
+             try: callback()
+             except OSError: pass
++            except Exception:
++                self.cleanup_error = True
+ 
+     def start(self):
+         if self.started: return
+         self.started = True
++        if self.button is not None:
++            # Read the already-owned GPIO only during output. Recording and
++            # idle waiting remain on the main thread, with no second listener.
++            # Sample before launching the monitor so a press immediately after
++            # SPEAKING starts cannot be mistaken for an older held button.
++            initially_released = not self.button.is_set()
++            def presses():
++                armed = initially_released
++                pressed_at = None
++                while not self.monitor_stop.wait(.005) and not self.interrupted.is_set():
++                    try:
++                        down = self.button.is_set()
++                    except Exception:
++                        self.cleanup_error = True
++                        self.cancel()
++                        return
++                    if not down:
++                        armed, pressed_at = True, None
++                    elif armed:
++                        now = time.monotonic()
++                        pressed_at = now if pressed_at is None else pressed_at
++                        if now - pressed_at >= .02:
++                            from assistant import latency_trace as latency
++                            latency.mark('button_cancel_requested', once=True)
++                            self.cancel()
++                            return
++            self._thread(presses, 'voice-interrupt-button')
+         if self.keyboard and sys.stdin.isatty():
+             def keys():
+                 import os
+@@ -228,7 +264,8 @@
+         self._thread(listen,"voice-interrupt-wake")
+ 
+     def _thread(self, function, name):
+-        thread = Thread(target=function,name=name,daemon=True)
++        context = copy_context()
++        thread = Thread(target=lambda: context.run(function),name=name,daemon=True)
+         self.threads.append(thread)
+         thread.start()
+ 
+--- a/assistant/ai_engine/local.py
++++ b/assistant/ai_engine/local.py
+@@ -23,7 +23,7 @@
+ """
+ 
+ from assistant import latency_trace as latency
+-from assistant.identity import IDENTITY_INSTRUCTION
++from assistant.identity import IDENTITY_INSTRUCTION, introduction_instruction
+ from assistant.voice.interruption import interruptible_response
+ import json
+ import logging
+@@ -155,6 +155,7 @@
+         """
+         selected_model = model or self._model
+         prompt_started = time.perf_counter()
++        latency.mark('prompt_prepare_start')
+         messages = self._build_messages(
+             query,
+             conversation_history,
+@@ -162,6 +163,7 @@
+             system_prompt=system_prompt,
+         )
+         prompt_prepare_ms = round((time.perf_counter() - prompt_started) * 1000)
++        latency.mark('prompt_prepare_end')
+ 
+         start = time.perf_counter()
+ 
+@@ -215,6 +217,7 @@
+         """Yield Ollama text deltas immediately and finish with safe metrics."""
+         selected_model = model or self._model
+         prompt_started = time.perf_counter()
++        latency.mark('prompt_prepare_start')
+         messages = self._build_messages(
+             query,
+             conversation_history,
+@@ -222,6 +225,7 @@
+             system_prompt=system_prompt,
+         )
+         prompt_prepare_ms = round((time.perf_counter() - prompt_started) * 1000)
++        latency.mark('prompt_prepare_end')
+         request = self._build_chat_request(
+             messages,
+             stream=True,
+@@ -353,6 +357,9 @@
+                 + system_instruction.strip()
+             )
+ 
++        introduction = introduction_instruction(query)
++        if introduction and introduction not in system_content:
++            system_content += "\n\n" + introduction
+         messages = [{"role": "system", "content": system_content}]
+ 
+         if history:
+--- /dev/null
++++ b/assistant/local_first.py
+@@ -0,0 +1,75 @@
++"""Bounded fallback policy: explicit refusal/failure, never model confidence."""
++import re
++
++_REFUSAL = re.compile(
++    r"^(?:(?:sorry|unfortunately)[,. ]+)?(?:"
++    r"i (?:don't|do not) (?:know|have (?:enough |the |sufficient )?(?:information|knowledge|answer))|"
++    r"i (?:cannot|can't|am unable to|'m unable to) (?:answer|provide|verify)|"
++    r"i'm unable to (?:answer|provide|verify))\b", re.I)
++_PREFIXES = ("i don't know", "i do not know", "i don't have", "i do not have",
++             "i cannot", "i can't", "i am unable", "i'm unable", "sorry", "unfortunately")
++
++
++def refused(text):
++    # A policy/safety refusal is not evidence of missing factual knowledge.
++    if re.search(r"\b(?:harmful|illegal|unsafe|weapons?|privacy|personal data|malware|violence)\b", text, re.I):
++        return False
++    return bool(_REFUSAL.search(text.strip()))
++
++
++def private_query(query):
++    from .routing import requests_local_knowledge
++    return requests_local_knowledge(query) or bool(re.search(
++        r"\b(?:my|our|uploaded|attached|supplied)\b|\bthis (?:repository|project)\b", query, re.I))
++
++
++def officeholder_background(query):
++    """Last-known background is useful, unlike invented live weather/prices."""
++    return bool(re.search(r"\bwho (?:is|leads|runs)\b", query, re.I) and re.search(
++        r"\b(?:prime minister|president|chief minister|governor|mayor|ceo)\b", query, re.I))
++
++
++BACKGROUND_INSTRUCTION = (
++    "Live verification is unavailable. Give last-known background from model knowledge "
++    "only if you know it. Do not claim that an officeholder is verified current. "
++    "If unknown, say so. Never invent dates, citations, sources or search results."
++)
++BACKGROUND_PREFIX = "Local knowledge, not live-verified; officeholders can change. "
++
++
++def defensible_background(text):
++    # No evidence was acquired: discard source/date/verification claims rather
++    # than presenting a fabricated citation behind a freshness disclaimer.
++    if refused(text) or re.search(
++        r"https?://|\[\d+\]|\bas of\b|\b(?:I (?:searched|checked|verified)|"
++        r"verified current|according to (?:the )?(?:latest|search|web))\b", text, re.I
++    ):
++        return 'I cannot verify the current officeholder from the available information.'
++    return text
++
++
++class RefusalGate:
++    """Hold only a possible initial refusal, at most 192 characters.
++
++    Normal factual prose streams immediately. Never revise an answer already
++    delivered to the caller or speaker. Ambiguous endings are resolved at EOF.
++    """
++    def __init__(self):
++        self.pending = ''
++        self.released = False
++        self.refusal = False
++
++    def feed(self, text, final=False):
++        if self.released:
++            return text
++        self.pending += text
++        normalized = ' '.join(self.pending.lower().split())
++        if refused(self.pending) and (final or re.search(r'[.!?](?:\s|$)', self.pending) or len(self.pending) >= 192):
++            self.refusal = True
++            return ''
++        possible = not normalized or any(p.startswith(normalized) or normalized.startswith(p) for p in _PREFIXES)
++        if final or not possible or len(self.pending) >= 192 or re.search(r'[.!?]\s', self.pending):
++            self.released = True
++            result, self.pending = self.pending, ''
++            return result
++        return ''
+--- /dev/null
++++ b/assistant/tests_coordinated_update.py
+@@ -0,0 +1,250 @@
++"""Synthetic regressions only: no model, provider, GPIO, UART or sound device."""
++from contextlib import redirect_stdout
++from dataclasses import replace
++import io
++from threading import Event, enumerate as threads
++from unittest.mock import Mock, patch
++from django.test import SimpleTestCase, TestCase, override_settings
++from assistant.ai_engine.base import AIEngineResult, AIEngineStreamEvent, EngineUnavailableError
++from assistant.ai_engine.local import LocalLLMEngine
++from assistant.identity import IDENTITY_INSTRUCTION, FULL_IDENTITY_INSTRUCTION
++from assistant.local_first import RefusalGate, defensible_background
++from assistant.policy import AssistantResponsePolicy, VOICE_SAFETY_INSTRUCTION
++from assistant.services import AssistantService
++from assistant.test_support import install_resource_report
++from assistant.voice.interruption import InterruptControl, VoiceInterrupted, delivery, current
++from assistant import tests_voice_stream as fixtures, latency_trace as latency
++from conversations.models import Message
++
++
++@override_settings(AI_ENGINE='local', OLLAMA_MODEL='gemma4:e2b-it-q4_K_M',
++    ONLINE_RETRIEVAL_ENABLED=True, ONLINE_PROVIDER='openai', OPENAI_API_KEY='fixture-only',
++    KNOWLEDGE_MODE='online_preferred', KNOWLEDGE_REQUIRE_EVIDENCE=True,
++    RAG_ENABLED=False, ONLINE_KNOWLEDGE_AUTO_PERSIST=False, DEVICE_CONTROL_ENABLED=False)
++class LocalFirstTests(TestCase):
++    def setUp(self):
++        install_resource_report(self, online_allowed=True)
++        p = patch('assistant.services.get_engine'); self.engine = p.start().return_value; self.addCleanup(p.stop)
++        self.engine.generate.return_value = AIEngineResult(text='Recursion uses smaller instances.', engine='local')
++        self.engine.generate_stream.side_effect = self.local_stream
++        p = patch('assistant.services.OpenAIOnlineResearch'); self.web = p.start().return_value; self.addCleanup(p.stop)
++        self.web.answer.return_value = {'answer': 'Provider grounded answer.', 'grounded': True, 'sources': []}
++        p = patch('assistant.services.load_verified_current', return_value=[]); p.start(); self.addCleanup(p.stop)
++
++    def local_stream(self, *args, **kwargs):
++        text = self.engine.generate.return_value.text
++        yield AIEngineStreamEvent(type='delta', text=text)
++        yield AIEngineStreamEvent(type='done', result=AIEngineResult(text=text, engine='local'))
++
++    def ask(self, query, stream=False, **kwargs):
++        if stream:
++            events = list(AssistantService.process_message_stream(query, **kwargs))
++            return events[-1], events
++        conversation, text, metadata, error = AssistantService.process_message(query, **kwargs)
++        self.assertIsNone(error)
++        return dict(metadata, response=text, conversation_id=conversation.pk), []
++
++    def test_general_question_one_local_pass_and_no_search(self):
++        for stream in (False, True):
++            answer, _ = self.ask('Explain recursion.', stream)
++            self.assertEqual(answer['route'], 'local')
++            self.assertEqual(answer['response'], 'Recursion uses smaller instances.')
++        self.web.answer.assert_not_called()
++
++    def test_explicit_evidence_request_uses_search_when_local_evidence_missing(self):
++        answer, _ = self.ask('Verify this claim with sources: recursion uses a stack.')
++        self.assertEqual(answer['response'], 'Provider grounded answer.')
++        self.web.answer.assert_called_once()
++        self.engine.generate.assert_not_called()
++
++    def test_explicit_refusal_one_fallback_one_user_row_and_no_refusal_spoken(self):
++        self.engine.generate.return_value = AIEngineResult(text="I don't know the answer.", engine='local')
++        for stream in (False, True):
++            answer, events = self.ask('Explain frobnication.', stream)
++            self.assertEqual(answer['response'], 'Provider grounded answer.')
++            self.assertEqual(Message.objects.filter(conversation_id=answer['conversation_id'], sender='USER').count(), 1)
++            self.assertEqual(Message.objects.filter(conversation_id=answer['conversation_id'], sender='AI').count(), 1)
++            self.assertNotIn("don't know", ''.join(e.get('text', '') for e in events))
++            if stream:
++                self.assertEqual(sum(e['type'] == 'start' for e in events), 1)
++        self.assertEqual(self.web.answer.call_count, 2)
++        self.assertEqual(self.engine.generate.call_count, 1)
++        self.assertEqual(self.engine.generate_stream.call_count, 1)
++
++    def test_local_failure_before_output_has_one_bounded_fallback(self):
++        self.engine.generate.side_effect = EngineUnavailableError('fixture')
++        self.engine.generate_stream.side_effect = EngineUnavailableError('fixture')
++        for stream in (False, True):
++            answer, _ = self.ask('Explain recursion.', stream)
++            self.assertEqual(answer['response'], 'Provider grounded answer.')
++        self.assertEqual(self.web.answer.call_count, 2)
++
++    def test_partial_output_is_not_replaced_by_a_second_answer(self):
++        def partial(*a, **k):
++            yield AIEngineStreamEvent(type='delta', text='Recursion uses smaller instances. ')
++            raise EngineUnavailableError('fixture')
++        self.engine.generate_stream.side_effect = partial
++        answer, events = self.ask('Explain recursion.', True)
++        self.assertEqual(answer['type'], 'error')
++        self.web.answer.assert_not_called()
++
++    def test_offline_private_and_cancelled_requests_never_fallback(self):
++        self.engine.generate.return_value = AIEngineResult(text="I don't know the answer.", engine='local')
++        for query in ('Offline only: Explain recursion.', 'Explain our project wiring.'):
++            self.ask(query)
++        control = InterruptControl(keyboard=False); control.cancel()
++        with delivery(control):
++            self.ask('Explain recursion.')
++        self.web.answer.assert_not_called()
++
++    def test_safety_refusal_is_not_treated_as_missing_knowledge(self):
++        self.engine.generate.return_value = AIEngineResult(text='I cannot provide harmful instructions.', engine='local')
++        self.ask('Explain a prohibited activity.')
++        self.ask('Explain a prohibited activity.', True)
++        self.web.answer.assert_not_called()
++
++    def test_officeholder_failure_uses_qualified_last_known_local_information(self):
++        from assistant.online.base import OnlineRetrievalTimeoutError
++        self.web.answer.side_effect = OnlineRetrievalTimeoutError('fixture')
++        self.engine.generate.return_value = AIEngineResult(text='Narendra Modi is the Prime Minister of India.', engine='local')
++        for stream in (False, True):
++            answer, _ = self.ask('Who is the Prime Minister of India?', stream)
++            self.assertIn('not live-verified', answer['response'])
++            self.assertIn('Narendra Modi', answer['response'])
++            self.assertNotIn("couldn't retrieve", answer['response'])
++            self.assertEqual(Message.objects.filter(conversation_id=answer['conversation_id'], sender='USER').count(), 1)
++        self.assertEqual(self.web.answer.call_count, 2)
++
++    def test_weather_failure_does_not_invent_local_live_weather(self):
++        from assistant.online.base import OnlineRetrievalTimeoutError
++        self.web.answer.side_effect = OnlineRetrievalTimeoutError('fixture')
++        answer, _ = self.ask("What is today's weather?")
++        self.assertIn("won't guess", answer['response'])
++        self.engine.generate.assert_not_called()
++
++
++class ButtonAndLatencyTests(SimpleTestCase):
++    def test_button_cancels_playback_pending_synthesis_and_generation_together(self):
++        from assistant.voice.tts import TextToSpeechProvider
++        from assistant.voice.processes import AudioCancelledError
++        fixture = fixtures.StreamingAudioTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
++        held, synthesizing, http_stopped = Event(), Event(), Event()
++        control = InterruptControl(button=held, keyboard=False)
++        control.register(http_stopped.set)
++        audio = fixture.audio
++        class Provider(TextToSpeechProvider):
++            requests = 0
++            closed = False
++            def synthesize_cancellable(self, text, stopped):
++                self.requests += 1
++                if self.requests > 1:
++                    synthesizing.set()
++                    if not stopped.wait(1):
++                        raise AssertionError('Pending synthesis did not receive cancellation')
++                    raise AudioCancelledError('cancelled synthetic synthesis')
++                return audio
++            def close(self):
++                self.closed = True
++        fixture.provider = provider = Provider()
++        process = fixture.player.process; process.poll.return_value = None
++        fixture.player.abort.side_effect = lambda: setattr(process.poll, 'return_value', 0)
++        def playback(*a, **k):
++            self.assertTrue(synthesizing.wait(1))
++            held.set()
++            self.assertTrue(control.stop_event.wait(1))
++            raise AudioCancelledError('cancelled synthetic playback')
++        fixture.stream_write.side_effect = playback
++        def events():
++            yield {'type': 'start', 'conversation_id': 42}
++            yield {'type': 'delta', 'text': fixtures.FIRST_SENTENCE + ' '}
++            yield {'type': 'delta', 'text': fixtures.SECOND_SENTENCE + ' '}
++            self.assertTrue(http_stopped.wait(2))
++            raise EngineUnavailableError('cancelled synthetic HTTP read')
++        with delivery(control), redirect_stdout(io.StringIO()), self.assertRaises(VoiceInterrupted):
++            fixture.speak(events(), replace(fixture.config, audio_backend='alsa', voice_refinements=True))
++        self.assertTrue(provider.closed)
++        self.assertEqual(provider.requests, 2)
++        self.assertTrue(http_stopped.is_set())
++        process.terminate.assert_called_once()
++        fixture.player_factory.assert_called_once()
++        self.assertFalse(any(t.name in ('voice-interrupt-button', 'piper-ipc') or
++                             t.name.startswith('voice-stream-audio') for t in threads()))
++
++    def test_button_reuses_owned_input_cancels_once_and_monitor_is_joined(self):
++        held = Event(); control = InterruptControl(button=held, keyboard=False)
++        cancelled = Event(); control.register(cancelled.set)
++        control.start(); held.set()
++        self.assertTrue(cancelled.wait(1))
++        self.assertTrue(control.stop_event.is_set())
++        control.close()
++        self.assertFalse(any(t.name == 'voice-interrupt-button' for t in threads()))
++        callback = Mock(); control.register(callback); callback.assert_called_once()
++
++    def test_button_held_before_speech_requires_release_and_fresh_press(self):
++        held = Event(); held.set(); control = InterruptControl(button=held, keyboard=False)
++        control.start()
++        self.assertFalse(control.interrupted.wait(.05))
++        held.clear()
++        self.assertFalse(control.interrupted.wait(.03))
++        held.set(); self.assertTrue(control.interrupted.wait(1)); control.close()
++
++    def test_callback_failure_does_not_skip_other_owned_cleanup(self):
++        control = InterruptControl(keyboard=False); remaining = Mock()
++        control.register(Mock(side_effect=RuntimeError('fixture'))); control.register(remaining)
++        control.cancel(); remaining.assert_called_once()
++        self.assertTrue(control.cleanup_error)
++
++    def test_late_cleanup_failure_is_flagged_without_repeating_abort_callbacks(self):
++        control = InterruptControl(keyboard=False); callback = Mock()
++        control.register(callback); control.cancel(); control.abort_generation()
++        callback.assert_called_once()
++        control.register(Mock(side_effect=RuntimeError('fixture cleanup failure')))
++        self.assertTrue(control.cleanup_error)
++
++    def test_stop_signals_player_before_http_without_refinement_flag(self):
++        fixture = fixtures.StreamingAudioTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
++        control = InterruptControl(keyboard=False); order = []
++        control.register(lambda: order.append('http'))
++        process = fixture.player.process; process.poll.return_value = None
++        process.terminate.side_effect = lambda: order.append('player')
++        fixture.player.abort.side_effect = lambda: setattr(process.poll, 'return_value', 0)
++        def stop(*a, **k):
++            control.cancel()
++            self.assertEqual(order, ['player', 'http'])
++            raise RuntimeError('cancelled')
++        fixture.stream_write.side_effect = stop
++        with delivery(control), self.assertRaises(VoiceInterrupted), redirect_stdout(io.StringIO()):
++            fixture.speak(fixtures.stream_events(fixtures.FIRST_SENTENCE), replace(fixture.config, audio_backend='alsa', voice_refinements=False))
++        self.assertTrue(control.interrupted.is_set())
++
++    def test_first_unit_does_not_wait_for_second_unit_or_model_eof(self):
++        fixture = fixtures.StreamingAudioTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
++        played = Event(); fixture.play_audio.side_effect = lambda *a, **k: played.set()
++        def events():
++            yield {'type': 'start', 'conversation_id': 1}
++            yield {'type': 'delta', 'text': fixtures.FIRST_SENTENCE + ' '}
++            self.assertTrue(played.wait(.4), 'First unit waited for the old prebuffer deadline')
++            yield {'type': 'done', 'conversation_id': 1, 'response': fixtures.FIRST_SENTENCE + ' '}
++        with redirect_stdout(io.StringIO()):
++            fixture.speak(events(), replace(fixture.config, voice_refinements=True))
++
++    def test_delivery_context_reaches_audio_workers_without_trace(self):
++        from concurrent.futures import ThreadPoolExecutor
++        control = InterruptControl(keyboard=False)
++        with delivery(control), ThreadPoolExecutor() as executor:
++            self.assertIs(latency.submit(executor, current, 'audio_prepare').result(), control)
++
++    def test_compact_identity_and_full_introduction_are_not_duplicated(self):
++        engine = LocalLLMEngine(model='gemma4:e2b-it-q4_K_M')
++        normal = engine._build_messages('Explain recursion.', [], VOICE_SAFETY_INSTRUCTION, system_prompt='')[0]['content']
++        intro = engine._build_messages('Who are you?', [], VOICE_SAFETY_INSTRUCTION, system_prompt='')[0]['content']
++        self.assertEqual(normal.count(IDENTITY_INSTRUCTION), 1)
++        self.assertNotIn('Batch 6', normal)
++        self.assertEqual(intro.count(FULL_IDENTITY_INSTRUCTION), 1)
++        self.assertIn('Malla Reddy University', intro)
++
++    def test_refusal_gate_streams_facts_and_holds_only_explicit_refusal(self):
++        gate = RefusalGate(); self.assertEqual(gate.feed('Recursion works'), 'Recursion works')
++        gate = RefusalGate(); self.assertEqual(gate.feed('I do'), '')
++        self.assertEqual(gate.feed("n't know the answer."), ''); self.assertTrue(gate.refusal)
++        self.assertIn('cannot verify', defensible_background('According to the latest web search, see https://made-up.example'))
