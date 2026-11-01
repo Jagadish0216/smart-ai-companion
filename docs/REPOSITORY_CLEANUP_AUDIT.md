@@ -62,7 +62,7 @@ Pi `services.py` hotfix and RAG environment changes are still not synchronized.
   inventory, branch/security/duplicate summary and dependency advisory IDs.
 - Added narrow ignores for local validation products and binary treatment for
   meshes/images/archives. Existing tracked evidence remains tracked.
-- Updated only DRF 3.18.1 â†’ 3.18.2 and pypdf 6.19.0 â†’ 6.21.4 to address current
+- Updated only DRF 3.18.1 Ã¢â€ â€™ 3.18.2 and pypdf 6.19.0 Ã¢â€ â€™ 6.21.4 to address current
   scanner findings, with isolated installation and full regression verification.
 
 **Deleted files: 0. Archived/removed source files: 0.** The historical README
@@ -137,7 +137,7 @@ review access controls and full-history/transitive security scans; approve licen
 and the final PR. Suggested metadata is in the release checklist and was not
 applied. No live Pi operation or social publication was performed.
 
-## Final-polish addendum — 1 November 2026
+## Final-polish addendum â€” 1 November 2026
 
 Fetched and inspected actual merged main `23e84ffe3fafd21448848df52aaa12ced4dde1a5`.
 PR #2's source/documentation improvements remain intact. Baseline: **653 tracked
@@ -194,3 +194,13 @@ an isolated environment/CI was refreshed. Original modified/untracked Windows
 files, live Pi, services, networking and published history were untouched.
 Final file-change counts and hosted validation are recorded in the PR and
 [verification addendum](REPOSITORY_CLEANUP_VERIFICATION.md).
+
+### Final tracked-file accounting
+
+The review branch has **662 tracked files**: **10 added, 10 modified, one removed,
+zero archived** relative to merged main (21 changed paths). Python source grows
+from 178 to 184 files; the runtime application, firmware, migration and deployment
+source diff is empty. Canonical Git-blob size decreases; the final exact byte
+comparison is recorded in the pull request because this report contributes bytes
+to that measurement. The single removed CSG and its regeneration evidence are
+listed above. No other cleanup or deletion is implied by these counts.
