@@ -1,8 +1,8 @@
-# Factual announcement preparation â€” unpublished
+# Factual announcement preparation — unpublished
 
 Offline Based Smart AI Companion for Intelligent Edge Automation is an
 owner-reported completed CSE (IoT) academic project at Malla Reddy University,
-2026â€“2027. It combines a Raspberry Pi 5 (8 GB), Python/Django, local Ollama
+2026–2027. It combines a Raspberry Pi 5 (8 GB), Python/Django, local Ollama
 inference, speech processing/Piper playback, a physical talk button, ESP32 TFT
 feedback and a custom OpenSCAD enclosure.
 

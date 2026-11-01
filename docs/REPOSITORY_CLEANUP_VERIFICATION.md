@@ -99,7 +99,7 @@ are not counted as cleanup tests. No deployment, social post or PR merge occurre
   README, ignore/attributes, documentation and the read-only audit utility changed.
 - No file deletion, deployment, branch deletion, history rewrite or merge.
 
-## Final-polish verification â€” 1 November 2026
+## Final-polish verification — 1 November 2026
 
 Baseline fetched: `23e84ffe3fafd21448848df52aaa12ced4dde1a5`. New isolated
 worktree/branch: `.portfolio-polish`, `portfolio/final-polish-and-ci`. The previous
@@ -185,3 +185,17 @@ ignored local file cannot falsely satisfy a public Markdown link. A regression
 reproduces this case. The final focused suite is **eight passing tests** (2.986 s),
 including trace-schema export. The earlier seven-test/1,009-total measurements
 above remain pinned historical results; final-head totals are in the PR.
+
+### Completed final code validation
+
+At code head `7c46ccc16b5e825bdc83f96906c1f760919125e6`, actual hosted run
+[41285566998](https://github.com/Jagadish0216/smart-ai-companion/actions/runs/41285566998)
+passed **all 1,010 tests with zero skips**, 17.024 s. Every CI step passed.
+Windows final suite: **1,010 tests, 1,009 passed, one Unix-pipe skip**, 38.892 s.
+The checker passed **184 Python files and 70 local links**; the final tracked-source
+gitleaks scan had zero findings. No application pins changed. Later evidence-only
+documentation is checked separately by PR CI; this run pins the tested code.
+
+Final documentation review also corrected Windows code-page corruption of Unicode
+year ranges/arrows introduced during this polish. Explicit UTF-8 reads/writes
+restore those characters; no application behavior changed.

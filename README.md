@@ -3,7 +3,7 @@
 An offline-first Raspberry Pi 5 companion combining local language-model inference,
 physical voice interaction and a browser control dashboard in a custom 3D-printed
 enclosure. Built as a completed academic project at **Malla Reddy University**,
-**Computer Science and Engineering (IoT)**, academic year **2026â€“2027**.
+**Computer Science and Engineering (IoT)**, academic year **2026–2027**.
 
 The owner reports that the physical project was assembled, demonstrated, reviewed
 and submitted. This public software baseline and its historical acceptance evidence
@@ -23,7 +23,7 @@ for studying resource limits, interrupted speech and hardware/software coordinat
 | Capability | Implementation and qualification |
 |---|---|
 | Local AI chat | Ollama backend, streaming API and a mock development backend. Owner-reported final model: `gemma4:e2b-it-q4_K_M`. Not executed during cleanup. |
-| Physical voice | Standalone capture â†’ STT â†’ response â†’ Piper playback pipeline with button interaction and interruption support; final response-control changes have separate release provenance. |
+| Physical voice | Standalone capture → STT → response → Piper playback pipeline with button interaction and interruption support; final response-control changes have separate release provenance. |
 | TFT companion face | ESP32 serial bridge, state/text updates and audio-level animation. Firmware documentation records earlier owner acceptance; hardware was not retested here. |
 | Browser control center | Chat, conversation history, document management, device/resource views, settings and network setup. Existing screenshot evidence records earlier UI states. |
 | Conversation memory | SQLite history and bounded conversation-scoped lexical recall. |

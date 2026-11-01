@@ -62,7 +62,7 @@ Pi `services.py` hotfix and RAG environment changes are still not synchronized.
   inventory, branch/security/duplicate summary and dependency advisory IDs.
 - Added narrow ignores for local validation products and binary treatment for
   meshes/images/archives. Existing tracked evidence remains tracked.
-- Updated only DRF 3.18.1 Ã¢â€ â€™ 3.18.2 and pypdf 6.19.0 Ã¢â€ â€™ 6.21.4 to address current
+- Updated only DRF 3.18.1 → 3.18.2 and pypdf 6.19.0 → 6.21.4 to address current
   scanner findings, with isolated installation and full regression verification.
 
 **Deleted files: 0. Archived/removed source files: 0.** The historical README
@@ -137,7 +137,7 @@ review access controls and full-history/transitive security scans; approve licen
 and the final PR. Suggested metadata is in the release checklist and was not
 applied. No live Pi operation or social publication was performed.
 
-## Final-polish addendum â€” 1 November 2026
+## Final-polish addendum — 1 November 2026
 
 Fetched and inspected actual merged main `23e84ffe3fafd21448848df52aaa12ced4dde1a5`.
 PR #2's source/documentation improvements remain intact. Baseline: **653 tracked

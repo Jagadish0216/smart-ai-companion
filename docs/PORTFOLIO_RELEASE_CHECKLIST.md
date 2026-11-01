@@ -44,6 +44,8 @@ third-party material separately. No license grant has been added.
 ## Final-polish preparation
 
 - [x] Add least-privilege software CI and maintained syntax/local-link checks.
+- [x] Verify actual hosted Linux success: 1,010 tests, zero skips at code head
+      `7c46ccc`; final PR checks validate later evidence-only revisions.
 - [x] Add regression-tested read-only source export; rehearse locally only.
 - [x] Add an opt-in appliance profile preserving HTTP/hotspot behavior.
 - [x] Classify CAD/screenshots/icons/history; remove only the optimized parse CSG.
