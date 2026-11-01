@@ -1,0 +1,655 @@
+{
+  "baseline": "f59da97d270ebe1157dac65e9862ec8ed77116cd",
+  "files": 637,
+  "bytes": 16302735,
+  "python_files_parsed": 177,
+  "syntax_errors": [],
+  "duplicates": [
+    [
+      "assistant/__init__.py",
+      "assistant/migrations/__init__.py",
+      "config/__init__.py",
+      "conversations/__init__.py",
+      "conversations/migrations/__init__.py",
+      "dashboard/__init__.py",
+      "dashboard/migrations/__init__.py",
+      "hardware/enclosure/optimized/output/dimension_checks.log",
+      "hardware/enclosure/optimized/output/source_parse.log",
+      "hardware/enclosure/output/dimension_checks.log",
+      "hardware/enclosure/output/parse.log",
+      "hardware/enclosure/output/source_parse.log",
+      "knowledge_base/__init__.py",
+      "knowledge_base/management/__init__.py",
+      "knowledge_base/management/commands/__init__.py",
+      "knowledge_base/migrations/__init__.py",
+      "system/__init__.py",
+      "system/migrations/__init__.py"
+    ],
+    [
+      "assistant/admin.py",
+      "dashboard/admin.py"
+    ],
+    [
+      "assistant/models.py",
+      "dashboard/models.py"
+    ],
+    [
+      "docs/screenshots/responsive/local-fixed/assistant-active-1366x768.png",
+      "docs/screenshots/responsive/voice-transcript/assistant-active-1366x768.png"
+    ],
+    [
+      "docs/screenshots/responsive/local-fixed/assistant-active-1440x960.png",
+      "docs/screenshots/responsive/voice-transcript/assistant-active-1440x960.png"
+    ],
+    [
+      "docs/screenshots/responsive/local-fixed/assistant-active-375x667.png",
+      "docs/screenshots/responsive/voice-transcript/assistant-active-375x667.png"
+    ],
+    [
+      "docs/screenshots/responsive/local-fixed/assistant-active-390x844.png",
+      "docs/screenshots/responsive/voice-transcript/assistant-active-390x844.png"
+    ],
+    [
+      "docs/screenshots/responsive/local-fixed/assistant-empty-1366x768.png",
+      "docs/screenshots/responsive/voice-transcript/assistant-empty-1366x768.png"
+    ],
+    [
+      "docs/screenshots/responsive/local-fixed/assistant-empty-1440x960.png",
+      "docs/screenshots/responsive/voice-transcript/assistant-empty-1440x960.png"
+    ],
+    [
+      "docs/screenshots/responsive/local-fixed/assistant-empty-375x667.png",
+      "docs/screenshots/responsive/voice-transcript/assistant-empty-375x667.png"
+    ],
+    [
+      "docs/screenshots/responsive/local-fixed/assistant-empty-390x844.png",
+      "docs/screenshots/responsive/voice-transcript/assistant-empty-390x844.png"
+    ],
+    [
+      "docs/screenshots/responsive/local-fixed/device-1366x768.png",
+      "docs/screenshots/responsive/voice-transcript/device-1366x768.png"
+    ],
+    [
+      "docs/screenshots/responsive/local-fixed/home-1366x768.png",
+      "docs/screenshots/responsive/voice-transcript/home-1366x768.png"
+    ],
+    [
+      "docs/screenshots/responsive/local-fixed/home-1440x960.png",
+      "docs/screenshots/responsive/voice-transcript/home-1440x960.png"
+    ],
+    [
+      "docs/screenshots/responsive/local-fixed/home-390x844.png",
+      "docs/screenshots/responsive/voice-transcript/home-390x844.png"
+    ],
+    [
+      "docs/screenshots/responsive/local-fixed/memory-1366x768.png",
+      "docs/screenshots/responsive/voice-transcript/memory-1366x768.png"
+    ],
+    [
+      "docs/screenshots/responsive/local-fixed/memory-390x844.png",
+      "docs/screenshots/responsive/voice-transcript/memory-390x844.png"
+    ],
+    [
+      "docs/screenshots/responsive/local-fixed/settings-390x844.png",
+      "docs/screenshots/responsive/voice-transcript/settings-390x844.png"
+    ],
+    [
+      "docs/screenshots/responsive/local-fixed/studio-390x844.png",
+      "docs/screenshots/responsive/voice-transcript/studio-390x844.png"
+    ],
+    [
+      "hardware/enclosure/COST_OPTIMIZATION.md",
+      "hardware/enclosure/optimized/COST_OPTIMIZATION.md"
+    ],
+    [
+      "hardware/enclosure/WIRING.md",
+      "hardware/enclosure/optimized/WIRING.md"
+    ],
+    [
+      "hardware/enclosure/camera_insert.scad",
+      "hardware/enclosure/optimized/camera_insert.scad"
+    ],
+    [
+      "hardware/enclosure/check_clearances.py",
+      "hardware/enclosure/optimized/check_clearances.py"
+    ],
+    [
+      "hardware/enclosure/companion_enclosure.scad",
+      "hardware/enclosure/optimized/companion_enclosure.scad"
+    ],
+    [
+      "hardware/enclosure/components.scad",
+      "hardware/enclosure/optimized/components.scad"
+    ],
+    [
+      "hardware/enclosure/front_bezel.scad",
+      "hardware/enclosure/optimized/front_bezel.scad"
+    ],
+    [
+      "hardware/enclosure/head_adapters.scad",
+      "hardware/enclosure/optimized/head_adapters.scad"
+    ],
+    [
+      "hardware/enclosure/head_rear_cover.scad",
+      "hardware/enclosure/optimized/head_rear_cover.scad"
+    ],
+    [
+      "hardware/enclosure/head_shell.scad",
+      "hardware/enclosure/optimized/head_shell.scad"
+    ],
+    [
+      "hardware/enclosure/measure_ventilation.py",
+      "hardware/enclosure/optimized/measure_ventilation.py"
+    ],
+    [
+      "hardware/enclosure/optimized/output/button_actuator.stl",
+      "hardware/enclosure/output/button_actuator.stl"
+    ],
+    [
+      "hardware/enclosure/optimized/output/camera_blank_insert.stl",
+      "hardware/enclosure/output/camera_blank_insert.stl"
+    ],
+    [
+      "hardware/enclosure/optimized/output/camera_carrier.stl",
+      "hardware/enclosure/output/camera_carrier.stl"
+    ],
+    [
+      "hardware/enclosure/optimized/output/camera_lens_insert.stl",
+      "hardware/enclosure/output/camera_lens_insert.stl"
+    ],
+    [
+      "hardware/enclosure/optimized/output/front_bezel.stl",
+      "hardware/enclosure/output/front_bezel.stl"
+    ],
+    [
+      "hardware/enclosure/optimized/output/head_rear_cover.stl",
+      "hardware/enclosure/output/head_rear_cover.stl"
+    ],
+    [
+      "hardware/enclosure/optimized/output/head_shell.stl",
+      "hardware/enclosure/output/head_shell.stl"
+    ],
+    [
+      "hardware/enclosure/optimized/output/round_microphone_holder.stl",
+      "hardware/enclosure/output/round_microphone_holder.stl"
+    ],
+    [
+      "hardware/enclosure/optimized/output/tactile_button_holder.stl",
+      "hardware/enclosure/output/tactile_button_holder.stl"
+    ],
+    [
+      "hardware/enclosure/optimized/output/ventilation_current.json",
+      "hardware/enclosure/output/ventilation_current.json"
+    ],
+    [
+      "hardware/enclosure/optimized/output/ventilation_current_exhaust.svg",
+      "hardware/enclosure/output/ventilation_current_exhaust.svg"
+    ],
+    [
+      "hardware/enclosure/optimized/output/version.log",
+      "hardware/enclosure/output/fit_tests/version.log",
+      "hardware/enclosure/output/version.log"
+    ],
+    [
+      "hardware/enclosure/optimized/presentation.scad",
+      "hardware/enclosure/presentation.scad"
+    ],
+    [
+      "hardware/enclosure/optimized/projections.scad",
+      "hardware/enclosure/projections.scad"
+    ],
+    [
+      "hardware/enclosure/optimized/render_final.py",
+      "hardware/enclosure/render_final.py"
+    ],
+    [
+      "hardware/enclosure/optimized/utilities.scad",
+      "hardware/enclosure/utilities.scad"
+    ],
+    [
+      "hardware/enclosure/optimized/ventilation_area.scad",
+      "hardware/enclosure/ventilation_area.scad"
+    ],
+    [
+      "static/img/figma/2-194-AssistantIcon.svg",
+      "static/img/figma/2-438-AssistantIcon.svg"
+    ],
+    [
+      "static/img/figma/2-194-DeviceIcon.svg",
+      "static/img/figma/2-293-DeviceIcon.svg",
+      "static/img/figma/2-438-DeviceIcon.svg",
+      "static/img/figma/home-DeviceIcon.svg"
+    ],
+    [
+      "static/img/figma/2-194-HomeIcon.svg",
+      "static/img/figma/2-293-HomeIcon.svg",
+      "static/img/figma/2-383-HomeIcon.svg",
+      "static/img/figma/2-438-HomeIcon.svg"
+    ],
+    [
+      "static/img/figma/2-194-MemoryIcon.svg",
+      "static/img/figma/2-383-MemoryIcon.svg",
+      "static/img/figma/2-438-MemoryIcon.svg",
+      "static/img/figma/home-MemoryIcon.svg"
+    ],
+    [
+      "static/img/figma/2-194-MicIcon.svg",
+      "static/img/figma/2-438-MicIcon.svg"
+    ],
+    [
+      "static/img/figma/2-194-MoreIcon.svg",
+      "static/img/figma/2-293-MoreIcon.svg",
+      "static/img/figma/2-383-MoreIcon.svg",
+      "static/img/figma/2-438-MoreIcon.svg",
+      "static/img/figma/home-MoreIcon.svg"
+    ],
+    [
+      "static/img/figma/2-293-AssistantIcon.svg",
+      "static/img/figma/2-383-AssistantIcon.svg",
+      "static/img/figma/home-AssistantIcon.svg"
+    ],
+    [
+      "system/management/__init__.py",
+      "system/management/commands/__init__.py"
+    ]
+  ],
+  "security_candidates": [
+    {
+      "path": "dashboard/tests.py",
+      "line": 131,
+      "kind": "credential-assignment-review"
+    },
+    {
+      "path": "dashboard/tests.py",
+      "line": 159,
+      "kind": "credential-assignment-review"
+    },
+    {
+      "path": "docs/first_boot_setup.md",
+      "line": 112,
+      "kind": "private-network-review"
+    },
+    {
+      "path": "firmware/esp32_mqtt_companion/secrets.example.h",
+      "line": 7,
+      "kind": "private-network-review"
+    },
+    {
+      "path": "knowledge_base/tests_online_sync.py",
+      "line": 257,
+      "kind": "private-network-review"
+    },
+    {
+      "path": "system/tests.py",
+      "line": 162,
+      "kind": "credential-assignment-review"
+    },
+    {
+      "path": "system/tests.py",
+      "line": 195,
+      "kind": "credential-assignment-review"
+    },
+    {
+      "path": "system/tests.py",
+      "line": 219,
+      "kind": "credential-assignment-review"
+    },
+    {
+      "path": "system/tests.py",
+      "line": 237,
+      "kind": "credential-assignment-review"
+    },
+    {
+      "path": "system/tests.py",
+      "line": 307,
+      "kind": "private-network-review"
+    },
+    {
+      "path": "system/tests.py",
+      "line": 353,
+      "kind": "private-network-review"
+    },
+    {
+      "path": "system/tests.py",
+      "line": 394,
+      "kind": "private-network-review"
+    },
+    {
+      "path": "system/tests.py",
+      "line": 488,
+      "kind": "private-network-review"
+    },
+    {
+      "path": "system/tests.py",
+      "line": 501,
+      "kind": "private-network-review"
+    },
+    {
+      "path": "system/tests_provisioning.py",
+      "line": 38,
+      "kind": "credential-assignment-review"
+    },
+    {
+      "path": "system/tests_provisioning.py",
+      "line": 291,
+      "kind": "credential-assignment-review"
+    },
+    {
+      "path": "system/tests_provisioning.py",
+      "line": 444,
+      "kind": "credential-assignment-review"
+    }
+  ],
+  "branches": [
+    {
+      "branch": "origin/automatic-knowledge-sync",
+      "main_only": 21,
+      "branch_only": 0,
+      "sha": "9455d928800ed5b509dfa2cb6a281e803415c7e7"
+    },
+    {
+      "branch": "origin/codex/adaptive-online-facts",
+      "main_only": 0,
+      "branch_only": 34,
+      "sha": "a6e16fec061f39a6aad6024037ff6ae21fee16f9"
+    },
+    {
+      "branch": "origin/codex/assistant-knowledge-ui-integration",
+      "main_only": 0,
+      "branch_only": 48,
+      "sha": "9c31fe478f769041f026bc6e15878e542bba1b53"
+    },
+    {
+      "branch": "origin/codex/final-physical-integration",
+      "main_only": 0,
+      "branch_only": 50,
+      "sha": "9c7de863ea8d187c3f23b9f1b5f2cff8fbdd6774"
+    },
+    {
+      "branch": "origin/codex/fix-display-fixture-lifecycle",
+      "main_only": 0,
+      "branch_only": 50,
+      "sha": "59cd226424d00e1c50130cf83223b8a6ac268b03"
+    },
+    {
+      "branch": "origin/codex/fix-preflight-microphone-isolation",
+      "main_only": 0,
+      "branch_only": 50,
+      "sha": "d798727ba6ddd81fe3bec6a902485ec9bec91d53"
+    },
+    {
+      "branch": "origin/codex/offline-model-selection",
+      "main_only": 0,
+      "branch_only": 33,
+      "sha": "0d75cb1ccb356958d85debbf9e744ddef6e19813"
+    },
+    {
+      "branch": "origin/codex/persistent-physical-voice-rag",
+      "main_only": 0,
+      "branch_only": 49,
+      "sha": "b74d07c8b80bfd55e36b9fdc9eb2deede0c7c6e5"
+    },
+    {
+      "branch": "origin/codex/pi-response-control-20261031",
+      "main_only": 0,
+      "branch_only": 2,
+      "sha": "2e9b9e9333890934906e8284f862304dc35c68ef"
+    },
+    {
+      "branch": "origin/codex/verified-publication-metadata",
+      "main_only": 0,
+      "branch_only": 35,
+      "sha": "5de9693c4088e18b674f325f74546823bac1b3b6"
+    },
+    {
+      "branch": "origin/conversation-memory-v2",
+      "main_only": 44,
+      "branch_only": 0,
+      "sha": "9e05792eff6851d2fae676b2a0f5f9ddb852c512"
+    },
+    {
+      "branch": "origin/dashboard-premium-v1",
+      "main_only": 9,
+      "branch_only": 0,
+      "sha": "8ceeac45531b4674d4e72f95db704f790d47d2aa"
+    },
+    {
+      "branch": "origin/display-v21-integration",
+      "main_only": 3,
+      "branch_only": 0,
+      "sha": "160aa8583d0f2222c1add1cc3857bc79c03c233b"
+    },
+    {
+      "branch": "origin/enclosure-v1",
+      "main_only": 13,
+      "branch_only": 0,
+      "sha": "68b0acc58b52041c625811296551f12204987c2b"
+    },
+    {
+      "branch": "origin/feature/assistant-document-chat-ui",
+      "main_only": 0,
+      "branch_only": 47,
+      "sha": "cbceea2bfb42c7531bd4531e28c3d62352e202bb"
+    },
+    {
+      "branch": "origin/feature/complete-knowledge-system",
+      "main_only": 0,
+      "branch_only": 47,
+      "sha": "4df6dcb3366d991a53b4d35ec68917665f570973"
+    },
+    {
+      "branch": "origin/feature/intelligence-reliability",
+      "main_only": 0,
+      "branch_only": 37,
+      "sha": "802bf399968f80a41c73a20ff9d6997e185464b3"
+    },
+    {
+      "branch": "origin/feature/model-and-source-reliability",
+      "main_only": 0,
+      "branch_only": 39,
+      "sha": "db24a811ea6f14af723759dce6ca0ff276693d2b"
+    },
+    {
+      "branch": "origin/feature/search-evidence-ranking",
+      "main_only": 0,
+      "branch_only": 36,
+      "sha": "ce7d8b34c13003ee58f5825dbec7998d57b710db"
+    },
+    {
+      "branch": "origin/fix/automatic-offline-rag",
+      "main_only": 0,
+      "branch_only": 42,
+      "sha": "a34b75797a1aebb246941178fdea49f56e771514"
+    },
+    {
+      "branch": "origin/fix/bounded-article-evidence",
+      "main_only": 0,
+      "branch_only": 46,
+      "sha": "30743607fdcae68ef81991f1e2610eec957879bc"
+    },
+    {
+      "branch": "origin/fix/current-information-reliability",
+      "main_only": 0,
+      "branch_only": 43,
+      "sha": "e3b76786d5560f231f792b4b7869a9733fc5597e"
+    },
+    {
+      "branch": "origin/fix/general-current-knowledge",
+      "main_only": 0,
+      "branch_only": 45,
+      "sha": "39cd739db2c3a8ede3884b2818a1fde7f0e5588b"
+    },
+    {
+      "branch": "origin/fix/model-benchmark-timeouts",
+      "main_only": 0,
+      "branch_only": 40,
+      "sha": "9adcd5f6eb37f7681147fa9f0dff292ead1892ba"
+    },
+    {
+      "branch": "origin/fix/officeholder-direct-verification",
+      "main_only": 0,
+      "branch_only": 44,
+      "sha": "f2c66e5e19c54048a89a5f25d5d24d2762ca75a9"
+    },
+    {
+      "branch": "origin/fix/pi-deployment-test-isolation",
+      "main_only": 0,
+      "branch_only": 41,
+      "sha": "644a1868253b93fcc6f9f90e41e03053408ddbfb"
+    },
+    {
+      "branch": "origin/fix/piper-worker-reliability",
+      "main_only": 0,
+      "branch_only": 38,
+      "sha": "99889c97cd298a9dae2eb3e7bcbea46ccdeb14c7"
+    },
+    {
+      "branch": "origin/hardware-display-bridge",
+      "main_only": 28,
+      "branch_only": 0,
+      "sha": "f40b7dfefb25d3a8f921004d92896050d3b4e0d4"
+    },
+    {
+      "branch": "origin/latency-v2-prefix-warm",
+      "main_only": 49,
+      "branch_only": 0,
+      "sha": "a962a03e8b2760a234581a037fa2aba6cd6ad129"
+    },
+    {
+      "branch": "origin/main",
+      "main_only": 0,
+      "branch_only": 0,
+      "sha": "f59da97d270ebe1157dac65e9862ec8ed77116cd"
+    },
+    {
+      "branch": "origin/rag-v2-knowledge-dashboard",
+      "main_only": 46,
+      "branch_only": 0,
+      "sha": "612a812444ece7e83d2def5470c19bdd9a77ef0e"
+    },
+    {
+      "branch": "origin/system-performance-audit-v1",
+      "main_only": 0,
+      "branch_only": 2,
+      "sha": "c4c5c442df0972ad177b038a4e9f7f4c540c5604"
+    },
+    {
+      "branch": "origin/tft-answer-text",
+      "main_only": 17,
+      "branch_only": 0,
+      "sha": "b4188902324c643ea5619afa22672a8b7823c2dc"
+    },
+    {
+      "branch": "origin/tft-audio-level-v1",
+      "main_only": 2,
+      "branch_only": 0,
+      "sha": "de80468ad9bdb4f1c6920925e2080a71707d229d"
+    },
+    {
+      "branch": "origin/tft-companion-ui-v2",
+      "main_only": 15,
+      "branch_only": 0,
+      "sha": "749e71155370ab72ed1901f0a5ce0ea0f2c260c4"
+    },
+    {
+      "branch": "origin/tft-modern-face-v2",
+      "main_only": 0,
+      "branch_only": 0,
+      "sha": "f59da97d270ebe1157dac65e9862ec8ed77116cd"
+    },
+    {
+      "branch": "origin/voice-transcript-ux",
+      "main_only": 6,
+      "branch_only": 0,
+      "sha": "811d30f4f1e433419d5a03a7ac2e646919002c92"
+    },
+    {
+      "branch": "origin/wake-word-handsfree",
+      "main_only": 24,
+      "branch_only": 0,
+      "sha": "9d516b91197b6bd221c92e3422eec541d065a2a0"
+    }
+  ],
+  "largest": [
+    {
+      "path": "hardware/enclosure/optimized/output/base_bottom_cover.stl",
+      "bytes": 847184
+    },
+    {
+      "path": "hardware/enclosure/optimized/output/head_shell.stl",
+      "bytes": 834884
+    },
+    {
+      "path": "hardware/enclosure/output/head_shell.stl",
+      "bytes": 834884
+    },
+    {
+      "path": "hardware/enclosure/output/base_bottom_cover.stl",
+      "bytes": 652084
+    },
+    {
+      "path": "hardware/enclosure/references/MSP3520_Size.png",
+      "bytes": 613154
+    },
+    {
+      "path": "hardware/enclosure/optimized/output/base_shell.stl",
+      "bytes": 419784
+    },
+    {
+      "path": "hardware/enclosure/output/base_shell.stl",
+      "bytes": 378884
+    },
+    {
+      "path": "static/vendor/lucide.min.js",
+      "bytes": 357808
+    },
+    {
+      "path": "hardware/enclosure/optimized/output/universal_speaker_mount.stl",
+      "bytes": 311284
+    },
+    {
+      "path": "hardware/enclosure/references/MSP3520_Size.pdf",
+      "bytes": 291851
+    },
+    {
+      "path": "hardware/enclosure/output/fit_tests/CAMERA_INSERT_FIT_TEST.stl",
+      "bytes": 276684
+    },
+    {
+      "path": "hardware/enclosure/optimized/output/source_parse.csg",
+      "bytes": 262878
+    },
+    {
+      "path": "hardware/enclosure/output/fit_tests/SPEAKER_FIT_TEST.stl",
+      "bytes": 258484
+    },
+    {
+      "path": "hardware/enclosure/output/source_parse.csg",
+      "bytes": 240727
+    },
+    {
+      "path": "hardware/enclosure/output/universal_speaker_mount.stl",
+      "bytes": 237684
+    },
+    {
+      "path": "hardware/enclosure/optimized/output/head_rear_cover.stl",
+      "bytes": 228684
+    },
+    {
+      "path": "hardware/enclosure/output/head_rear_cover.stl",
+      "bytes": 228684
+    },
+    {
+      "path": "hardware/enclosure/output/fit_tests/PI_USB_ETHERNET_PORT_TEST.stl",
+      "bytes": 203084
+    },
+    {
+      "path": "hardware/enclosure/output/fit_tests/TFT_FIT_TEST.stl",
+      "bytes": 151284
+    },
+    {
+      "path": "hardware/enclosure/optimized/output/final_base_internal.png",
+      "bytes": 133512
+    }
+  ]
+}

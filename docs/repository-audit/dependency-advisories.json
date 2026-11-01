@@ -1,0 +1,190 @@
+{
+  "scope": "Direct requirements applicable to Windows/Python 3.10; no transitive resolution; python-dotenv range represented by installed 1.2.3. Linux conditional packages not covered.",
+  "before": [
+    {
+      "name": "djangorestframework",
+      "version": "3.18.1",
+      "advisories": [
+        {
+          "id": "CVE-2026-114138",
+          "fix_versions": [
+            "3.18.2"
+          ]
+        },
+        {
+          "id": "CVE-2026-114136",
+          "fix_versions": [
+            "3.18.2"
+          ]
+        },
+        {
+          "id": "CVE-2026-114137",
+          "fix_versions": [
+            "3.18.2"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "pypdf",
+      "version": "6.19.0",
+      "advisories": [
+        {
+          "id": "CVE-2026-113792",
+          "fix_versions": [
+            "6.20.1"
+          ]
+        },
+        {
+          "id": "CVE-2026-113795",
+          "fix_versions": [
+            "6.20.0"
+          ]
+        },
+        {
+          "id": "CVE-2026-113793",
+          "fix_versions": [
+            "6.20.1"
+          ]
+        },
+        {
+          "id": "CVE-2026-113794",
+          "fix_versions": [
+            "6.20.0"
+          ]
+        },
+        {
+          "id": "CVE-2026-113786",
+          "fix_versions": [
+            "6.21.1"
+          ]
+        },
+        {
+          "id": "CVE-2026-113791",
+          "fix_versions": [
+            "6.21.0"
+          ]
+        },
+        {
+          "id": "CVE-2026-113790",
+          "fix_versions": [
+            "6.21.0"
+          ]
+        },
+        {
+          "id": "CVE-2026-113789",
+          "fix_versions": [
+            "6.21.0"
+          ]
+        },
+        {
+          "id": "CVE-2026-115572",
+          "fix_versions": [
+            "6.21.2"
+          ]
+        },
+        {
+          "id": "CVE-2026-115585",
+          "fix_versions": [
+            "6.21.2"
+          ]
+        },
+        {
+          "id": "CVE-2026-115580",
+          "fix_versions": [
+            "6.21.2"
+          ]
+        },
+        {
+          "id": "CVE-2026-119208",
+          "fix_versions": [
+            "6.21.3"
+          ]
+        },
+        {
+          "id": "CVE-2026-119206",
+          "fix_versions": [
+            "6.21.3"
+          ]
+        },
+        {
+          "id": "CVE-2026-119209",
+          "fix_versions": [
+            "6.21.3"
+          ]
+        },
+        {
+          "id": "CVE-2026-119207",
+          "fix_versions": [
+            "6.21.3"
+          ]
+        },
+        {
+          "id": "CVE-2026-119203",
+          "fix_versions": [
+            "6.21.4"
+          ]
+        },
+        {
+          "id": "CVE-2026-119205",
+          "fix_versions": [
+            "6.21.4"
+          ]
+        },
+        {
+          "id": "CVE-2026-119204",
+          "fix_versions": [
+            "6.21.4"
+          ]
+        }
+      ]
+    }
+  ],
+  "after": [
+    {
+      "name": "django",
+      "version": "5.2.17",
+      "advisory_count": 0
+    },
+    {
+      "name": "djangorestframework",
+      "version": "3.18.2",
+      "advisory_count": 0
+    },
+    {
+      "name": "python-dotenv",
+      "version": "1.2.3",
+      "advisory_count": 0
+    },
+    {
+      "name": "whitenoise",
+      "version": "6.7.0",
+      "advisory_count": 0
+    },
+    {
+      "name": "gunicorn",
+      "version": "26.2.0",
+      "advisory_count": 0
+    },
+    {
+      "name": "paho-mqtt",
+      "version": "2.1.0",
+      "advisory_count": 0
+    },
+    {
+      "name": "pypdf",
+      "version": "6.21.4",
+      "advisory_count": 0
+    },
+    {
+      "name": "pyserial",
+      "version": "3.5",
+      "advisory_count": 0
+    },
+    {
+      "name": "openwakeword",
+      "version": "0.6.0",
+      "advisory_count": 0
+    }
+  ]
+}
