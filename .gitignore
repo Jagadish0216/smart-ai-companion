@@ -19,6 +19,8 @@ htmlcov/
 .audit-local/
 .audit-tools/
 .audit-runtime/
+# Reproducible optimized CSG parse output; excluded by manufacturing packaging.
+/hardware/enclosure/optimized/output/source_parse.csg
 /*-tests.log
 /*-unrestricted.log
 /installed-packages.local.json
