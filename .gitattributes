@@ -1,0 +1,6 @@
+# Generated manufacturing meshes and visual assets must not receive text conversion.
+*.stl binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.zip binary

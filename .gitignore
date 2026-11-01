@@ -10,6 +10,20 @@ staticfiles/
 .idea/
 .vscode/
 
+# Local validation products (committed engineering evidence remains tracked)
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.audit-local/
+.audit-tools/
+.audit-runtime/
+/*-tests.log
+/*-unrestricted.log
+/installed-packages.local.json
+/portfolio-cleanup.patch
+
 # Generated enclosure distribution/archive packages (keep local, do not version)
 /hardware/enclosure.zip
 /hardware/enclosure/**/*.zip
