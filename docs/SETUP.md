@@ -83,3 +83,10 @@ the application. Public dashboard/chat/history and selected control/read APIs
 are not a multi-user authorization boundary. Use a trusted isolated LAN or
 authenticated reverse proxy; review network-control exposure before deployment.
 Do not publish port 8000 or Ollama directly to the Internet.
+
+For a new trusted-LAN installation, optional
+`DJANGO_SETTINGS_MODULE=config.appliance_settings` enforces DEBUG=False,
+a non-default 50+ character private secret and explicit hosts while preserving
+HTTP/hotspot access. It does not add authentication, and no existing service
+selects it automatically. Read [security boundaries](SECURITY.md) before opting
+in or configuring HTTPS. Public Internet support needs separate review.

@@ -1,5 +1,7 @@
 """Regression checks for source-export privacy and opt-in appliance settings."""
 import hashlib
+from contextlib import redirect_stdout
+import io
 import json
 import os
 from pathlib import Path
@@ -11,6 +13,7 @@ import unittest
 from zipfile import ZipFile
 
 from scripts.export_pi_source import ExportError, export
+from scripts.check_repository import check
 
 
 class SourceExportTests(unittest.TestCase):
@@ -37,17 +40,19 @@ class SourceExportTests(unittest.TestCase):
     def test_exports_modified_and_untracked_source_without_private_data(self):
         self.write('assistant/services.py', 'value = 2\n')
         self.write('assistant/new_feature.py', 'enabled = True\n')
+        self.write('docs/voice-latency-trace.schema.json', '{"type":"object"}\n')
         self.write('.env', 'PRIVATE=do-not-export\n')
         self.write('firmware/secrets.h', '#define WIFI_PASSWORD "do-not-export"\n')
         self.write('media/personal.py', 'private conversation\n')
         self.write('assistant/debug.log', 'personal log\n')
         before = subprocess.check_output(['git', '-C', str(self.root), 'status', '--porcelain'])
         result = export(self.root, self.output)
-        self.assertEqual(result['files'], 3)
+        self.assertEqual(result['files'], 4)
         with ZipFile(self.output) as archive:
             self.assertIsNone(archive.testzip())
             self.assertEqual(set(archive.namelist()), {'MANIFEST.json', 'source/manage.py',
-                             'source/assistant/services.py', 'source/assistant/new_feature.py'})
+                             'source/assistant/services.py', 'source/assistant/new_feature.py',
+                             'source/docs/voice-latency-trace.schema.json'})
             manifest = json.loads(archive.read('MANIFEST.json'))
             for name, record in manifest['files'].items():
                 self.assertEqual(hashlib.sha256(archive.read('source/' + name)).hexdigest(), record['sha256'])
@@ -83,6 +88,13 @@ class SourceExportTests(unittest.TestCase):
             self.skipTest('Creating symlinks requires unavailable OS permission')
         with self.assertRaises(ExportError):
             export(self.root, self.output)
+
+    def test_checker_rejects_existing_but_ignored_link_target(self):
+        self.write('.gitignore', 'ignored.md\n')
+        self.write('README.md', '[not published](ignored.md)\n')
+        self.write('ignored.md', 'local-only artifact\n')
+        with redirect_stdout(io.StringIO()):
+            self.assertTrue(check(self.root))
 
 
 class ApplianceProfileTests(unittest.TestCase):

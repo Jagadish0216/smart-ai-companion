@@ -15,7 +15,8 @@ import subprocess
 import zipfile
 
 
-ROOT_FILES = {'manage.py', 'smoke_voice.py', 'requirements.txt'}
+ROOT_FILES = {'manage.py', 'smoke_voice.py', 'requirements.txt',
+              'docs/voice-latency-trace.schema.json'}
 SOURCE_ROOTS = {'assistant', 'config', 'conversations', 'dashboard', 'knowledge_base',
                 'system', 'scripts', 'templates', 'static', 'deployment', 'firmware', 'tests'}
 EXTENSIONS = {'.py', '.html', '.css', '.js', '.cjs', '.svg', '.sh', '.service',

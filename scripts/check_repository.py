@@ -17,6 +17,7 @@ def check(root):
     # Include new source during pre-commit validation as well as tracked source.
     raw = subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard', '-z'], cwd=root)
     paths += [Path(p.decode('utf-8')) for p in raw.split(b'\0') if p]
+    available = {(root / path).resolve() for path in paths if (root / path).exists()}
     errors = []
     python_count = link_count = 0
     for relative in sorted(set(paths)):
@@ -39,7 +40,9 @@ def check(root):
             target = unquote(target.strip('<>').split('#')[0])
             if target:
                 link_count += 1
-                if not (path.parent / target).exists():
+                destination = (path.parent / target).resolve()
+                if destination not in available and not (
+                        destination.is_dir() and any(p.is_relative_to(destination) for p in available)):
                     errors.append(f'{relative}: missing target {target}')
     print(f'Parsed {python_count} Python files; checked {link_count} maintained local file links.')
     for error in errors:

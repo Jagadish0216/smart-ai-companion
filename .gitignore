@@ -6,6 +6,8 @@ __pycache__/
 .env.*
 !.env.example
 media/
+!/docs/media/
+!/docs/media/README.md
 staticfiles/
 .idea/
 .vscode/

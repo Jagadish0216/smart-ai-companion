@@ -1,3 +1,5 @@
+> PR #2 audit retained as historical evidence. See the final-polish addendum below for the current follow-up.
+
 # Repository cleanup audit
 
 Audit date: 1 November 2026 (Asia/Kolkata). Repository:
@@ -60,7 +62,7 @@ Pi `services.py` hotfix and RAG environment changes are still not synchronized.
   inventory, branch/security/duplicate summary and dependency advisory IDs.
 - Added narrow ignores for local validation products and binary treatment for
   meshes/images/archives. Existing tracked evidence remains tracked.
-- Updated only DRF 3.18.1 → 3.18.2 and pypdf 6.19.0 → 6.21.4 to address current
+- Updated only DRF 3.18.1 â†’ 3.18.2 and pypdf 6.19.0 â†’ 6.21.4 to address current
   scanner findings, with isolated installation and full regression verification.
 
 **Deleted files: 0. Archived/removed source files: 0.** The historical README
@@ -134,3 +136,61 @@ variant; reconcile the final deployed source; repeat hardware/ARM64 validation;
 review access controls and full-history/transitive security scans; approve licensing
 and the final PR. Suggested metadata is in the release checklist and was not
 applied. No live Pi operation or social publication was performed.
+
+## Final-polish addendum — 1 November 2026
+
+Fetched and inspected actual merged main `23e84ffe3fafd21448848df52aaa12ced4dde1a5`.
+PR #2's source/documentation improvements remain intact. Baseline: **653 tracked
+files, 16,561,960 canonical Git-blob bytes**, 178 Python files, 307 hardware files,
+105 docs files, 97 PNGs, 34 STLs and 119 logs. The repeated working-tree inventory
+measured 16,630,169 bytes because checkout line endings differ; Git-blob counts
+are used for before/after size comparison. The existing 55 duplicate groups remain
+historical evidence; no extension-only deletion rule was applied.
+
+### Classification and evidence
+
+| Area | Classification | Decision and evidence |
+|---|---|---|
+| Django apps/config, templates, runtime static assets, migrations, tests | ESSENTIAL | Independent application and regression entry points; retained. |
+| Voice, serial bridge, MQTT firmware, deployment scripts | ESSENTIAL | Standalone physical paths; no hardware/runtime source behavior changed. |
+| Editable CAD, BOM/wiring/assembly/printing | ESSENTIAL | Manufacturing inputs and owner-selected variants preserved. |
+| Final STLs and fit-test meshes | GENERATED DISTRIBUTION | Preserve both complete variants and fit evidence; not source clutter. |
+| Frozen head meshes and repeated option outputs | DUPLICATE BUT REQUIRED | Explicit oriented-facet/hash equivalence and separate distribution roots. |
+| Original CSG and parse/render logs | USEFUL HISTORY / DUPLICATE BUT REQUIRED | Baseline/archive/inventory and package scripts refer to them. |
+| Optimized source_parse.csg | REPRODUCIBLE INTERMEDIATE / SAFE TO REMOVE | Only produced by build.py; packager excludes .csg; no consumer reads it. |
+| Responsive screenshots/JSON/matrices | USEFUL HISTORY | Baseline/fixed/live comparisons retained as acceptance traceability. |
+| static/img/figma | ESSENTIAL | app-shell.js chooses page/mobile prefixes dynamically; templates use contours/microphone icons. |
+| docs/repository-audit prior reports | USEFUL HISTORY | Preserve original audit baseline rather than replacing evidence. |
+| Final Pi source, local hotfix and RAG settings | REQUIRES OWNER DECISION | No exact device export; unsafe to reconstruct or merge blindly. |
+| Hardware media, verified contributors and license | REQUIRES OWNER DECISION | No fabricated media, identities or licensing rights. |
+
+No additional file qualified as SAFE TO ARCHIVE. Only
+`hardware/enclosure/optimized/output/source_parse.csg` was removed: **262,878
+working-tree bytes / 262,878 Git-blob bytes**. OpenSCAD recreated all its text,
+with only platform line-ending differences. A narrow ignore prevents recurrence.
+No STL, editable CAD, active firmware, screenshot, historical report, migration,
+source or test was deleted. Existing packagers have historical enclosure-v1 and
+local-archive assumptions; the polish does not claim a fresh full manufacturing
+rebuild or silently rewrite those workflows.
+
+### Implemented follow-up
+
+Added immutable-action, least-privilege Ubuntu/Python-3.11 CI; maintained local
+file-link/Python-syntax checking; a tested allowlisted read-only export utility;
+an opt-in trusted-LAN profile; explicit security/route review; source-preimage
+comparison; and media/credit preparation. Existing README presentation was
+preserved, with a clearer Pi/ESP32/optional-provider boundary and confirmed I2S/
+MAX98357A hardware. Description and nine topics were updated; website remains
+unset. No project license or attribution rights were invented.
+
+Current source synchronization remains blocked: ten expected existing preimages
+have zero matches with main (four different, six missing); two paths are new.
+The pinned snapshot object is absent. Export instructions and compatibility
+conditions are in [DEPLOYMENT.md](DEPLOYMENT.md). No response patch was applied.
+
+Security details, history false positive and advisory scope are in
+[SECURITY.md](SECURITY.md). All app pins were retained; only installer tooling in
+an isolated environment/CI was refreshed. Original modified/untracked Windows
+files, live Pi, services, networking and published history were untouched.
+Final file-change counts and hosted validation are recorded in the PR and
+[verification addendum](REPOSITORY_CLEANUP_VERIFICATION.md).
