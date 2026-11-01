@@ -37,3 +37,31 @@ installation, firmware compilation and physical printing need their own environm
 Current advisory scanning is separate from `pip check`, which only checks installed
 dependency consistency. No dependency is certified vulnerability-free by a passing
 import, unit test or metadata check.
+
+## Hosted software CI
+
+[Software CI](../.github/workflows/ci.yml) runs on PRs targeting main, main pushes
+and manual dispatch. Ubuntu 24.04 / Python 3.11, immutable official Action SHAs,
+read-only repository permission, no persisted checkout credential and a 20-minute
+timeout keep it focused. It updates pip/setuptools, installs full requirements,
+checks dependency consistency, Django, migrations, Python syntax and maintained
+local Markdown targets, then runs the complete Django-discovered suite.
+
+`config.ci_settings` selects mock engines, disables optional retrieval, display,
+device control and wake operation, and uses an in-memory database. Tests can
+override settings with simulated providers. Dependency acquisition needs network
+access; weights, microphone, Pi, secrets, services and deployment are not part of
+CI. Python 3.11 Linux supplies openWakeWord's declared TFLite dependency normally.
+The separate Linux >=3.12 ONNX/no-deps workaround is not the CI profile and can
+still fail pip metadata consistency for the unused TFLite requirement; it is not
+fully validated by CI.
+
+Use `DJANGO_SETTINGS_MODULE=config.ci_settings` for the same checks locally.
+`python scripts/check_repository.py` checks maintained file links and Python
+syntax without imports or network calls. Historical generated-distribution links,
+external URLs and anchors are outside its scope. The new export/privacy and
+appliance-profile tests run in normal discovery without blanket exclusions.
+
+Checksum-verified actionlint 1.7.12 checks workflow syntax. Only an actual
+completed GitHub run establishes hosted success; see the final-polish verification
+addendum for the run URL/status and any Linux-specific corrections.

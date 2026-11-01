@@ -1,0 +1,68 @@
+{
+  "portfolio_baseline": "23e84ffe3fafd21448848df52aaa12ced4dde1a5",
+  "release_introduced": "5faba735640fd294bec28b88aa824dfbc8a989bc",
+  "snapshot_head": "645a066adf49e42ab0d16f0cd6195cd14ab16ed0",
+  "snapshot_files": 469,
+  "preimages": {
+    "scripts/voice_loop.py": {
+      "expected_sha256": "5a35b5d6f47fa04bbdd93e54669fcd7c09050a28a1d09811bcb6a85d2b90fa71",
+      "main_sha256": "b698e2168b1873b7220fcf957f7225e93c74225f4b11fdc84abf2c2b3e32e62d",
+      "status": "different"
+    },
+    "docs/voice-latency-trace.schema.json": {
+      "expected_sha256": "777d0f3d46e2a262960f07684406cd79989dad387549ab9adc96ae576932a3c7",
+      "main_sha256": null,
+      "status": "missing"
+    },
+    "assistant/tests_adaptive_online.py": {
+      "expected_sha256": "dbf53d1048ff2c712f1aa3dc7d9cba9225311494d467c0eabec3cb1c36d79621",
+      "main_sha256": null,
+      "status": "missing"
+    },
+    "assistant/tests_voice_stream.py": {
+      "expected_sha256": "0923346b6b9723419febb1f7b6bc4f47866cb2736a7c1873c72b54dc0de4fb9c",
+      "main_sha256": "e1cb497044c87f58d57d739b3dd2e0ee3dde8abaad2f2b50d992c632f7b0c605",
+      "status": "different"
+    },
+    "assistant/services.py": {
+      "expected_sha256": "efd72e8419237c0fa6a4ae8f58ab2b857d29b88c27763215d3f39bc0a04ea627",
+      "main_sha256": "6d6784ba4caadeae43fcfb74ec65234d46a7377a3ce6f54371e93c352a80bba5",
+      "status": "different"
+    },
+    "assistant/identity.py": {
+      "expected_sha256": "bb693d24e526dfc03813ac628a955431801d78c4ba34a8e01361e9fa1455c3fc",
+      "main_sha256": null,
+      "status": "missing"
+    },
+    "assistant/tests_current_information.py": {
+      "expected_sha256": "baf2f4fbdfe32967ea7d202a38173324ea1fef424c7fd7f4846b1b96e5c0d845",
+      "main_sha256": null,
+      "status": "missing"
+    },
+    "assistant/latency_trace.py": {
+      "expected_sha256": "2c7f400fda2abe550dd07a8a993300bc3d4c93c5f35a6001b59b605a9bc17800",
+      "main_sha256": null,
+      "status": "missing"
+    },
+    "assistant/voice/interruption.py": {
+      "expected_sha256": "b867401139461cda3fb22c47838abc5ae2c9f4b581aa3ac7d0763ab7c82cc89b",
+      "main_sha256": null,
+      "status": "missing"
+    },
+    "assistant/ai_engine/local.py": {
+      "expected_sha256": "65f5bc6475dfd0f0798567eaaa47f63bd8f367072821bdaffdeb12ad7b596ef9",
+      "main_sha256": "8174eb229b944d120c521a29b666d005fd274a88ac07ba36f0ebca9afaa6c3b9",
+      "status": "different"
+    },
+    "assistant/local_first.py": {
+      "expected_sha256": null,
+      "main_sha256": null,
+      "status": "new release file"
+    },
+    "assistant/tests_coordinated_update.py": {
+      "expected_sha256": null,
+      "main_sha256": null,
+      "status": "new release file"
+    }
+  }
+}

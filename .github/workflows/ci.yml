@@ -1,0 +1,54 @@
+name: Software CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: software-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  software:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      DJANGO_SETTINGS_MODULE: config.ci_settings
+      AI_ENGINE: mock
+      STT_ENGINE: mock
+      TTS_ENGINE: mock
+      RAG_ENABLED: 'false'
+      ONLINE_RETRIEVAL_ENABLED: 'false'
+      DEVICE_CONTROL_ENABLED: 'false'
+      COMPANION_DISPLAY_ENABLED: 'false'
+      VOICE_WAKE_WORD_ENABLED: 'false'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install application dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools
+          python -m pip install -r requirements.txt
+      - name: Dependency consistency
+        run: python -m pip check
+      - name: Django system checks
+        run: python manage.py check
+      - name: Migration consistency
+        run: python manage.py makemigrations --check --dry-run
+      - name: Python syntax and maintained documentation links
+        run: python scripts/check_repository.py
+      - name: Full software regression suite
+        run: python manage.py test --noinput

@@ -32,3 +32,14 @@ they are not promises of uploaded GitHub release assets. Checked-in STL files
 remain available. CAD validation is geometric evidence, not slicer/material or
 physical fit certification. The cleanup parsed a CAD assembly without rebuilding
 the entire manufacturing distribution; see [verification](REPOSITORY_CLEANUP_VERIFICATION.md).
+
+## Final-polish generated-output decision
+
+Only `optimized/output/source_parse.csg` was removed from tracking (262,878
+working-tree bytes). Optimized `build.py` regenerates it on every run; the
+manufacturing packager's suffix allowlist excludes CSG, and no production read
+requires this optimized intermediate. A fresh OpenSCAD CSG export matched its
+entire text after line-ending normalization. A narrow ignore prevents re-adding
+it. The original Option A parse CSG remains because baseline/archive integrity
+records reference it. No STL, CAD source, wiring, firmware or print distribution
+was removed. Source parse is not a full CGAL or physical-fit certification.

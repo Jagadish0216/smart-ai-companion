@@ -28,3 +28,22 @@ Canonical repository: https://github.com/Jagadish0216/smart-ai-companion
 
 Confirm team credits and media permissions before drafting a public announcement.
 Nothing has been posted or sent to a social platform.
+
+## Final-polish preparation
+
+The confirmed microphone/amplifier components are **I2S microphone and MAX98357A**;
+do not describe the finished device as a USB-audio prototype. The project objective
+is local conversational interaction and edge automation with a visible physical
+interface, not a claim of universal privacy or Internet-service hardening.
+
+New repository engineering work adds automated mocked software validation,
+read-only source-export preparation, tested trusted-LAN configuration and explicit
+source-provenance comparisons. Cite actual [verification](REPOSITORY_CLEANUP_VERIFICATION.md)
+when discussing outcomes; CI is software evidence, not a hardware benchmark.
+The final Pi snapshot still needs reconciliation.
+
+Use the [media guide](media/README.md) for a real enclosure/TFT/wiring photograph,
+a short real button/answer/interruption video and verified contributor credits.
+The [new pull request](https://github.com/Jagadish0216/smart-ai-companion/pull/3)
+is review material, not a deployed-device release. Canonical repository remains
+https://github.com/Jagadish0216/smart-ai-companion . No announcement was published.

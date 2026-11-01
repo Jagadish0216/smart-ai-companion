@@ -40,17 +40,22 @@ claim is made by this README.
 
 ```mermaid
 flowchart LR
-    Browser[Local browser dashboard] --> Django[Django APIs and request policy]
-    Button[Physical button and microphone] --> Voice[Standalone Python voice loop]
-    Voice --> STT[Local speech recognition]
-    STT --> Django
-    Django --> Ollama[Local Ollama inference]
-    Django <--> DB[(SQLite history and optional document chunks)]
-    Django -. optional network retrieval .-> Search[SearXNG]
-    Django -. optional actions .-> MQTT[MQTT and ESP32 firmware]
-    Ollama --> Voice
-    Voice --> Piper[Piper speech and audio playback]
-    Voice --> Serial[Serial bridge to ESP32 TFT]
+    Browser[Local browser dashboard] --> Django
+    Button[Talk button and I2S microphone] --> Voice
+    subgraph Pi[Raspberry Pi 5]
+        Django[Django APIs and shared assistant services]
+        Voice[Standalone Python voice loop] --> STT[Local speech recognition]
+        STT --> Django
+        Django --> Ollama[Local Ollama inference]
+        Django <--> DB[(SQLite history and optional document chunks)]
+        Ollama --> Voice
+        Voice --> Piper[Piper and MAX98357A audio playback]
+        Voice --> Serial[Serial display bridge]
+        Django -. optional actions .-> MQTT[Optional MQTT transport]
+    end
+    Serial --> TFT[ESP32 TFT display]
+    MQTT -. optional .-> Actions[ESP32 action and sensor firmware]
+    Django -. optional online retrieval .-> Search[Configured SearXNG endpoint]
 ```
 
 The diagram describes responsibilities; the voice loop invokes shared Python
@@ -59,7 +64,7 @@ services rather than requiring a loopback HTTP chat request. See
 
 ## Hardware components
 
-The documented core uses Raspberry Pi 5 with 8 GB RAM, an ESP32 DevKit, MSP3520
+Confirmed core hardware includes Raspberry Pi 5 with 8 GB RAM, an ESP32 DevKit, MSP3520
 3.5-inch ILI9488 SPI TFT, an I2S microphone, MAX98357A amplifier, speaker and a
 momentary talk button. The enclosure holds the hardware and service wiring.
 The [hardware guide](docs/HARDWARE.md) links the BOM, wiring, assembly, print
@@ -133,6 +138,8 @@ Only two representative images are embedded here to keep the presentation concis
 An approved photograph of the assembled companion and a public demonstration video
 are still needed. CAD previews are not presented as hardware photographs. No demo
 URL has been invented.
+The [media guide](docs/media/README.md) records the suggested photo/video layout
+and contributor information to verify before publication.
 
 ## Prerequisites
 
@@ -189,6 +196,7 @@ network or an authenticated proxy. Never commit `.env`, databases or Wi-Fi secre
 python manage.py test --noinput
 python manage.py check
 python manage.py makemigrations --check --dry-run
+python scripts/check_repository.py
 python scripts/repository_audit.py --output .audit-local
 ```
 
@@ -197,6 +205,8 @@ parses Python source and emits value-redacted security candidates for review.
 It is not a complete secret-history or vulnerability scanner. See
 [testing](docs/TESTING.md) and the [actual cleanup verification report](docs/REPOSITORY_CLEANUP_VERIFICATION.md)
 for commands, failures, skips and unavailable hardware checks.
+The [Software CI workflow](.github/workflows/ci.yml) runs the full mocked software
+suite on hosted Linux; it does not certify hardware or deploy to the Pi.
 
 ## Project directory structure
 
